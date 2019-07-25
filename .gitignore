@@ -1,0 +1,8 @@
+*.pyc
+.*.sw?
+*~
+.DS_Store
+__pycache__
+.pytest_cache
+.ipynb_checkpoints
+.ropeproject

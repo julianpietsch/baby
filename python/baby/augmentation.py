@@ -1,0 +1,375 @@
+"""
+A set of augmentation functions for on-the-fly preprocessing of images before
+input into the Neural Network. All augmentation functions are meant to work
+with unstructured arrays (in particular, elastic_deform, turn, and the shifts
+probably will return errors if used on structured arrays. They all take exactly
+two arrays as input, and will perform identitcal transformations on both arrays.
+"""
+from __future__ import absolute_import, division, print_function
+import numpy as np
+from scipy.ndimage import map_coordinates, gaussian_filter, shift
+from scipy.ndimage.morphology import binary_fill_holes
+from skimage import transform
+from skimage.feature import canny
+from skimage.filters import gaussian
+from skimage.draw import rectangle_perimeter
+
+
+AUGMENTATION_ORDER = ('rotate', 'vshift', 'hshift', 'downscale', 'crop',
+                      'vflip', 'movestacks', 'noise')
+
+
+class Augmenter(object):
+    def __init__(self, xy_out=80, probs={}, p_noop=0.05):
+        """
+        Random data augmentation of img and lbl.
+
+        Parameters
+        ----------
+        xy_out : int or pair of ints as a tuple
+            The intended width and height of the final augmented image.
+
+        probs : dict of floats in [0, 1]
+            Specify non-default probabilities for the named augmentations.
+            Augmentations with zero probability are omitted.
+
+        """
+
+        if type(xy_out) is int:
+            self.xy_out = (xy_out, xy_out)
+        elif len(xy_out)==2:
+            self.xy_out = xy_out
+        else:
+            raise Exception('"xy_out" must be an int or pair of ints')
+
+        self.xy_in = None
+
+        self.aug_order = [a for a in AUGMENTATION_ORDER
+                          if probs.get(a,1)>0 or a=='crop']
+
+        # Treat 'crop' specially to have p = 1
+        n_augs = len(self.aug_order) - 1
+        p_default = (1.-p_noop)**n_augs/n_augs
+        self.probs = np.array([1 if a=='crop' else probs.get(a, p_default)
+                               for a in self.aug_order])
+
+
+    def apply(self, img, lbl):
+        """
+        Random data augmentation of img and lbl.
+
+        Parameters
+        ----------
+        img, lbl : np.ndarray, unstructured and in 3 dimensions.
+            The input (img) and true output (lbl) to the Neural Network.
+
+        Return
+        -------
+        (np.ndarray, np.ndarray)
+            The augmented images, unstructured and in 3 dimensions
+
+        """
+
+        # Ensure that img and lbl have the same xy dimensions
+        assert img.shape[:2] == lbl.shape[:2], \
+            'xy dimensions of img and lbl are mismatched'
+
+        lbl_is_bool = lbl.dtype == 'bool'
+
+        self.xy_in = img.shape[:2]
+
+        for a, p in zip(self.aug_order, self.probs):
+            if p==0.0:
+                continue
+            elif p==1.0:
+                img, lbl = getattr(self, a)(img, lbl)
+            else:
+                if np.random.uniform()<p:
+                    img, lbl = getattr(self, a)(img, lbl)
+                    if lbl_is_bool and lbl.dtype != 'bool':
+                        lbl = lbl > 0.5 # ensure label stays boolean
+
+        self.xy_in = None
+
+        # Ensure that x and y dimensions match the intended output size
+        assert img.shape[:2] == self.xy_out and lbl.shape[:2] == self.xy_out, \
+            'xy dimensions do not match intended size after augmentation'
+
+        return (img, lbl)
+
+
+    def rotate(self, img, lbl):
+        """Random rotation
+
+        Example image:
+
+        .. image:: ../report/figures/augmentations/turn.*
+        """
+        angle = np.random.choice(360)
+        return (
+            transform.rotate(img, angle=angle, mode='reflect', resize=True),
+            transform.rotate(lbl, angle=angle, mode='reflect', resize=True)
+        )
+
+
+    def vshift(self, img, lbl, maxpix=None):
+        """Shift along height, max of 10px by default
+
+        Only integer shifts are made (i.e., no interpolation)
+
+        Example image:
+
+        .. image:: ../report/figures/augmentations/vshift.*
+        """
+
+        if maxpix is None:
+            if self.xy_in is None:
+                inshape = img.shape[0]
+            else:
+                inshape = self.xy_in[0]
+            maxpix = np.max([0, (inshape - self.xy_out[0])//2])
+
+        pix = np.random.choice(np.arange(-maxpix, maxpix+1, dtype='int'))
+        return (shift(img, [pix, 0, 0], mode='reflect', order=0),
+                shift(lbl, [pix, 0, 0], mode='reflect', order=0))
+
+
+    def hshift(self, img, lbl, maxpix=None):
+        """Shift along width, max of 10px by default
+
+        Only integer shifts are made (i.e., no interpolation)
+
+        Example image:
+
+        .. image:: ../report/figures/augmentations/hshift.*
+        """
+
+        if maxpix is None:
+            if self.xy_in is None:
+                inshape = img.shape[1]
+            else:
+                inshape = self.xy_in[1]
+            maxpix = np.max([0, (inshape - self.xy_out[1])//2])
+
+        pix = np.random.choice(np.arange(-maxpix, maxpix+1, dtype='int'))
+        return (shift(img, [0, pix, 0], mode='reflect', order=0),
+                shift(lbl, [0, pix, 0], mode='reflect', order=0))
+
+
+    def crop(self, img, lbl, xysize=None):
+        if xysize is None:
+            xysize = self.xy_out
+
+        return _apply_crop(img, xysize), _apply_crop(lbl, xysize)
+
+
+    def downscale(self, img, lbl, maxpix=None):
+        if maxpix is None:
+            if self.xy_in is None:
+                inshape = img.shape[:2]
+            else:
+                inshape = self.xy_in
+            maxpix = np.max([0, np.min(inshape) - np.max(self.xy_out)])
+
+        pix = np.random.choice(maxpix+1)
+        pix = maxpix
+        img_crop, lbl_crop = self.crop(
+            img, lbl, xysize=np.array(self.xy_out)+pix)
+
+        return (
+            transform.resize(img_crop, self.xy_out),
+            transform.resize(
+                lbl_crop, self.xy_out, anti_aliasing_sigma=0.05) > 0.3
+        )
+
+
+    def vflip(self, img, lbl):
+        """Vertical flip
+
+        Example image:
+
+        .. image:: ../report/figures/augmentations/vflip.*
+        """
+        return np.flip(img, axis=0), np.flip(lbl, axis=0)
+
+
+    def hflip(self, img, lbl):
+        """Horizontal flip
+
+        Example image:
+
+        .. image:: ../report/figures/augmentations/hflip.*
+        """
+        return np.flip(img, axis=1), np.flip(lbl, axis=1)
+
+
+    def movestacks(self, img, lbl):
+        """Translate stacks in img to increase robustness to shifts in focus
+
+            Only movements up or down by one stack are made, and the boundary is
+            repeated
+        """
+
+        movestacks = np.random.choice(['No','Up','Down'], p=(0.8, 0.1, 0.1))
+        if np.random.uniform()<0.5:
+            # Move img stacks up by one
+            img[:,:,1:] = img[:,:,:-1]
+        else:
+            # Move img stacks down by one
+            img[:,:,:-1] = img[:,:,1:]
+
+        return img, lbl
+
+
+    def noise(self, img, lbl):
+        """Add gaussian noise to the img (not the lbl)
+        """
+
+        img += np.random.normal(scale=np.random.exponential(0.003),
+                                size=img.shape)
+        return img, lbl
+
+
+    def elastic_deform(self, img, lbl, params={}):
+        """Slight deformation
+
+        Elastic deformation of images as described in
+        Simard, Steinkraus and Platt, "Best Practices for
+        Convolutional Neural Networks applied to Visual Document Analysis", in
+        Proc. of the International Conference on Document Analysis and
+        Recognition, 2003.
+        Adapted from:
+        https://gist.github.com/chsasank/4d8f68caf01f041a6453e67fb30f8f5a
+
+        Example image:
+
+        .. image:: ../report/figures/augmentations/elastic_deform.*
+        """
+        alpha = 0.75 * img.shape[1]
+        sigma = 0.08 * img.shape[1]
+        x_y = _elastic_deform(np.dstack([img, lbl]), alpha=alpha, sigma=sigma)
+        return np.split(x_y, [img.shape[2]], axis=2)
+
+    def identity(self, img, lbl):
+        """Do nothing
+
+        Example image:
+
+        .. image:: ../report/figures/augmentations/identity.*
+        """
+        return img, lbl
+
+
+class SmoothedLabelAugmenter(Augmenter):
+    def __init__(self, sigmafunc, *args, **kwargs):
+        super(SmoothedLabelAugmenter, self).__init__(*args, **kwargs)
+        self.sigmafunc = sigmafunc
+
+
+    def apply(self, img, lbl):
+        lbl_stack = []
+        for s in np.dsplit(lbl, lbl.shape[2]):
+            s = np.squeeze(s)
+            s = gaussian(binary_fill_holes(s), self.sigmafunc(s))
+            lbl_stack += [s[..., np.newaxis]]
+        lbl = np.concatenate(lbl_stack, axis=2)
+
+        img, lbl = super(SmoothedLabelAugmenter, self).apply(img, lbl)
+
+        # NB: edges are found before cropping to limit open shapes
+
+        return img, lbl
+
+
+    def crop(self, img, lbl, xysize=None):
+        if xysize is None:
+            xysize = np.array(self.xy_out)
+
+        # Find edges before cropping and also attempt to close cells that
+        # intersect with the boundary
+
+        s_shape = np.array(lbl.shape[:2])
+        boundary_rect = np.zeros(s_shape, dtype=np.bool)
+        start = (s_shape - xysize)//2
+        rr, cc = rectangle_perimeter(start+1, end=start+xysize-2, shape=s_shape)
+        boundary_rect[rr, cc] = True
+
+        lbl_stack = []
+        for s in np.dsplit(lbl, lbl.shape[2]):
+            # Find edges before cropping
+            s = canny(np.squeeze(s), sigma=0)
+            # Also attempt to close cells that intersect with the boundary
+            sfill = binary_fill_holes(s)
+            s = s | (sfill & boundary_rect)
+            lbl_stack += [s[..., np.newaxis]]
+        lbl = np.concatenate(lbl_stack, axis=2)
+
+        return _apply_crop(img, xysize), _apply_crop(lbl, xysize)
+
+
+    def downscale(self, img, lbl, maxpix=None):
+        inshape = img.shape[:2]
+        if maxpix is None:
+            if self.xy_in is not None:
+                inshape = self.xy_in
+            maxpix = np.max([0, np.min(inshape) - np.max(self.xy_out)])
+
+        # Allow for small chance of no scaling, but robust if image sizes equal
+        pix = np.random.choice(maxpix+1)
+        scaling = (np.min(inshape)-pix)/np.min(inshape)
+        outshape = np.floor(np.array(img.shape[:2])*scaling)
+
+        return (
+            transform.resize(img, outshape),
+            transform.resize(lbl, outshape, anti_aliasing=False)
+        )
+
+
+# =============== UTILITY FUNCTIONS ====================== #
+
+
+def _apply_crop(stack, xysize):
+    cropy, cropx = xysize
+    starty, startx = stack.shape[:2]
+    startx = (startx - cropx)//2
+    starty = (starty - cropy)//2
+    return stack[starty:(starty+cropy), startx:(startx+cropx), ...]
+
+
+def _elastic_deform(image, alpha, sigma, random_state=None):
+    """
+    Elastic deformation of images as described in [Simard2003]_.
+    [Simard2003] Simard, Steinkraus and Platt, "Best Practices for
+    Convolutional Neural Networks applied to Visual Document Analysis", in
+    Proc. of the International Conference on Document Analysis and
+    Recognition, 2003.
+    Adapted from:
+    https://gist.github.com/chsasank/4d8f68caf01f041a6453e67fb30f8f5a
+    """
+    if random_state is None:
+        random_state = np.random.RandomState(None)
+
+    shape = image[:, :, 0].shape
+    dx = gaussian_filter((random_state.rand(*shape) * 2 - 1),
+                        sigma, mode="constant", cval=0) * alpha
+    dy = gaussian_filter((random_state.rand(*shape) * 2 - 1),
+                        sigma, mode="constant", cval=0) * alpha
+
+    _x, _y = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]),
+                        indexing='ij')
+    indices = np.reshape(_x + dx, (-1, 1)), np.reshape(_y + dy, (-1, 1))
+    if len(image.shape) == 3:
+        result = np.empty_like(image)
+        for d in range(image.shape[2]):
+            # iterate over depth
+            cval = np.median(image[:, :, d])
+            result[:, :, d] = map_coordinates(image[:, :, d],
+                                            indices, order=1,
+                                            cval=cval).reshape(shape)
+        result
+    else:
+        cval = np.median(image)
+        result = map_coordinates(image, indices,
+                                order=1, cval=cval).reshape(shape)
+    return result
+
