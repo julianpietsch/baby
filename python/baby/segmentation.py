@@ -42,9 +42,12 @@ def morph_thresh_masks(p_interior, p_overlap=None, dilate=True,
 
         if p_overlap is not None:
             olabels = label(binary_closing(cr | othresh))
-            omasks = [olabels == i + 1 for i in range(np.max(olabels))]
-            omask_iou = [mask_iou(cr, r) for r in omasks]
-            cr = omasks[np.argmax(omask_iou)]
+            # Occasionally the closing operation can make all cells disappear
+            nlbls = np.max(olabels)
+            if nlbls>0:
+                omasks = [olabels == i + 1 for i in range(nlbls)]
+                omask_iou = [mask_iou(cr, r) for r in omasks]
+                cr = omasks[np.argmax(omask_iou)]
 
         masks.append(cr)
 
@@ -86,6 +89,9 @@ def morph_thresh_seg(cnn_outputs, interior_threshold=0.9,
     if overlap_threshold is None:
         p_overlap = None
 
+    if isbud_threshold is None and bud_threshold is not None:
+        p_interior = p_interior * (1 - p_bud)
+
     masks = morph_thresh_masks(
         p_interior, interior_threshold=interior_threshold,
         p_overlap=p_overlap, overlap_threshold=overlap_threshold)
@@ -98,9 +104,10 @@ def morph_thresh_seg(cnn_outputs, interior_threshold=0.9,
             p_bud, interior_threshold=bud_threshold, dilate=False,
             p_overlap=p_overlap, overlap_threshold=overlap_threshold)
 
-        # Omit interior masks if they overlap with bud masks
-        masks = unique_masks(masks, budmasks, iou_func=mask_containment,
-                             threshold=isbud_threshold) + budmasks
+        if isbud_threshold is not None:
+            # Omit interior masks if they overlap with bud masks
+            masks = unique_masks(masks, budmasks, iou_func=mask_containment,
+                                threshold=isbud_threshold) + budmasks
 
     # Return only the mask outlines
     outlines = [minimum_filter(m, footprint=connect_filt) != m for m in masks]
@@ -357,6 +364,9 @@ def morph_radial_thresh_seg(cnn_outputs, interior_threshold=0.9,
     if overlap_threshold is None:
         p_overlap = None
 
+    if isbud_threshold is None and bud_threshold is not None:
+        p_interior = p_interior * (1 - p_bud)
+
     masks = morph_thresh_masks(
         p_interior, interior_threshold=interior_threshold,
         p_overlap=p_overlap, overlap_threshold=overlap_threshold)
@@ -369,8 +379,9 @@ def morph_radial_thresh_seg(cnn_outputs, interior_threshold=0.9,
             p_bud, interior_threshold=bud_threshold, dilate=False,
             p_overlap=p_overlap, overlap_threshold=overlap_threshold)
 
-        # Omit interior masks if they overlap with bud masks
-        masks = budmasks + unique_masks(masks, budmasks, threshold=isbud_threshold)
+        if isbud_threshold is not None:
+            # Omit interior masks if they overlap with bud masks
+            masks = budmasks + unique_masks(masks, budmasks, threshold=isbud_threshold)
 
     # Need mask outlines and region properties
     mseg = [minimum_filter(m, footprint=connect_filt) != m for m in masks]

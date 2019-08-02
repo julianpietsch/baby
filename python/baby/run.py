@@ -56,11 +56,13 @@ def baby_guess(bf_img_batch, morph_model, budmother_model):
 
     # Choose optimal segmentation parameters found in Jupyter notebook for
     # validation data:
-    interior_threshold = 0.85
+    interior_threshold = 0.90
+    # interior_threshold = 0.85
     overlap_threshold = 0.8
     bud_threshold = 0.8
     bud_overlap = True
-    isbud_threshold = 0.3
+    # isbud_threshold = 0.3
+    isbud_threshold = None
 
     output = []
 
@@ -74,6 +76,9 @@ def baby_guess(bf_img_batch, morph_model, budmother_model):
             _, _, p_interior, p_overlap, p_budneck, p_bud = cnn_output
             shape = p_interior.shape
 
+            if isbud_threshold is None and bud_threshold is not None:
+                p_interior = p_interior * (1 - p_bud)
+
             masks = morph_thresh_masks(
                 p_interior, interior_threshold=interior_threshold,
                 p_overlap=p_overlap, overlap_threshold=overlap_threshold)
@@ -82,9 +87,12 @@ def baby_guess(bf_img_batch, morph_model, budmother_model):
                 p_bud, interior_threshold=bud_threshold, dilate=False,
                 p_overlap=p_overlap, overlap_threshold=overlap_threshold)
 
-            # Omit interior masks if they overlap with bud masks
-            masks = unique_masks(masks, budmasks, iou_func=mask_containment,
-                                threshold=isbud_threshold) + budmasks
+            if isbud_threshold is not None:
+                # Omit interior masks if they overlap with bud masks
+                masks = unique_masks(masks, budmasks, iou_func=mask_containment,
+                                    threshold=isbud_threshold) + budmasks
+            else:
+                masks = masks + budmasks
 
             # Need mask outlines and region properties
             mseg = [minimum_filter(m, footprint=connect_filt) != m for m in masks]

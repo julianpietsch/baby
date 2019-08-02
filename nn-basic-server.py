@@ -85,6 +85,13 @@ class nnHandler(BaseHTTPRequestHandler):
 
 
 if __name__=='__main__':
+    # Compensate for bug in tensorflow + RTX series NVidia GPUs
+    import tensorflow as tf
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    tf.keras.backend.set_session(tf.Session(config=config))
+
+    # Load tensorflow models
     path = dirname(__file__)
     base_morph_model, budmother_model = load_models(
         join(path, 'models', 'morphviz_msd_d80_bn_20190624.hdf5'),
