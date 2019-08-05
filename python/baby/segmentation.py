@@ -350,14 +350,14 @@ def draw_radial(radii, angles, centre, shape):
 def morph_radial_thresh_seg(cnn_outputs, interior_threshold=0.9,
                             overlap_threshold=0.9, bud_threshold=0.9,
                             bud_dilate=False, bud_overlap=False,
-                            isbud_threshold=0.5):
+                            isbud_threshold=0.5, edge_dampening=False):
     """Segment cell outlines from morphology output of CNN by fitting radial
     spline to threshold output
 
     Specify `overlap_threshold` or `bud_threshold` as `None` to ignore.
     """
 
-    _, _, p_interior, p_overlap, _, p_bud = cnn_outputs
+    p_edge, _, p_interior, p_overlap, _, p_bud = cnn_outputs
 
     shape = p_interior.shape
 
@@ -365,7 +365,10 @@ def morph_radial_thresh_seg(cnn_outputs, interior_threshold=0.9,
         p_overlap = None
 
     if isbud_threshold is None and bud_threshold is not None:
-        p_interior = p_interior * (1 - p_bud)
+        p_interior *= 1 - p_bud
+
+    if edge_dampening:
+        p_interior *= 1 - p_edge
 
     masks = morph_thresh_masks(
         p_interior, interior_threshold=interior_threshold,
@@ -382,6 +385,8 @@ def morph_radial_thresh_seg(cnn_outputs, interior_threshold=0.9,
         if isbud_threshold is not None:
             # Omit interior masks if they overlap with bud masks
             masks = budmasks + unique_masks(masks, budmasks, threshold=isbud_threshold)
+        else:
+            masks = masks + budmasks
 
     # Need mask outlines and region properties
     mseg = [minimum_filter(m, footprint=connect_filt) != m for m in masks]

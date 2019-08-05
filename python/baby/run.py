@@ -79,11 +79,13 @@ class BabyRunner(object):
             morph_preds = split_batch_pred(self.morph_predict(batch))
 
             for cnn_output in morph_preds:
-                _, _, p_interior, p_overlap, p_budneck, p_bud = cnn_output
+                p_edge, _, p_interior, p_overlap, p_budneck, p_bud = cnn_output
                 shape = p_interior.shape
 
                 if isbud_threshold is None and bud_threshold is not None:
-                    p_interior = p_interior * (1 - p_bud)
+                    p_interior *= 1 - p_bud
+
+                p_interior *= 1 - p_edge
 
                 masks = morph_thresh_masks(
                     p_interior, interior_threshold=interior_threshold,
