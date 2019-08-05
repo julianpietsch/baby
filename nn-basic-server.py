@@ -7,10 +7,9 @@ from functools import reduce
 from operator import mul
 import numpy as np
 
-from baby.run import load_models, baby_guess
+from baby.run import BabyRunner
 
-base_morph_model = None
-budmother_model = None
+baby = None
 
 matlab_dtype = np.dtype('uint16').newbyteorder('>')
 
@@ -74,9 +73,8 @@ class nnHandler(BaseHTTPRequestHandler):
                 return
 
             print('Data received. Segmenting {} trap images'.format(len(img)))
-            global base_morph_model
-            global budmother_model
-            pred = baby_guess(img, base_morph_model, budmother_model)
+            global baby
+            pred = baby.run(img)
             self._json_response(200, results=pred)
 
         except JSONError as err:
@@ -91,12 +89,8 @@ if __name__=='__main__':
     config.gpu_options.allow_growth = True
     tf.keras.backend.set_session(tf.Session(config=config))
 
-    # Load tensorflow models
-    path = dirname(__file__)
-    base_morph_model, budmother_model = load_models(
-        join(path, 'models', 'morphviz_msd_d80_bn_20190624.hdf5'),
-        join(path, 'models', 'baby_randomforest_20190720.pkl')
-    )
+    # Load BabyRunner
+    baby = BabyRunner()
     print('ready')
 
     server_address = ('',5101)
