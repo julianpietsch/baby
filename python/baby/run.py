@@ -110,6 +110,12 @@ class BabyRunner(object):
                 all_radii = []
                 all_angles = []
                 for mask, outline, rp in zip(masks, mseg, rprops):
+                    if rp.area<10:
+                        all_radii.append(None)
+                        all_angles.append(None)
+                        outlines.append(None)
+                        continue
+
                     try:
                         radii, angles = morph_radial_thresh_fit(outline, mask, rp)
                     except:
