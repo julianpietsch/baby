@@ -15,10 +15,6 @@ matlab_dtype = np.dtype('uint16').newbyteorder('>')
 
 ### Helper functions and classes ###
 
-def pred_to_hex(p):
-    return np.floor(p.flatten('F')*255.).astype(np.uint8).tobytes().hex()
-
-
 class JSONError(Exception):
     def __init__(self, status, message):
         """Initialise with the result of the couchdb.Database.upload function"""
