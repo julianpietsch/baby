@@ -14,6 +14,8 @@ from skimage.feature import canny
 from skimage.filters import gaussian
 from skimage.draw import rectangle_perimeter
 
+from .preprocessing import segoutline_flattening
+
 
 AUGMENTATION_ORDER = ('rotate', 'vshift', 'hshift', 'downscale', 'crop',
                       'vflip', 'movestacks', 'noise')
@@ -266,12 +268,19 @@ class Augmenter(object):
 
 
 class SmoothedLabelAugmenter(Augmenter):
-    def __init__(self, sigmafunc, *args, **kwargs):
+    def __init__(self, sigmafunc, targetgenfunc, *args, **kwargs):
         super(SmoothedLabelAugmenter, self).__init__(*args, **kwargs)
         self.sigmafunc = sigmafunc
+        self.targetgenfunc = targetgenfunc
 
 
-    def apply(self, img, lbl):
+    def apply(self, img, lbl_info):
+        """This augmenter needs to be used in combination with a label
+        preprocessing function that returns both images and info.
+        """
+
+        lbl, info = lbl_info
+
         lbl_stack = []
         for s in np.dsplit(lbl, lbl.shape[2]):
             s = np.squeeze(s)
@@ -281,7 +290,11 @@ class SmoothedLabelAugmenter(Augmenter):
 
         img, lbl = super(SmoothedLabelAugmenter, self).apply(img, lbl)
 
-        # NB: edges are found before cropping to limit open shapes
+        # NB: to limit open shapes, the crop operation has been overloaded to
+        # find edges before cropping
+
+        # Finally generate flattened targets from segmentation outlines
+        lbl = self.targetgenfunc(lbl, info)
 
         return img, lbl
 
