@@ -33,6 +33,11 @@ class Augmenter(object):
             Specify non-default probabilities for the named augmentations.
             Augmentations with zero probability are omitted.
 
+        p_noop : float in [0, 1]
+            Adjusts the probability for no augmentation operation in the
+            default case. If set to 1, then all operations will be omitted
+            by default (i.e., unless a non-zero probability is specified
+            for that operation in probs).
         """
 
         if type(xy_out) is int:

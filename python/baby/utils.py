@@ -1,4 +1,6 @@
 import time
+import json
+from pathlib import Path
 import numpy as np
 
 
@@ -14,6 +16,14 @@ class Timer(object):
         if self.name:
             print('[%s]' % self.name,)
         print('Elapsed: %s' % (time.time() - self.tstart))
+
+
+class PathEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, Path):
+            return str(o)
+        else:
+            return json.JSONEncoder.default(self, o)
 
 
 def batch_iterator(a, batch_size=8):
