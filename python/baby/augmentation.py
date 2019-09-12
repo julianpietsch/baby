@@ -268,8 +268,8 @@ class Augmenter(object):
 
 
 class SmoothedLabelAugmenter(Augmenter):
-    def __init__(self, sigmafunc, targetgenfunc, *args, **kwargs):
-        super(SmoothedLabelAugmenter, self).__init__(*args, **kwargs)
+    def __init__(self, sigmafunc, targetgenfunc=segoutline_flattening, **kwargs):
+        super(SmoothedLabelAugmenter, self).__init__(**kwargs)
         self.sigmafunc = sigmafunc
         self.targetgenfunc = targetgenfunc
 
@@ -284,7 +284,9 @@ class SmoothedLabelAugmenter(Augmenter):
         lbl_stack = []
         for s in np.dsplit(lbl, lbl.shape[2]):
             s = np.squeeze(s)
-            s = gaussian(binary_fill_holes(s), self.sigmafunc(s))
+            # Only smooth label if it is non-empty (allows for empty traps)
+            if s.sum() > 0:
+                s = gaussian(binary_fill_holes(s), self.sigmafunc(s))
             lbl_stack += [s[..., np.newaxis]]
         lbl = np.concatenate(lbl_stack, axis=2)
 
@@ -303,24 +305,9 @@ class SmoothedLabelAugmenter(Augmenter):
         if xysize is None:
             xysize = np.array(self.xy_out)
 
-        # Find edges before cropping and also attempt to close cells that
-        # intersect with the boundary
-
-        s_shape = np.array(lbl.shape[:2])
-        boundary_rect = np.zeros(s_shape, dtype=np.bool)
-        start = (s_shape - xysize)//2
-        rr, cc = rectangle_perimeter(start+1, end=start+xysize-2, shape=s_shape)
-        boundary_rect[rr, cc] = True
-
-        lbl_stack = []
-        for s in np.dsplit(lbl, lbl.shape[2]):
-            # Find edges before cropping
-            s = canny(np.squeeze(s), sigma=0)
-            # Also attempt to close cells that intersect with the boundary
-            sfill = binary_fill_holes(s)
-            s = s | (sfill & boundary_rect)
-            lbl_stack += [s[..., np.newaxis]]
-        lbl = np.concatenate(lbl_stack, axis=2)
+        # Find edges and fill cells before cropping
+        for s in range(lbl.shape[2]):
+            lbl[:,:,s] = _filled_canny(lbl[:,:,s])
 
         return _apply_crop(img, xysize), _apply_crop(lbl, xysize)
 
@@ -390,4 +377,28 @@ def _elastic_deform(image, alpha, sigma, random_state=None):
         result = map_coordinates(image, indices,
                                 order=1, cval=cval).reshape(shape)
     return result
+
+
+def _filled_canny(segblur, bp=2):
+    """Use canny to find edge and fill object
+
+    Handles intersections with border by assuming that the object cannot
+    intersect all borders at once.
+
+    segblur:  segmentation image that has been gaussian blurred
+    bp:       border padding
+    """
+
+    se = canny(np.pad(segblur, bp, 'edge'), sigma=0)
+    sf = np.zeros(se.shape, dtype='bool')
+    sf[bp:-bp,bp:-bp] = se[bp:-bp,bp:-bp]
+
+    # The following assumes that the cell can't intersect with all borders at once
+    if se[:bp,:].any(): sf[:bp,:] = True
+    if se[-bp:,:].any(): sf[-bp:,:] = True
+    if se[:,:bp].any(): sf[:,:bp] = True
+    if se[:,-bp:].any(): sf[:,-bp:] = True
+
+    sf = binary_fill_holes(sf)
+    return sf[bp:-bp,bp:-bp]
 

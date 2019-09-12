@@ -4,8 +4,10 @@ from skimage.measure import regionprops
 from skimage.draw import polygon
 
 
-def get_mother_bud_stats(cnn_output, segs, masks=None, rprops=None):
-    _, _, _, _, p_budneck, p_bud = cnn_output
+def get_mother_bud_stats(pred, flattener, segs, masks=None, rprops=None):
+    tnames = flattener.names()
+    p_budneck = pred[tnames.index('bud_neck')]
+    p_bud = pred[tnames.index('sml_fill')]
 
     if masks is None:
         masks = [binary_fill_holes(s) for s in segs]

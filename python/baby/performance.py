@@ -27,6 +27,9 @@ def best_IoU(IoUs):
     best = np.zeros(nts)
     assignments = -np.ones(nts, dtype='int')
 
+    if nps ==0 and nts != 0:
+        return best, assignments
+
     for t in range(nts):
         maxind = np.argmax(IoUs[t, :])
         maxIoU =  IoUs[t, maxind]

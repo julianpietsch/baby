@@ -107,17 +107,20 @@ def unet_block(input_tensor, layer_sizes, batchnorm=True):
 ### MSD functions ###
 
 
-def msd_block(input_tensor, depth, width, dilations, batchnorm=True):
+def msd_block(input_tensor, depth, width, dilations, rep=1, batchnorm=True, prename=''):
     denselayer = input_tensor
     ndil = len(dilations)
     for d in range(depth):
         for w in range(width):
             idx = '_d{}_w{}'.format(d + 1, w + 1)
             dilation = dilations[((d * width + w) % ndil)]
-            layer = Conv2D(1, (3, 3), padding='same', dilation_rate=dilation,
-                           name='conv{}_dil{}'.format(idx, dilation))(denselayer)
+            layer = Conv2D(
+                rep, (3, 3), padding='same', dilation_rate=dilation,
+                name='{}conv{}_dil{}'.format(prename, idx, dilation)
+            )(denselayer)
             if batchnorm:
-                layer = BatchNormalization(name='bn' + idx)(layer)
-            layer = Activation('relu', name='act' + idx)(layer)
-            denselayer = concatenate([denselayer, layer], axis=-1, name='stack' + idx)
+                layer = BatchNormalization(name=prename + 'bn' + idx)(layer)
+            layer = Activation('relu', name=prename + 'act' + idx)(layer)
+            denselayer = concatenate([denselayer, layer], axis=-1,
+                                     name=prename + 'stack' + idx)
     return denselayer

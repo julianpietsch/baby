@@ -1,7 +1,9 @@
+from itertools import chain, compress
 import numpy as np
 from numpy import newaxis as nax
 from scipy.ndimage import (
-    minimum_filter, binary_dilation, binary_closing, binary_fill_holes
+    minimum_filter, binary_dilation, binary_erosion,
+    binary_closing, binary_opening, binary_fill_holes
 )
 from scipy import interpolate
 from skimage.measure import label, regionprops
@@ -11,7 +13,12 @@ from skimage.draw import ellipse_perimeter
 from skimage import filters
 
 
-connect_filt = diamond(1) # 3x3 filter for 1-connected patches
+squareconn = diamond(1) # 3x3 filter for 1-connected patches
+fullconn = np.ones((3,3), dtype='uint8')
+
+def binary_edge(imfill, footprint=fullconn):
+    """Get square-connected edges from filled image:"""
+    return minimum_filter(imfill, footprint=footprint) != imfill
 
 
 def mask_iou(a, b):
@@ -110,7 +117,7 @@ def morph_thresh_seg(cnn_outputs, interior_threshold=0.9,
                                 threshold=isbud_threshold) + budmasks
 
     # Return only the mask outlines
-    outlines = [minimum_filter(m, footprint=connect_filt) != m for m in masks]
+    outlines = [minimum_filter(m, footprint=squareconn) != m for m in masks]
 
     return outlines
 
@@ -272,7 +279,7 @@ def morph_ac_seg(cnn_outputs, interior_threshold=0.9,
         outmasks.append(final_mask)
 
     # Return only the mask outlines
-    outlines = [minimum_filter(m, footprint=connect_filt) != m for m in outmasks]
+    outlines = [minimum_filter(m, footprint=squareconn) != m for m in outmasks]
 
     return outlines
 
@@ -295,7 +302,13 @@ def eval_radial_spline(x, rho, phi):
     phi = np.concatenate((phi - offset, (2*np.pi,)))
 
     tck = interpolate.splrep(phi, rho, per=True)
-    return interpolate.splev(np.mod(x - offset, 2*np.pi), tck)
+    try:
+        return interpolate.splev(np.mod(x - offset, 2*np.pi), tck)
+    except ValueError as err:
+        print(x)
+        print(rho)
+        print(phi)
+        raise err
 
 
 def morph_radial_thresh_fit(outline, mask=None, rprops=None):
@@ -330,20 +343,48 @@ def morph_radial_thresh_fit(outline, mask=None, rprops=None):
         ray = ray[(rr>=0) & (rr<rr_max) & (cc>=0) & (cc<cc_max),:]
 
         edge_pix = np.flatnonzero(np.squeeze(outline[ray[:,0], ray[:,1]]) > 0.01)
+
+        if len(edge_pix) == 0:
+            radii.append(np.NaN)
+            continue
+
         ray = ray[edge_pix, :]
         edge_pix = np.average(ray, weights=outline[ray[:,0], ray[:,1]], axis=0)
         radii.append(np.sqrt(np.sum((edge_pix-centre)**2)))
 
-    return np.array(radii), angles
+    radii = np.array(radii)
+
+    # Use linear interpolation for any missing radii (e.g., if region intersects
+    # with image boundary):
+    nanradii = np.isnan(radii)
+    if nanradii.all():
+        radii = 0.1 * np.ones(angles.shape)
+    elif nanradii.any():
+        radii = np.interp(angles, angles[~nanradii], radii[~nanradii],
+                          period=2*np.pi)
+
+    return radii, angles
 
 
 def draw_radial(radii, angles, centre, shape):
+    mr, mc = shape
     im = np.zeros(shape, dtype='bool')
-    phi = np.linspace(0, 2*np.pi, np.round(4*np.pi*np.max(radii)).astype('int'))
-    rho = eval_radial_spline(phi, radii, angles)
+    neval = np.round(4*np.pi*np.max(radii)).astype('int')
+    if neval>1:
+        phi = np.linspace(0, 2*np.pi, neval)
+        rho = eval_radial_spline(phi, radii, angles)
+    else:
+        phi = 0
+        rho = 0
     rr = np.round(centre[0] + rho * np.cos(phi)).astype('int')
     cc = np.round(centre[1] + rho * np.sin(phi)).astype('int')
+    rr[rr < 0] = 0
+    rr[rr >= mr] = mr - 1
+    cc[cc < 0] = 0
+    cc[cc >= mc] = mc - 1
     im[rr, cc] = True
+    # valid = (rr >= 0) & (cc >= 0) & (rr < mr) & (cc < mc)
+    # im[rr[valid], cc[valid]] = True
     return im
 
 
@@ -389,7 +430,7 @@ def morph_radial_thresh_seg(cnn_outputs, interior_threshold=0.9,
             masks = masks + budmasks
 
     # Need mask outlines and region properties
-    mseg = [minimum_filter(m, footprint=connect_filt) != m for m in masks]
+    mseg = [minimum_filter(m, footprint=squareconn) != m for m in masks]
     rprops = [regionprops(m.astype('int'), coordinates='rc')[0] for m in masks]
 
     outlines = []
@@ -400,6 +441,185 @@ def morph_radial_thresh_seg(cnn_outputs, interior_threshold=0.9,
         outlines.append(draw_radial(radii, angles, rp.centroid, shape))
 
     return outlines
+
+
+def thresh_seg(p_int, interior_threshold=0.5, nclosing=0, nopening=0,
+               ndilate=0, return_area=False):
+    """Segment cell outlines from morphology output of CNN by fitting radial
+    spline to threshold output
+    """
+
+    lbl, nmasks = label(p_int > interior_threshold, return_num=True)
+    for l in range(nmasks):
+        mask = lbl == l + 1
+        if nclosing > 0:
+            mask = binary_closing(mask, iterations=nclosing)
+        if nopening > 0:
+            mask = binary_opening(mask, iterations=nopening)
+        if ndilate > 0:
+            mask = binary_dilation(mask, iterations=ndilate)
+
+        if return_area:
+            yield mask, mask.sum()
+        else:
+            yield mask
+
+
+def single_region_prop(mask):
+    return regionprops(mask.astype('int'), coordinates='rc')[0]
+
+
+def outlines_to_radial(outlines, rprops, return_outlines=False):
+    coords = [(rp.centroid,) + morph_radial_thresh_fit(outline, None, rp)
+             for outline, rp in zip(outlines, rprops)]
+
+    if return_outlines:
+        outlines = [draw_radial(radii, angles, centroid, o.shape)
+                    for (centroid, radii, angles), o in zip(coords, outlines)]
+        return (coords, outlines)
+    else:
+        return coords
+
+
+def get_edge_scores(outlines, p_edge):
+    return [
+        (p_edge * binary_dilation(o, iterations=2)).mean() for o in outlines
+    ]
+
+
+def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
+                      interior_threshold=0.5, nclosing=0, nopening=0,
+                      min_area=10, pedge_thresh=None, fit_radial=False,
+                      use_group_thresh=False, group_thresh_expansion=0.,
+                      similarity_thresh=0.8,
+                      return_masks=False, return_coords=False):
+
+    ngroups = len(cellgroups)
+    def broadcast_arg(arg, argname, t=int):
+        if type(arg) == t:
+            arg = (arg,) * ngroups
+
+        arg = list(arg)
+        assert len(arg) == ngroups, \
+            '"{}" is of incorrect length'.format(argname)
+        return arg
+
+    interior_threshold = broadcast_arg(
+        interior_threshold, 'interior_threshold', float)
+    nclosing = broadcast_arg(nclosing, 'nclosing')
+    nopening = broadcast_arg(nopening, 'nopening')
+    min_area = broadcast_arg(min_area, 'min_area')
+
+    tnames = flattener.names()
+
+    if not fit_radial and len(pred) > 0:
+        shape = np.squeeze(pred[0]).shape
+        border_rect = np.zeros(shape, dtype='bool')
+        border_rect[0,:] = True
+        border_rect[:,0] = True
+        border_rect[-1,:] = True
+        border_rect[:,-1] = True
+
+    group_segs = []
+    for g, thresh, nc, no, ma in zip(cellgroups, interior_threshold,
+                                     nclosing, nopening, min_area):
+        t_int, t_fill, t_edge = flattener.getGroupTargets(
+            g, ['interior', 'filled', 'edge'])
+        t_int = t_int or t_fill
+        assert t_int is not None, \
+            '"{}" has no "interior" or "filled" target'.format(g)
+        tdef = flattener.getTargetDef(t_int)
+        p_int = pred[tnames.index(t_int)]
+
+        if use_group_thresh:
+            lower = tdef.get('lower', 1)
+            upper = tdef.get('upper', np.Inf)
+            if upper == np.Inf:
+                expansion = group_thresh_expansion * lower
+            else:
+                expansion = group_thresh_expansion * (upper - lower)
+            lower -= expansion
+            lower = max(lower, ma)
+            upper += expansion
+        else:
+            lower, upper = ma, np.Inf
+
+        masks_areas = [(m, a) for m, a in thresh_seg(
+            p_int, interior_threshold=thresh or 0.5, nclosing=nc or 0,
+            nopening=no or 0, ndilate=tdef.get('nerode', 0),
+            return_area=True) if a >= lower and a < upper]
+
+        if len(masks_areas) > 0:
+            masks, areas = zip(*masks_areas)
+        else:
+            masks, areas = [], []
+
+        edges = [binary_edge(m) for m in masks]
+
+        if fit_radial:
+            rprops = [single_region_prop(m) for m in masks]
+            coords, edges = outlines_to_radial(
+                edges, rprops, return_outlines=True)
+            masks = [binary_fill_holes(o) for o in edges]
+        else:
+            edges = [e | (border_rect & m) for e, m in zip(edges, masks)]
+            coords = [tuple()] * len(masks)
+
+        if pedge_thresh is not None:
+            assert t_edge is not None, '"{}" has no "edge" target'.format(g)
+            p_edge = pred[tnames.index(t_edge)]
+            edge_scores = get_edge_scores(edges, p_edge)
+        else:
+            edge_scores = np.ones(len(masks))
+
+        group_segs.append(list(zip(
+            masks, areas, len(masks) * (lower, upper),
+            edge_scores, edges, coords
+        )))
+
+    # Only keep cells whose outlines overlap well with the predicted edge
+    if pedge_thresh is not None:
+        group_segs = [[val for val in group if val[3] > pedge_thresh]
+                    for group in group_segs]
+
+    # Resolve any cells duplicated across adjacent groups:
+    for lgi, ugi in zip(range(0, ngroups - 1), range(1, ngroups)):
+        lg = group_segs[lgi]
+        ug = group_segs[ugi]
+
+        pairs = np.array([(li, ui) for ui in range(len(ug))
+                          for li in range(len(lg))])
+        IoUs = np.array([mask_iou(lg[li][0], ug[ui][0]) for li, ui in pairs])
+
+        pairs = pairs[IoUs > similarity_thresh]
+
+        if pedge_thresh is not None:
+            lg_discard = [li for li, ui in pairs if lg[li][3] < ug[ui][3]]
+            ug_discard = [ui for li, ui in pairs if lg[li][3] >= ug[ui][3]]
+        else:
+            lg_discard = [li for li, ui in pairs if lg[li][1] < ug[ui][1]]
+            ug_discard = [ui for li, ui in pairs if lg[li][1] >= ug[ui][1]]
+
+        group_segs[lgi] = [val for li, val in enumerate(lg) if li not in lg_discard]
+        group_segs[ugi] = [val for ui, val in enumerate(ug) if ui not in ug_discard]
+
+    outputs = list(chain.from_iterable([
+        [(e, m, c) for m, _, _, _, e, c in group] for group in group_segs
+    ]))
+    if len(outputs) > 0:
+        edges, masks, coords = zip(*outputs)
+    else:
+        edges, masks, coords = 3 * [[]]
+
+    if return_coords or return_masks:
+        output = (edges,)
+        if return_masks:
+            output += (masks,)
+        if return_coords:
+            output += (coords,)
+        return output
+    else:
+        return edges
 
 
 def morph_radial_edge_seg(cnn_outputs):

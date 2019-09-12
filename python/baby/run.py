@@ -10,32 +10,43 @@ from tensorflow.python.keras import models, layers
 from scipy.ndimage import minimum_filter
 from skimage.measure import regionprops
 
-from .models import bce_dice_loss, dice_loss
+from .models import bce_dice_loss, dice_loss, dice_coeff
 from .segmentation import (
-    morph_thresh_masks, morph_radial_thresh_fit, unique_masks, connect_filt,
-    mask_containment, draw_radial
+    morph_seg_grouped,
+    morph_thresh_masks, morph_radial_thresh_fit, unique_masks,
+    squareconn, mask_containment, draw_radial
 )
 from .tracking import get_mother_bud_stats
-from .io import preprocess_brightfield
+from .preprocessing import robust_norm, SegmentationFlattening
 from .utils import batch_iterator, split_batch_pred
 
 models_path = join(dirname(__file__),'..','..','models')
 
 class BabyRunner(object):
-    def __init__(self, morph_model_file=None, budassign_model_file=None):
+    def __init__(self, morph_model_file=None, flattener_file=None,
+                 budassign_model_file=None):
         self.reshaped_models = {}
 
         if morph_model_file is None:
             morph_model_file = join(
-                models_path, 'morphviz_msd_d80_bn_20190624.hdf5')
+                models_path, 'msd_d32r2_d16_grps_tv2_20190905.hdf5')
+
+        if flattener_file is None:
+            flattener_file = join(
+                models_path, 'flattener_v2_20190905.json')
 
         if budassign_model_file is None:
             budassign_model_file = join(
-                models_path, 'baby_randomforest_20190720.pkl')
+                models_path, 'baby_randomforest_20190906.pkl')
 
         self.morph_model = models.load_model(
             morph_model_file, custom_objects={
-                'bce_dice_loss': bce_dice_loss, 'dice_loss': dice_loss})
+                'bce_dice_loss': bce_dice_loss,
+                'dice_loss': dice_loss,
+                'dice_coeff': dice_coeff
+            })
+
+        self.flattener = SegmentationFlattening(flattener_file)
 
         with open(budassign_model_file, 'rb') as f:
             self.budassign_model = pickle.load(f)
@@ -60,101 +71,54 @@ class BabyRunner(object):
         return [p[:,:imdims[0],:imdims[1],:] for p in pred]
 
     def run(self, bf_img_batch):
-        # Choose optimal segmentation parameters found in Jupyter notebook for
-        # validation data:
-        interior_threshold = 0.90
-        # interior_threshold = 0.85
-        overlap_threshold = 0.8
-        bud_threshold = 0.8
-        bud_overlap = True
-        # isbud_threshold = 0.3
-        isbud_threshold = None
+        # Choose optimal segmentation parameters found in Jupyter notebook
+        # segmentation-190906.ipynb:
+        params = {
+            'interior_threshold': 0.6, 'nclosing': 2, 'nopening': 0,
+            'pedge_thresh': 0.001, 'fit_radial': True, 'similarity_thresh': 0.6,
+            'use_group_thresh': False
+        }
 
         output = []
 
         # First preprocess each brightfield image in batch
-        bf_img_batch = np.stack([preprocess_brightfield(img) for img in bf_img_batch])
+        bf_img_batch = np.stack([robust_norm(img, {}) for img in bf_img_batch])
 
         for batch in batch_iterator(bf_img_batch):
             morph_preds = split_batch_pred(self.morph_predict(batch))
 
             for cnn_output in morph_preds:
-                p_edge, _, p_interior, p_overlap, p_budneck, p_bud = cnn_output
-                shape = p_interior.shape
+                _, masks, coords = morph_seg_grouped(
+                    cnn_output, self.flattener, return_masks=True,
+                    return_coords=True, **params
+                )
 
-                if isbud_threshold is None and bud_threshold is not None:
-                    p_interior *= 1 - p_bud
-
-                p_interior *= 1 - p_edge
-
-                masks = morph_thresh_masks(
-                    p_interior, interior_threshold=interior_threshold,
-                    p_overlap=p_overlap, overlap_threshold=overlap_threshold)
-
-                budmasks = morph_thresh_masks(
-                    p_bud, interior_threshold=bud_threshold, dilate=False,
-                    p_overlap=p_overlap, overlap_threshold=overlap_threshold)
-
-                if isbud_threshold is not None:
-                    # Omit interior masks if they overlap with bud masks
-                    masks = unique_masks(masks, budmasks, iou_func=mask_containment,
-                                        threshold=isbud_threshold) + budmasks
+                if len(coords) > 0:
+                    centres, radii, angles = zip(*coords)
                 else:
-                    masks = masks + budmasks
+                    centres, radii, angles = 3 * [[]]
 
-                # Need mask outlines and region properties
-                mseg = [minimum_filter(m, footprint=connect_filt) != m for m in masks]
-                rprops = [regionprops(m.astype('int'), coordinates='rc')[0] for m in masks]
-
-                outlines = []
-                all_radii = []
-                all_angles = []
-                for mask, outline, rp in zip(masks, mseg, rprops):
-                    if rp.area<10:
-                        all_radii.append(None)
-                        all_angles.append(None)
-                        outlines.append(None)
-                        continue
-
-                    try:
-                        radii, angles = morph_radial_thresh_fit(outline, mask, rp)
-                    except:
-                        all_radii.append(None)
-                        all_angles.append(None)
-                    finally:
-                        all_radii.append(radii.tolist())
-                        all_angles.append(angles.tolist())
-
-                    try:
-                        outline = draw_radial(radii, angles, rp.centroid, shape)
-                    except:
-                        outlines.append(None)
-                    finally:
-                        outlines.append(outline)
-
-                ncells = len(outlines)
+                ncells = len(masks)
 
                 # Assign mothers to daughters (masks and rprops will be updated)
                 ba_prob_mat = np.nan * np.ones((ncells, ncells))
-                good_ol = np.flatnonzero([o is not None for o in outlines])
-                outlines = [o for o in outlines if o is not None]
-
-                mb_stats = get_mother_bud_stats(cnn_output, outlines)
+                mb_stats = get_mother_bud_stats(
+                    cnn_output, self.flattener, None, masks=masks)
                 mb_stats = np.hstack([s.flatten()[:,nax] for s in mb_stats])
                 good_stats = ~np.isnan(mb_stats).any(axis=1)
-                ba_probs = np.nan * np.ones(len(outlines)**2)
+                ba_probs = np.nan * np.ones(ncells**2)
                 if good_stats.any():
                     ba_probs[good_stats] = self.budassign_model.predict_proba(
                         mb_stats[good_stats,:])[:,1]
-                ba_probs = ba_probs.reshape((len(outlines),)*2)
+                ba_probs = ba_probs.reshape((ncells,)*2)
 
-                ba_prob_mat[good_ol[:,None], good_ol] = ba_probs
+                ba_prob_mat = ba_probs
 
                 # Save output as a dict
                 output.append({
-                    'centres': [rp.centroid for rp in rprops],
-                    'angles': all_angles,
-                    'radii': all_radii,
+                    'centres': centres,
+                    'angles': [a.tolist() for a in angles],
+                    'radii': [r.tolist() for r in radii],
                     'ba_probs': ba_prob_mat.tolist()
                 })
 
