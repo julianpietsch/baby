@@ -1,3 +1,4 @@
+from collections import Iterable
 from itertools import chain, compress
 import numpy as np
 from numpy import newaxis as nax
@@ -8,7 +9,7 @@ from scipy.ndimage import (
 from scipy import interpolate
 from skimage.measure import label, regionprops
 from skimage.segmentation import morphological_geodesic_active_contour
-from skimage.morphology import diamond
+from skimage.morphology import diamond, erosion
 from skimage.draw import ellipse_perimeter
 from skimage import filters
 
@@ -487,11 +488,20 @@ def get_edge_scores(outlines, p_edge):
     ]
 
 
+def iterative_erosion(img, iterations=1, **kwargs):
+    if iterations < 1:
+        return img
+
+    for i in range(iterations):
+        img = erosion(img, **kwargs)
+    return img
+
+
 def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
                       interior_threshold=0.5, nclosing=0, nopening=0,
                       min_area=10, pedge_thresh=None, fit_radial=False,
                       use_group_thresh=False, group_thresh_expansion=0.,
-                      similarity_thresh=0.8,
+                      containment_thresh=0.8, containment_func=mask_containment,
                       return_masks=False, return_coords=False):
 
     ngroups = len(cellgroups)
@@ -521,19 +531,26 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
         border_rect[:,-1] = True
 
     group_segs = []
-    for g, thresh, nc, no, ma in zip(cellgroups, interior_threshold,
-                                     nclosing, nopening, min_area):
-        t_int, t_fill, t_edge = flattener.getGroupTargets(
-            g, ['interior', 'filled', 'edge'])
-        t_int = t_int or t_fill
-        assert t_int is not None, \
-            '"{}" has no "interior" or "filled" target'.format(g)
-        tdef = flattener.getTargetDef(t_int)
-        p_int = pred[tnames.index(t_int)]
+    for group, thresh, nc, no, ma in zip(cellgroups, interior_threshold,
+                                         nclosing, nopening, min_area):
+
+        if type(group) == str:
+            group = (group,)
+
+        p_int, p_edge, tdefs = [], [], []
+        for g in group:
+            t_int, t_fill, t_edge = flattener.getGroupTargets(
+                g, ['interior', 'filled', 'edge'])
+            t_int = t_int or t_fill
+            assert t_int is not None, \
+                '"{}" has no "interior" or "filled" target'.format(g)
+            tdefs.append(flattener.getTargetDef(t_int))
+            p_int.append(pred[tnames.index(t_int)])
+            p_edge.append(pred[tnames.index(t_edge)])
 
         if use_group_thresh:
-            lower = tdef.get('lower', 1)
-            upper = tdef.get('upper', np.Inf)
+            lower = tdefs[0].get('lower', 1)
+            upper = tdefs[-1].get('upper', np.Inf)
             if upper == np.Inf:
                 expansion = group_thresh_expansion * lower
             else:
@@ -544,10 +561,24 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
         else:
             lower, upper = ma, np.Inf
 
+        nerode = [d.get('nerode', 0) for d in tdefs]
+        max_ne = np.max(nerode)
+
+        if len(p_int)==1:
+            p_int = p_int[0]
+            p_edge = p_edge[0]
+        else:
+            # Perform morphological erosion on any group members that do not
+            # match the maximum (NB: erosion here is non-binary):
+            p_int = [iterative_erosion(p, max_ne - ne)
+                     for p, ne in zip(p_int, nerode)]
+            p_int = np.dstack(p_int).max(axis=2)
+            p_edge = np.dstack(p_edge).max(axis=2)
+
         masks_areas = [(m, a) for m, a in thresh_seg(
             p_int, interior_threshold=thresh or 0.5, nclosing=nc or 0,
-            nopening=no or 0, ndilate=tdef.get('nerode', 0),
-            return_area=True) if a >= lower and a < upper]
+            nopening=no or 0, ndilate=max_ne, return_area=True)
+            if a >= lower and a < upper]
 
         if len(masks_areas) > 0:
             masks, areas = zip(*masks_areas)
@@ -589,9 +620,10 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
 
         pairs = np.array([(li, ui) for ui in range(len(ug))
                           for li in range(len(lg))])
-        IoUs = np.array([mask_iou(lg[li][0], ug[ui][0]) for li, ui in pairs])
+        containment = np.array([containment_func(lg[li][0], ug[ui][0])
+                                for li, ui in pairs])
 
-        pairs = pairs[IoUs > similarity_thresh]
+        pairs = pairs[containment > containment_thresh]
 
         if pedge_thresh is not None:
             lg_discard = [li for li, ui in pairs if lg[li][3] < ug[ui][3]]

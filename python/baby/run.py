@@ -74,9 +74,12 @@ class BabyRunner(object):
         # Choose optimal segmentation parameters found in Jupyter notebook
         # segmentation-190906.ipynb:
         params = {
-            'interior_threshold': 0.6, 'nclosing': 2, 'nopening': 0,
-            'pedge_thresh': 0.001, 'fit_radial': True, 'similarity_thresh': 0.6,
-            'use_group_thresh': False
+            'interior_threshold': (0.7,0.5,0.5),
+            'nclosing': (1,0,0),
+            'nopening': (1,0,0),
+            'pedge_thresh': 0.001, 'fit_radial': True,
+            'use_group_thresh': True,
+            'group_thresh_expansion': 0.1
         }
 
         output = []

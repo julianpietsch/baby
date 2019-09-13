@@ -27,16 +27,14 @@ def best_IoU(IoUs):
     best = np.zeros(nts)
     assignments = -np.ones(nts, dtype='int')
 
-    if nps ==0 and nts != 0:
-        return best, assignments
-
-    for t in range(nts):
-        maxind = np.argmax(IoUs[t, :])
-        maxIoU =  IoUs[t, maxind]
-        if maxIoU > 0:
-            best[t] = maxIoU
-            IoUs[:, maxind] = -np.Inf  # this object has now been claimed
-            assignments[t] = maxind
+    if nps > 0:
+        for t in range(nts):
+            maxind = np.argmax(IoUs[t, :])
+            maxIoU =  IoUs[t, maxind]
+            if maxIoU > 0:
+                best[t] = maxIoU
+                IoUs[:, maxind] = -np.Inf  # this object has now been claimed
+                assignments[t] = maxind
 
     return best, assignments
 
@@ -50,15 +48,16 @@ def calc_PR(IoUs, iou_thresh=0.5):
     recall = np.zeros(nps)
     assignments = -np.ones(nps, dtype='int')
 
-    for p in range(nps):
-        maxind = np.argmax(IoUs[:, p])
-        maxIoU = IoUs[maxind, p]
-        if maxIoU > iou_thresh:
-            nTP += 1
-            IoUs[maxind, :] = -np.Inf  # this object has now been claimed
-            assignments[p] = maxind
-        precision[p] = nTP / (p + 1)  # nTP / (nTP + nFP)
-        recall[p] = nTP / nts  # nTP / (nTP + nFN)
+    if nts > 0:
+        for p in range(nps):
+            maxind = np.argmax(IoUs[:, p])
+            maxIoU = IoUs[maxind, p]
+            if maxIoU > iou_thresh:
+                nTP += 1
+                IoUs[maxind, :] = -np.Inf  # this object has now been claimed
+                assignments[p] = maxind
+            precision[p] = nTP / (p + 1)  # nTP / (nTP + nFP)
+            recall[p] = nTP / nts  # nTP / (nTP + nFN)
 
     return precision, recall, assignments
 
