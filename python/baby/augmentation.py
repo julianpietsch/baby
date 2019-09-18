@@ -17,12 +17,12 @@ from skimage.draw import rectangle_perimeter
 from .preprocessing import segoutline_flattening
 
 
-AUGMENTATION_ORDER = ('rotate', 'vshift', 'hshift', 'downscale', 'crop',
-                      'vflip', 'movestacks', 'noise')
+AUGMENTATION_ORDER = ('substacks', 'rotate', 'vshift', 'hshift', 'downscale',
+                      'crop', 'vflip', 'movestacks', 'noise')
 
 
 class Augmenter(object):
-    def __init__(self, xy_out=80, probs={}, p_noop=0.05):
+    def __init__(self, xy_out=80, probs={}, p_noop=0.05, substacks=None):
         """
         Random data augmentation of img and lbl.
 
@@ -54,14 +54,19 @@ class Augmenter(object):
         self.aug_order = [a for a in AUGMENTATION_ORDER
                           if probs.get(a,1)>0 or a=='crop']
 
-        # Treat 'crop' specially to have p = 1
-        n_augs = len(self.aug_order) - 1
+        # Treat 'crop' and 'substacks' specially to have p = 1
+        guaranteed_augs = ('crop', 'substacks')
+        n_augs = len(self.aug_order) - len(guaranteed_augs)
         p_default = (1.-p_noop)**n_augs/n_augs
-        self.probs = np.array([1 if a=='crop' else probs.get(a, p_default)
-                               for a in self.aug_order])
+        self.probs = np.array([
+            1 if a in guaranteed_augs else probs.get(a, p_default)
+            for a in self.aug_order
+        ])
+
+        self.nsubstacks = substacks
 
 
-    def apply(self, img, lbl):
+    def __call__(self, img, lbl):
         """
         Random data augmentation of img and lbl.
 
@@ -103,6 +108,22 @@ class Augmenter(object):
             'xy dimensions do not match intended size after augmentation'
 
         return (img, lbl)
+
+
+    def substacks(self, img, lbl):
+        if self.nsubstacks == 1:
+            img = img[:,:,np.random.choice(range(img.shape[2])),None]
+        elif self.nsubstacks == 3:
+            choices = [[True, False, True, False, True],
+                       [True, True, False, False, True],
+                       [True, False, False, True, True],
+                       [False, True, True, False, True],
+                       [False, True, False, True, True],
+                       [True, False, True, True, False],
+                       [True, True, False, True, False]]
+            img = img[:,:,np.random.choice(choices)]
+
+        return img, lbl
 
 
     def rotate(self, img, lbl):
@@ -217,7 +238,6 @@ class Augmenter(object):
             repeated
         """
 
-        movestacks = np.random.choice(['No','Up','Down'], p=(0.8, 0.1, 0.1))
         if np.random.uniform()<0.5:
             # Move img stacks up by one
             img[:,:,1:] = img[:,:,:-1]
@@ -274,7 +294,7 @@ class SmoothedLabelAugmenter(Augmenter):
         self.targetgenfunc = targetgenfunc
 
 
-    def apply(self, img, lbl_info):
+    def __call__(self, img, lbl_info):
         """This augmenter needs to be used in combination with a label
         preprocessing function that returns both images and info.
         """
@@ -290,7 +310,7 @@ class SmoothedLabelAugmenter(Augmenter):
             lbl_stack += [s[..., np.newaxis]]
         lbl = np.concatenate(lbl_stack, axis=2)
 
-        img, lbl = super(SmoothedLabelAugmenter, self).apply(img, lbl)
+        img, lbl = super(SmoothedLabelAugmenter, self).__call__(img, lbl)
 
         # NB: to limit open shapes, the crop operation has been overloaded to
         # find edges before cropping
@@ -393,12 +413,16 @@ def _filled_canny(segblur, bp=2):
     sf = np.zeros(se.shape, dtype='bool')
     sf[bp:-bp,bp:-bp] = se[bp:-bp,bp:-bp]
 
-    # The following assumes that the cell can't intersect with all borders at once
-    if se[:bp,:].any(): sf[:bp,:] = True
-    if se[-bp:,:].any(): sf[-bp:,:] = True
-    if se[:,:bp].any(): sf[:,:bp] = True
-    if se[:,-bp:].any(): sf[:,-bp:] = True
-
+    # The following assumes that the cell does not intersect with opposing
+    # borders, filling bordering with two U-shaped border edges:
+    sf[:bp,:] = True
+    sf[-bp:,:] = True
+    sf[:,:bp] = True
     sf = binary_fill_holes(sf)
+
+    sf[:,:bp] = False
+    sf[:,-bp:] = True
+    sf = binary_fill_holes(sf)
+
     return sf[bp:-bp,bp:-bp]
 

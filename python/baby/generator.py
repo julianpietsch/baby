@@ -27,8 +27,7 @@ class ImageLabel(Sequence):
 
         self.batch_size = batch_size
 
-        assert isinstance(aug, Augmenter), \
-            '"aug" must be an "Augmenter" object'
+        assert callable(aug), '"aug" must be a callable'
         self.aug = aug
 
         # Check that all required images exist
@@ -79,7 +78,7 @@ class ImageLabel(Sequence):
                 img, lbl = [ppf(*load_tiled_image(im)) for ppf, im
                             in zip(self.preprocess, self.paths[i])]
 
-            img, lbl = self.aug.apply(img, lbl)
+            img, lbl = self.aug(img, lbl)
             lbl = np.dsplit(lbl, lbl.shape[2])
 
             img_batch.append(img)
