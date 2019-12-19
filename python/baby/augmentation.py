@@ -350,6 +350,34 @@ class SmoothedLabelAugmenter(Augmenter):
         )
 
 
+class DownscalingAugmenter(SmoothedLabelAugmenter):
+    def __init__(self,*args, pixdev=4, **kwargs):
+        super(DownscalingAugmenter, self).__init__(*args,**kwargs)
+        self.probs[self.aug_order.index('downscale')] = 1
+        self.pixdev = pixdev
+
+    def downscale(self, img, lbl, maxpix=None):
+        inshape = img.shape[:2]
+        if maxpix is None:
+            if self.xy_in is not None:
+                inshape = self.xy_in
+            maxpix = np.max([0, np.min(inshape) - np.max(self.xy_out)])
+
+        pix = np.arange(np.max([0, maxpix - self.pixdev]), maxpix+1)
+        if len(pix) == 0 or len(pix) == 1:
+            pix = maxpix
+        else:
+            pix = np.random.choice(pix)
+        scaling = (np.min(inshape)-pix)/np.min(inshape)
+        outshape = np.floor(np.array(img.shape[:2])*scaling)
+
+        return (
+            transform.resize(img, outshape),
+            transform.resize(lbl, outshape, anti_aliasing=False)
+        )
+
+
+
 # =============== UTILITY FUNCTIONS ====================== #
 
 

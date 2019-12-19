@@ -1,11 +1,13 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 import numpy as np
 from numpy import newaxis as nax
 import pickle
 
 from os.path import dirname, join
 
-import tensorflow
-from tensorflow.python.keras import models, layers
+import tensorflow as tf
+from tensorflow.keras import models, layers
+from tensorflow.keras import backend as K
 
 from scipy.ndimage import minimum_filter
 from skimage.measure import regionprops
@@ -22,14 +24,18 @@ from .utils import batch_iterator, split_batch_pred
 
 models_path = join(dirname(__file__),'..','..','models')
 
+tf_version = [int(v) for v in tf.version.VERSION.split('.')]
+
 class BabyRunner(object):
     def __init__(self, morph_model_file=None, flattener_file=None,
-                 budassign_model_file=None):
+                 budassign_model_file=None, default_image_size=None,
+                 session=None, graph=None):
         self.reshaped_models = {}
 
         if morph_model_file is None:
             morph_model_file = join(
-                models_path, 'msd_d32r2_d16_grps_tv2_20190905.hdf5')
+                #models_path, 'msd_d32r2_d16_grps_tv2_20190905.hdf5')
+                models_path, 'I5_msd_d80_20190916.hdf5')
 
         if flattener_file is None:
             flattener_file = join(
@@ -39,19 +45,65 @@ class BabyRunner(object):
             budassign_model_file = join(
                 models_path, 'baby_randomforest_20190906.pkl')
 
-        self.morph_model = models.load_model(
-            morph_model_file, custom_objects={
-                'bce_dice_loss': bce_dice_loss,
-                'dice_loss': dice_loss,
-                'dice_coeff': dice_coeff
-            })
+        self.session = None
+        self.graph = None
+        if tf_version[0] == 1:
+            if session is None:
+                session = K.get_session()
+            if graph is None:
+                graph = tf.get_default_graph()
+            self.session = session
+            self.graph = graph
+
+        print('Loading Keras model "{}"...'.format(morph_model_file))
+        if tf_version[0] == 1:
+            with self.graph.as_default():
+                K.set_session(session)
+                print('Loading model into session "{}"...'.format(
+                    K.get_session()))
+                self.morph_model = models.load_model(
+                    morph_model_file, custom_objects={
+                        'bce_dice_loss': bce_dice_loss,
+                        'dice_loss': dice_loss,
+                        'dice_coeff': dice_coeff
+                    })
+        else:
+            self.morph_model = models.load_model(
+                morph_model_file, custom_objects={
+                    'bce_dice_loss': bce_dice_loss,
+                    'dice_loss': dice_loss,
+                    'dice_coeff': dice_coeff
+                })
 
         self.flattener = SegmentationFlattening(flattener_file)
 
         with open(budassign_model_file, 'rb') as f:
             self.budassign_model = pickle.load(f)
 
-    def morph_predict(self, X):
+        # Run prediction on mock image to load model for prediction
+        _, x, y, z = self.morph_model.input.shape
+
+        if default_image_size is not None:
+            try:
+                x, y = default_image_size
+            except TypeError:
+                x = default_image_size
+                y = x
+
+        self.morph_predict(np.zeros((1,x,y,z)))
+
+
+    @property
+    def depth(self):
+        return self.morph_model.input.shape[3]
+
+
+    def morph_predict(self, X, needs_context=True):
+        if tf_version[0] == 1 and needs_context:
+            with self.graph.as_default():
+                K.set_session(self.session)
+                return self.morph_predict(X, needs_context=False)
+
         imdims = X.shape[1:3]
         # Current MSD model requires shape to be divisible by 8
         nndims = tuple([int(np.ceil(float(d)/8.))*8 for d in imdims])
@@ -67,8 +119,14 @@ class BabyRunner(object):
                 i = layers.Input(shape=X.shape[1:])
                 self.reshaped_models[nndims] = models.Model(i, self.morph_model(i))
 
+        if tf_version[0] == 1:
+            print('Running prediction in session "{}"...'.format(
+                K.get_session()))
+
         pred = self.reshaped_models[nndims].predict(X)
+
         return [p[:,:imdims[0],:imdims[1],:] for p in pred]
+
 
     def run(self, bf_img_batch):
         # Choose optimal segmentation parameters found in Jupyter notebook

@@ -1,0 +1,20 @@
+{
+  "prime95b_brightfield_60x_5z": {
+    "morph_model_file": "models/I5_msd_d80_20190916.hdf5",
+    "flattener_file": "models/flattener_v2_20190905.json",
+    "budassign_model_file": "models/baby_randomforest_20190906.pkl",
+    "default_image_size": [117, 117]
+  },
+  "evolve_brightfield_60x_5z": {
+    "morph_model_file": "models/I5_evolve_msd_d80_extra_20190916.hdf5",
+    "flattener_file": "models/flattener_60x_evolve_20190916.json",
+    "budassign_model_file": "models/baby_randomforest_20190906.pkl",
+    "default_image_size": [81, 81]
+  },
+  "prime95b_brightfield_60x_1z": {
+      "morph_model_file": "models/I1_unet4s_20190916.hdf5",
+      "flattener_file": "models/flattener_v2_20190905.json",
+      "budassign_model_file": "models/baby_randomforest_20190906.pkl",
+      "default_image_size": [117, 117]
+  }
+}
