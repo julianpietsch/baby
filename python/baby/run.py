@@ -3,7 +3,7 @@ import numpy as np
 from numpy import newaxis as nax
 import pickle
 
-from os.path import dirname, join
+from os.path import dirname, join, isfile
 
 import tensorflow as tf
 from tensorflow.keras import models, layers
@@ -36,14 +36,20 @@ class BabyRunner(object):
             morph_model_file = join(
                 #models_path, 'msd_d32r2_d16_grps_tv2_20190905.hdf5')
                 models_path, 'I5_msd_d80_20190916.hdf5')
+        elif not isfile(morph_model_file):
+            morph_model_file = join(models_path, morph_model_file)
 
         if flattener_file is None:
             flattener_file = join(
                 models_path, 'flattener_v2_20190905.json')
+        elif not isfile(flattener_file):
+            flattener_file = join(models_path, flattener_file)
 
         if budassign_model_file is None:
             budassign_model_file = join(
                 models_path, 'baby_randomforest_20190906.pkl')
+        elif not isfile(budassign_model_file):
+            budassign_model_file = join(models_path, budassign_model_file)
 
         self.session = None
         self.graph = None
