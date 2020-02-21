@@ -29,7 +29,7 @@ def mask_iou(a, b):
 
 def mask_containment(a, b):
     """Max of intersection over a or over b"""
-    return np.max(np.sum(a & b) / np.array(np.sum(a), np.sum(b)))
+    return np.max(np.sum(a & b) / np.array([np.sum(a), np.sum(b)]))
 
 
 def morph_thresh_masks(p_interior, p_overlap=None, dilate=True,
@@ -444,13 +444,14 @@ def morph_radial_thresh_seg(cnn_outputs, interior_threshold=0.9,
     return outlines
 
 
-def thresh_seg(p_int, interior_threshold=0.5, nclosing=0, nopening=0,
-               ndilate=0, return_area=False):
+def thresh_seg(p_int, interior_threshold=0.5, connectivity=None,
+               nclosing=0, nopening=0, ndilate=0, return_area=False):
     """Segment cell outlines from morphology output of CNN by fitting radial
     spline to threshold output
     """
 
-    lbl, nmasks = label(p_int > interior_threshold, return_num=True)
+    lbl, nmasks = label(p_int > interior_threshold, return_num=True,
+                        connectivity=connectivity)
     for l in range(nmasks):
         mask = lbl == l + 1
         if nclosing > 0:
@@ -499,8 +500,10 @@ def iterative_erosion(img, iterations=1, **kwargs):
 
 def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
                       interior_threshold=0.5, nclosing=0, nopening=0,
+                      connectivity=2,
                       min_area=10, pedge_thresh=None, fit_radial=False,
                       use_group_thresh=False, group_thresh_expansion=0.,
+                      ingroup_edge_segment=False,
                       containment_thresh=0.8, containment_func=mask_containment,
                       return_masks=False, return_coords=False):
 
@@ -519,6 +522,7 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
     nclosing = broadcast_arg(nclosing, 'nclosing')
     nopening = broadcast_arg(nopening, 'nopening')
     min_area = broadcast_arg(min_area, 'min_area')
+    connectivity = broadcast_arg(connectivity, 'connectivity')
 
     tnames = flattener.names()
 
@@ -531,8 +535,9 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
         border_rect[:,-1] = True
 
     group_segs = []
-    for group, thresh, nc, no, ma in zip(cellgroups, interior_threshold,
-                                         nclosing, nopening, min_area):
+    for group, thresh, nc, no, ma, conn in \
+            zip(cellgroups, interior_threshold, nclosing,
+                nopening, min_area, connectivity):
 
         if type(group) == str:
             group = (group,)
@@ -575,9 +580,15 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
             p_int = np.dstack(p_int).max(axis=2)
             p_edge = np.dstack(p_edge).max(axis=2)
 
+        if ingroup_edge_segment:
+            p_int = p_int * (1 - p_edge)
+            if max_ne == 0:
+                max_ne = 1
+
         masks_areas = [(m, a) for m, a in thresh_seg(
-            p_int, interior_threshold=thresh or 0.5, nclosing=nc or 0,
-            nopening=no or 0, ndilate=max_ne, return_area=True)
+            p_int, interior_threshold=thresh or 0.5,
+            nclosing=nc or 0, nopening=no or 0, ndilate=max_ne,
+            return_area=True, connectivity=conn)
             if a >= lower and a < upper]
 
         if len(masks_areas) > 0:

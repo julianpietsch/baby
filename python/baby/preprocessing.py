@@ -124,6 +124,7 @@ class SegmentationFlattening(object):
     def __init__(self, filename=None):
         self.propdepends = {
             'filled': set(),
+            'filledsum': set(),
             'edge': set(),
             'overlap': set(),
             'interior': {'overlap'},
@@ -137,14 +138,14 @@ class SegmentationFlattening(object):
         if filename is not None:
             self.load(filename)
 
-    def addGroup(self, name, lower=1, upper=np.Inf, nerode=0, budonly=False):
+    def addGroup(self, name, lower=1, upper=np.Inf, nerode=0,
+                 budonly=False, focus=None):
         assert name not in self.groupdef, \
             '"{}" group already exists'.format(name)
-        self.groupdef[name] = (lower, upper, budonly, nerode)
-        self.nerode = [name]
+        self.groupdef[name] = (lower, upper, budonly, nerode, focus)
         self.groupprops[name] = set()
 
-    def addTarget(self, name, group, prop):
+    def addTarget(self, name, group, prop, focusStacks=[]):
         assert name not in {n for n, _, _ in self.targets}, \
             '"{}" target already exists'.format(name)
         assert group in self.groupdef, \
@@ -152,9 +153,19 @@ class SegmentationFlattening(object):
         assert prop in self.propdepends, \
             '"{}" is not a valid property'.format(prop)
 
-        self.targets.append((name, group, prop))
-        self.groupprops[group].add(prop)
-        self.groupprops[group] = self.groupprops[group].union(self.propdepends[prop])
+        if len(focusStacks) > 0:
+            lower, upper, budonly, nerode, _ = self.groupdef[group]
+            for f in focusStacks:
+                fgroup = '_'.join([group, str(f)])
+                self.addGroup(fgroup, lower=lower, upper=upper,
+                              nerode=nerode, budonly=budonly, focus=f)
+                self.targets.append(('_'.join([name, str(f)]), fgroup, prop))
+                self.groupprops[fgroup] = self.groupprops[group].union(
+                    {prop}, self.propdepends[prop])
+        else:
+            self.targets.append((name, group, prop))
+            self.groupprops[group] = self.groupprops[group].union(
+                {prop}, self.propdepends[prop])
 
     def names(self):
         return tuple(name for name, _, _ in self.targets)
@@ -180,9 +191,9 @@ class SegmentationFlattening(object):
             '"{}" target does not exist'.format(name)
 
         prop, group = target[0]
-        lower, upper, budonly, nerode = self.groupdef[group]
+        lower, upper, budonly, nerode, focus = self.groupdef[group]
         return {'prop': prop, 'lower': lower, 'upper': upper,
-                'budonly': budonly, 'nerode': nerode}
+                'budonly': budonly, 'nerode': nerode, 'focus': focus}
 
     def save(self, filename):
         with open(filename, 'wt') as f:
@@ -195,7 +206,9 @@ class SegmentationFlattening(object):
     def load(self, filename):
         with open(filename, 'rt') as f:
             data = json.load(f, object_hook=as_python_object)
-        self.groupdef = data.get('groupdef', {})
+        # Backwards-compatible loading for when focus was not a group prop
+        self.groupdef = {k: tuple(g) + (None,) if len(g) == 4 else tuple(g)
+                         for k, g in data.get('groupdef', {}).items()}
         self.groupprops = data.get('groupprops', {})
         self.targets = data.get('targets', [])
 
@@ -237,10 +250,34 @@ class SegmentationFlattening(object):
             isbud = np.array([l in buds for l in labels], dtype='bool')
 
         budonly = {True: isbud, False: np.ones(isbud.shape, dtype='bool')}
+
+        # If the group does not limit to focus, then all cells are candidates
+        focusAssignments = {}
+        focusAssignments[None] = np.ones(areas.shape, dtype='bool')
+
+        # Process focus if any groups require it
+        focusNums = list({g[4] for g in self.groupdef.values()
+                          if g[4] is not None})
+        if len(focusNums) > 0:
+            cellFocus = info.get('focusStack', [])
+            if type(cellFocus) != list:
+                cellFocus = [cellFocus]
+            assert len(cellFocus) == ncell, 'image with bad focus label found'
+
+            # print('focusNums = {}'.format(', '.join([str(f) for f in focusNums])))
+            fNumArray = np.array(focusNums)
+            cellAssignment = np.array([np.argmin(np.abs(fNumArray - f))
+                                    for f in cellFocus])
+            # print('cellAssignment = {}'.format(', '.join([str(f) for f in cellAssignment])))
+            focusAssignments = {f: cellAssignment == i
+                                for i, f in enumerate(focusNums)}
+
         groupinds = {
-            g: (np.flatnonzero((areas >= lt) & (areas < ut) & budonly[bo]), ne)
-            for g, (lt, ut, bo, ne) in self.groupdef.items()
+            g: (np.flatnonzero((areas >= lt) & (areas < ut) & budonly[bo]
+                               & focusAssignments[f]), ne)
+            for g, (lt, ut, bo, ne, f) in self.groupdef.items()
         }
+        # print(groupinds)
 
         groupims = {}
         for g, (inds, nerode) in groupinds.items():
@@ -249,6 +286,9 @@ class SegmentationFlattening(object):
 
             if 'filled' in gprops:
                 groupims[g]['filled'] = filled_stack[:,:,inds].any(axis=2)
+
+            if 'filledsum' in gprops:
+                groupims[g]['filledsum'] = filled_stack[:,:,inds].sum(axis=2)
 
             if 'edge' in gprops:
                 groupims[g]['edge'] = edge_stack[:,:,inds].any(axis=2)

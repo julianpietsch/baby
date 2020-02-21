@@ -18,7 +18,7 @@ from .preprocessing import segoutline_flattening
 
 
 AUGMENTATION_ORDER = ('substacks', 'rotate', 'vshift', 'hshift', 'downscale',
-                      'crop', 'vflip', 'movestacks', 'noise')
+                      'crop', 'vflip', 'hflip', 'movestacks', 'noise')
 
 
 class Augmenter(object):
@@ -111,8 +111,12 @@ class Augmenter(object):
 
 
     def substacks(self, img, lbl):
+        self.refslice = 0
         if self.nsubstacks == 1:
-            img = img[:,:,np.random.choice(range(img.shape[2])),None]
+            self.refslice = np.random.choice(range(img.shape[2])) + 1
+            # print('selecting substack {} / {}...'.format(
+            #     self.refslice, img.shape[2]))
+            img = img[:, :, self.refslice - 1, None]
         elif self.nsubstacks == 3:
             choices = [[True, False, True, False, True],
                        [True, True, False, False, True],
@@ -316,6 +320,15 @@ class SmoothedLabelAugmenter(Augmenter):
         # find edges before cropping
 
         # Finally generate flattened targets from segmentation outlines
+        if 'focusStack' in info:
+            info = info.copy()
+            cellFocus = info['focusStack']
+            if type(cellFocus) != list:
+                cellFocus = [cellFocus]
+            # print('old focus = {}'.format(', '.join([str(f) for f in cellFocus])))
+            info['focusStack'] = [f - self.refslice for f in cellFocus]
+            # print('new focus = {}'.format(', '.join([str(f) for f in info['focusStack']])))
+
         lbl = self.targetgenfunc(lbl, info)
 
         return img, lbl
@@ -351,7 +364,7 @@ class SmoothedLabelAugmenter(Augmenter):
 
 
 class DownscalingAugmenter(SmoothedLabelAugmenter):
-    def __init__(self,*args, pixdev=4, **kwargs):
+    def __init__(self, *args, pixdev=4, **kwargs):
         super(DownscalingAugmenter, self).__init__(*args,**kwargs)
         self.probs[self.aug_order.index('downscale')] = 1
         self.pixdev = pixdev

@@ -58,28 +58,30 @@ def encoder_block(input_tensor, num_filters, stage, batchnorm=True):
     return encoder_pool, encoder
 
 
-def decoder_block(input_tensor, concat_tensor, num_filters, stage, batchnorm=True):
+def decoder_block(input_tensor, concat_tensor, num_filters, stage,
+                  batchnorm=True, prename=''):
     postfix = '_{}'.format(stage + 1)
     decoder = Conv2DTranspose(num_filters, (2, 2), strides=(2, 2), padding='same',
-                              name='up' + postfix)(input_tensor)
-    decoder = concatenate([concat_tensor, decoder], axis=-1, name='skip' + postfix)
+                              name=prename + 'up' + postfix)(input_tensor)
+    decoder = concatenate([concat_tensor, decoder], axis=-1,
+                          name=prename + 'skip' + postfix)
     if batchnorm:
-        decoder = BatchNormalization(name='up_bn' + postfix)(decoder)
-    decoder = Activation('relu', name='up_act' + postfix)(decoder)
+        decoder = BatchNormalization(name=prename + 'up_bn' + postfix)(decoder)
+    decoder = Activation('relu', name=prename + 'up_act' + postfix)(decoder)
 
     postfix = '_{}a'.format(stage + 1)
     decoder = Conv2D(num_filters, (3, 3), padding='same',
-                     name='dec_conv' + postfix)(decoder)
+                     name=prename + 'dec_conv' + postfix)(decoder)
     if batchnorm:
-        decoder = BatchNormalization(name='dec_bn' + postfix)(decoder)
-    decoder = Activation('relu', name='dec_act' + postfix)(decoder)
+        decoder = BatchNormalization(name=prename + 'dec_bn' + postfix)(decoder)
+    decoder = Activation('relu', name=prename + 'dec_act' + postfix)(decoder)
 
     postfix = '_{}b'.format(stage + 1)
     decoder = Conv2D(num_filters, (3, 3), padding='same',
-                     name='dec_conv' + postfix)(decoder)
+                     name=prename + 'dec_conv' + postfix)(decoder)
     if batchnorm:
-        decoder = BatchNormalization(name='dec_bn' + postfix)(decoder)
-    decoder = Activation('relu', name='dec_act' + postfix)(decoder)
+        decoder = BatchNormalization(name=prename + 'dec_bn' + postfix)(decoder)
+    decoder = Activation('relu', name=prename + 'dec_act' + postfix)(decoder)
     return decoder
 
 

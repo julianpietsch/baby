@@ -141,7 +141,9 @@ class BabyRunner(object):
             'interior_threshold': (0.7,0.5,0.5),
             'nclosing': (1,0,0),
             'nopening': (1,0,0),
+            'connectivity': (2,2,1),
             'pedge_thresh': 0.001, 'fit_radial': True,
+            'ingroup_edge_segment': True,
             'use_group_thresh': True,
             'group_thresh_expansion': 0.1
         }
