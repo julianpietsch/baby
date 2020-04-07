@@ -1,40 +1,71 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
-import numpy as np
-from numpy import newaxis as nax
-import pickle
-
+from __future__ import (
+    absolute_import, division, print_function, unicode_literals
+)
 from os.path import dirname, join, isfile
+from itertools import repeat
+
+import numpy as np
+import pickle
 
 import tensorflow as tf
 from tensorflow.keras import models, layers
 from tensorflow.keras import backend as K
 
-from scipy.ndimage import minimum_filter
-from skimage.measure import regionprops
-
 from .models import bce_dice_loss, dice_loss, dice_coeff
-from .segmentation import (
-    morph_seg_grouped,
-    morph_thresh_masks, morph_radial_thresh_fit, unique_masks,
-    squareconn, mask_containment, draw_radial
-)
-from .tracking import get_mother_bud_stats
+from .segmentation import morph_seg_grouped
+from .tracker import Tracker
 from .preprocessing import robust_norm, SegmentationFlattening
 from .utils import batch_iterator, split_batch_pred
 
-models_path = join(dirname(__file__),'..','..','models')
+models_path = join(dirname(__file__), '..', '..', 'models')
 
 tf_version = [int(v) for v in tf.version.VERSION.split('.')]
 
-class BabyRunner(object):
+# Default to optimal segmentation parameters found in Jupyter notebook
+# segmentation-190906.ipynb:
+default_params = {
+    'interior_threshold': (0.7, 0.5, 0.5),
+    'nclosing': (1, 0, 0),
+    'nopening': (1, 0, 0),
+    'connectivity': (2, 2, 1),
+    'pedge_thresh': 0.001, 'fit_radial': True,
+    'ingroup_edge_segment': True,
+    'use_group_thresh': True,
+    'group_thresh_expansion': 0.1
+}
+
+
+class BabyBrain(object):
+    '''Coordinator for the segmentation and tracking models
+
+    Models are specified by file name, which can either be the path to a model
+    file or the name of the file in the default "models" dir shipped with this
+    package. If any are left unspecified, then default models will be loaded.
+
+    :param morph_model_file: neural network model taking a stack of images and
+        outputting predictions according to the paired flattener model.
+    :param flattener_file: a saved `SegmentationFlattening` model specifying
+        the trained target types for each output layer of the neural network.
+    :param celltrack_model_file:
+    :param budassign_model_file:
+    :param default_image_size:
+    :param params: dict of keyword parameters to be passed to the
+        `morph_seg_grouped` function when segmenting.
+    :param session: optionally specify the Tensorflow session to load the
+        neural network model into (useful only for Tensorflow versions <2)
+    :param graph: optionally specify the Tensorflow graph to load the neural
+        network model into (useful only for Tensorflow versions <2)
+    '''
+
     def __init__(self, morph_model_file=None, flattener_file=None,
-                 budassign_model_file=None, default_image_size=None,
+                 celltrack_model_file=None, budassign_model_file=None,
+                 default_image_size=None, params=default_params,
                  session=None, graph=None):
+
         self.reshaped_models = {}
 
         if morph_model_file is None:
             morph_model_file = join(
-                #models_path, 'msd_d32r2_d16_grps_tv2_20190905.hdf5')
                 models_path, 'I5_msd_d80_20190916.hdf5')
         elif not isfile(morph_model_file):
             morph_model_file = join(models_path, morph_model_file)
@@ -82,9 +113,15 @@ class BabyRunner(object):
                 })
 
         self.flattener = SegmentationFlattening(flattener_file)
+        self.params = params
 
+        # Load tracker models and initialise Tracker
+        with open(celltrack_model_file, 'rb') as f:
+            celltrack_model = pickle.load(f)
         with open(budassign_model_file, 'rb') as f:
-            self.budassign_model = pickle.load(f)
+            budassign_model = pickle.load(f)
+        self.tracker = Tracker(ctrack_model=celltrack_model,
+                               ba_model=budassign_model)
 
         # Run prediction on mock image to load model for prediction
         _, x, y, z = self.morph_model.input.shape
@@ -96,13 +133,11 @@ class BabyRunner(object):
                 x = default_image_size
                 y = x
 
-        self.morph_predict(np.zeros((1,x,y,z)))
-
+        self.morph_predict(np.zeros((1, x, y, z)))
 
     @property
     def depth(self):
         return self.morph_model.input.shape[3]
-
 
     def morph_predict(self, X, needs_context=True):
         if tf_version[0] == 1 and needs_context:
@@ -112,10 +147,10 @@ class BabyRunner(object):
 
         imdims = X.shape[1:3]
         # Current MSD model requires shape to be divisible by 8
-        nndims = tuple([int(np.ceil(float(d)/8.))*8 for d in imdims])
-        if not all([n==i for n, i in zip(nndims, imdims)]):
-            xpad, ypad = tuple(n-i for n,i in zip(nndims,imdims))
-            X = np.pad(X,((0,0),(0,xpad),(0,ypad),(0,0)),'edge')
+        nndims = tuple([int(np.ceil(float(d) / 8.)) * 8 for d in imdims])
+        if not all([n == i for n, i in zip(nndims, imdims)]):
+            xpad, ypad = tuple(n - i for n, i in zip(nndims, imdims))
+            X = np.pad(X, ((0, 0), (0, xpad), (0, ypad), (0, 0)), 'edge')
 
         if nndims not in self.reshaped_models:
             base_input_shape = self.morph_model.input.shape[1:3]
@@ -131,25 +166,24 @@ class BabyRunner(object):
 
         pred = self.reshaped_models[nndims].predict(X)
 
-        return [p[:,:imdims[0],:imdims[1],:] for p in pred]
+        return [p[:, :imdims[0], :imdims[1], :] for p in pred]
 
+    def segment(self, bf_img_batch, yield_edgemasks=False, yield_masks=False,
+                yield_preds=False):
+        '''Generator yielding segmented output for a batch of input images
 
-    def run(self, bf_img_batch):
-        # Choose optimal segmentation parameters found in Jupyter notebook
-        # segmentation-190906.ipynb:
-        params = {
-            'interior_threshold': (0.7,0.5,0.5),
-            'nclosing': (1,0,0),
-            'nopening': (1,0,0),
-            'connectivity': (2,2,1),
-            'pedge_thresh': 0.001, 'fit_radial': True,
-            'ingroup_edge_segment': True,
-            'use_group_thresh': True,
-            'group_thresh_expansion': 0.1
-        }
+        :param bf_img_batch: a list of ndarray with shape (X, Y, Z), or
+            equivalently an ndarray with shape (N_images, X, Y, Z)
+        :param yield_masks: if set to True, additionally yield filled cell
+            masks in each output dict
+        :param yield_edgemasks: if set to True, additionally yield edge masks
+            in each output dict
+        :param yield_preds: if set to True, additionally yield full prediction
+            output from neural network
 
-        output = []
-
+        :yields: for each image in the batch a dict specifying centres, angles
+            and radii for each cell detected in the image
+        '''
         # First preprocess each brightfield image in batch
         bf_img_batch = np.stack([robust_norm(img, {}) for img in bf_img_batch])
 
@@ -157,9 +191,9 @@ class BabyRunner(object):
             morph_preds = split_batch_pred(self.morph_predict(batch))
 
             for cnn_output in morph_preds:
-                _, masks, coords = morph_seg_grouped(
+                edges, masks, coords = morph_seg_grouped(
                     cnn_output, self.flattener, return_masks=True,
-                    return_coords=True, **params
+                    return_coords=True, **self.params
                 )
 
                 if len(coords) > 0:
@@ -167,29 +201,77 @@ class BabyRunner(object):
                 else:
                     centres, radii, angles = 3 * [[]]
 
-                ncells = len(masks)
-
-                # Assign mothers to daughters (masks and rprops will be updated)
-                ba_prob_mat = np.nan * np.ones((ncells, ncells))
-                mb_stats = get_mother_bud_stats(
-                    cnn_output, self.flattener, None, masks=masks)
-                mb_stats = np.hstack([s.flatten()[:,nax] for s in mb_stats])
-                good_stats = ~np.isnan(mb_stats).any(axis=1)
-                ba_probs = np.nan * np.ones(ncells**2)
-                if good_stats.any():
-                    ba_probs[good_stats] = self.budassign_model.predict_proba(
-                        mb_stats[good_stats,:])[:,1]
-                ba_probs = ba_probs.reshape((ncells,)*2)
-
-                ba_prob_mat = ba_probs
-
-                # Save output as a dict
-                output.append({
+                # Return output as a dict
+                output = {
                     'centres': centres,
                     'angles': [a.tolist() for a in angles],
-                    'radii': [r.tolist() for r in radii],
-                    'ba_probs': ba_prob_mat.tolist()
-                })
+                    'radii': [r.tolist() for r in radii]
+                }
 
+                if yield_masks:
+                    output['masks'] = masks
+                if yield_edgemasks:
+                    output['edgemasks'] = edges
+                if yield_preds:
+                    output['preds'] = cnn_output
+
+                yield output
+
+    def run(self, bf_img_batch):
+        '''Implementation of legacy runner function... TODO
+        '''
+        output = []
+        for seg_output in self.segment(
+                bf_img_batch, yield_masks=True, yield_preds=True):
+            ba_probs = self.tracker.calc_mother_bud_stats(
+                seg_output['preds'], self.flattener, seg_output['masks'])
+            del seg_output['preds']
+            del seg_output['masks']
+            seg_output['ba_probs'] = ba_probs.tolist()
+            output.append(seg_output)
         return output
 
+    def segment_and_track(self, bf_img_batch, max_lbl_batch=None,
+                          prev_cell_lbls_batch=None, prev_feats_batch=None,
+                          yield_edgemasks=False, yield_next=False):
+        '''Generator yielding segmented and tracked output for a batch of input
+        images
+
+        :param bf_img_batch: a list of ndarray with shape (X, Y, Z), or
+            equivalently an ndarray with shape (N_images, X, Y, Z)
+        :param yield_edgemasks: if set to True, additionally yield edge masks
+            in each output dict
+
+        :yields: for each image in the batch a dict specifying centres, angles,
+            radii, cell labels, and mother-daughter probabilities for each cell
+            detected in the image
+        '''
+
+        if max_lbl_batch is None:
+            max_lbl_batch = repeat(0)
+        if prev_cell_lbls_batch is None:
+            prev_cell_lbls_batch = repeat([])  # NB: must be read only
+        if prev_feats_batch is None:
+            prev_feats_batch = repeat([])  # NB: must be read only
+
+        segment_gen = self.segment(bf_img_batch, yield_masks=True,
+                                   yield_edgemasks=True, yield_preds=True)
+        sync_gen = zip(segment_gen, max_lbl_batch, prev_cell_lbls_batch,
+                       prev_feats_batch)
+        for seg, maxlbl, prevlbls, prevfeats in sync_gen:
+            newfeats, newlbls, newmaxlbl, ba_probs = \
+                self.tracker.coord_trackers(
+                    seg['masks'], seg['preds'], self.flattener, maxlbl,
+                    prevlbls, prevfeats)
+
+            seg['ba_probs'] = ba_probs
+
+            del seg['preds']
+            del seg['masks']
+            if not yield_edgemasks:
+                del seg['edgemasks']
+
+            if yield_next:
+                yield seg, newmaxlbl, newlbls, newfeats
+            else:
+                yield seg

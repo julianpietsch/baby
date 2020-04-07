@@ -1,91 +1,79 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
-import numpy as np
-from numpy import newaxis as nax
-import pickle
 
-from os.path import dirname, join, isfile
+from itertools import repeat
 
-import tensorflow as tf
-from tensorflow.keras import models, layers
-from tensorflow.keras import backend as K
 
-from scipy.ndimage import minimum_filter
-from skimage.measure import regionprops
+class BatchSizeChangedError(Exception):
+    pass
 
-from .models import bce_dice_loss, dice_loss, dice_coeff
-from .segmentation import (
-    morph_seg_grouped,
-    morph_thresh_masks, morph_radial_thresh_fit, unique_masks,
-    squareconn, mask_containment, draw_radial
-)
-from .tracking import get_mother_bud_stats
-from .preprocessing import robust_norm, SegmentationFlattening
-from .utils import batch_iterator, split_batch_pred
-
-models_path = join(dirname(__file__),'..','..','models')
-
-tf_version = [int(v) for v in tf.version.VERSION.split('.')]
 
 class BabyCrawler(object):
+    '''Coordinates incremental segmentation and tracking over a timelapse
+
+    :param baby_brain: an instantiated BabyBrain defining the models
+    '''
+
     def __init__(self, baby_brain):
         self.baby_brain = baby_brain
+        self.max_lbl_batch = None
+        self.prev_cell_lbls_batch = None
+        self.prev_feats_batch = None
+        self.N_batch = None
 
-    def run(self, bf_img_batch):
-        # Choose optimal segmentation parameters found in Jupyter notebook
-        # segmentation-190906.ipynb:
-        params = {
-            'interior_threshold': (0.7,0.5,0.5),
-            'nclosing': (1,0,0),
-            'nopening': (1,0,0),
-            'connectivity': (2,2,1),
-            'pedge_thresh': 0.001, 'fit_radial': True,
-            'ingroup_edge_segment': True,
-            'use_group_thresh': True,
-            'group_thresh_expansion': 0.1
-        }
+    def step(self, bf_img_batch, with_edgemasks=False):
+        '''Process the next batch of input images
+
+        :param bf_img_batch: a list of ndarray with shape (X, Y, Z), or
+            equivalently an ndarray with shape (N_images, X, Y, Z)
+
+        :returns: for each image in the batch a dict specifying centres,
+        angles, cell labels and the current best estimate for mother-daughter
+        pairs
+        '''
+        if self.N_batch is None:
+            self.N_batch = len(bf_img_batch)
+
+        if len(bf_img_batch) != self.N_batch:
+            raise BatchSizeChangedError('cannot change batch size mid-session')
+
+        if self.max_lbl_batch is None:
+            self.max_lbl_batch = [0 for i in range(self.N_batch)]
+
+        if self.prev_cell_lbls_batch is None:
+            self.prev_cell_lbls_batch = [[] for i in range(self.N_batch)]
+
+        if self.prev_feats_batch is None:
+            self.prev_feats_batch = [[] for i in range(self.N_batch)]
 
         output = []
 
-        # First preprocess each brightfield image in batch
-        bf_img_batch = np.stack([robust_norm(img, {}) for img in bf_img_batch])
+        nstepsback = self.baby_brain.tracker.nstepsback
+        seg_trk_gen = self.baby_brain.segment_and_track(
+            bf_img_batch, max_lbl_batch=self.max_lbl_batch,
+            prev_cell_lbls_batch=self.prev_cell_lbls_batch,
+            prev_feats_batch = self.prev_feats_batch,
+            yield_edgemasks=with_edgemasks, yield_next=True
+        )
 
-        for batch in batch_iterator(bf_img_batch):
-            morph_preds = split_batch_pred(self.morph_predict(batch))
+        for i, new_seg_trk in enumerate(seg_trk_gen):
+            seg, newmaxlbl, newlbls, newfeats = new_seg_trk
 
-            for cnn_output in morph_preds:
-                _, masks, coords = morph_seg_grouped(
-                    cnn_output, self.flattener, return_masks=True,
-                    return_coords=True, **params
-                )
+            # Update aggregated cell labels and features
+            self.max_lbl_batch[i] = newmaxlbl
+            self.prev_cell_lbls_batch[i].append(newlbls)
+            self.prev_cell_lbls_batch[i] = \
+                self.prev_cell_lbls_batch[i][-nstepsback:]
+            self.prev_feats_batch[i].append(newfeats)
+            self.prev_feats_batch[i] = self.prev_feats_batch[i][-nstepsback:]
 
-                if len(coords) > 0:
-                    centres, radii, angles = zip(*coords)
-                else:
-                    centres, radii, angles = 3 * [[]]
+            # TODO:
+            # self.cumulative_mother_bud_assignment[i] += ...
 
-                ncells = len(masks)
+            # Curate output
+            seg['cellLabel'] = newlbls
+            # seg['mother_assign'] = [(mother, daughter),...]
+            # del seg['ba_probs']
 
-                # Assign mothers to daughters (masks and rprops will be updated)
-                ba_prob_mat = np.nan * np.ones((ncells, ncells))
-                mb_stats = get_mother_bud_stats(
-                    cnn_output, self.flattener, None, masks=masks)
-                mb_stats = np.hstack([s.flatten()[:,nax] for s in mb_stats])
-                good_stats = ~np.isnan(mb_stats).any(axis=1)
-                ba_probs = np.nan * np.ones(ncells**2)
-                if good_stats.any():
-                    ba_probs[good_stats] = self.budassign_model.predict_proba(
-                        mb_stats[good_stats,:])[:,1]
-                ba_probs = ba_probs.reshape((ncells,)*2)
-
-                ba_prob_mat = ba_probs
-
-                # Save output as a dict
-                output.append({
-                    'centres': centres,
-                    'angles': [a.tolist() for a in angles],
-                    'radii': [r.tolist() for r in radii],
-                    'ba_probs': ba_prob_mat.tolist()
-                })
+            output.append(seg)
 
         return output
-
