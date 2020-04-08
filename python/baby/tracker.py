@@ -20,12 +20,10 @@ class Tracker:
 
     Initialization parameters:
 
-    model: sklearn.ensemble.RandomForestClassifier object
-    nstepsback: int Number of timepoints to go back
-    ctrac_thresh: float Cut-off value to assume a cell is not new
+    :model: sklearn.ensemble.RandomForestClassifier object
+    :nstepsback: int Number of timepoints to go back
+    :ctrac_thresh: float Cut-off value to assume a cell is not new
     '''
-
-    # TODO BABY: Change PATH+EXP to await function and plug to baby
     def __init__(self,
                  ctrack_model=None,
                  ba_model=None,
@@ -52,8 +50,6 @@ class Tracker:
         if ctrack_model is None:
             with open('models/test.pkl', 'rb') as file_to_load:
                 self.ctrack_model = pickle.load(file_to_load)
-
-        # Number of timepoints to use for assignment
         if nstepsback is None:
             self.nstepsback = 2
         if ctrack_thresh is None:
@@ -66,11 +62,11 @@ class Tracker:
         Calculate feature ndarray using two ndarrays of features.
         ---
         input
-        prev_feats: ndarray (ncells, nfeats) of timepoint 1
-        new_feats: ndarray (ncells, nfeats) of timepoint 2
+        :prev_feats: ndarray (ncells, nfeats) of timepoint 1
+        :new_feats: ndarray (ncells, nfeats) of timepoint 2
 
         output
-        n3darray: ndarray (ncells_prev, ncells_new, nfeats) containing a
+        :n3darray: ndarray (ncells_prev, ncells_new, nfeats) containing a
         cell-wise substraction of the features in the input ndarrays.
         '''
         nnew = len(new_feats)
@@ -102,19 +98,19 @@ class Tracker:
 
         ----
         input
-        new_img: ndarray (len, width, ncells) containing the cell outlines
-        max_lbl: int indicating the last assigned cell label
-        prev_feats: list of ndarrays of size (ncells x nfeatures)
+        :new_img: ndarray (len, width, ncells) containing the cell outlines
+        :max_lbl: int indicating the last assigned cell label
+        :prev_feats: list of ndarrays of size (ncells x nfeatures)
         containing the features of previous timepoints
-        prev_lbls: list of list of ints corresponding to the cell labels in
+        :prev_lbls: list of list of ints corresponding to the cell labels in
             the previous timepoints
-        new_feats: (optional) Directly give a feature ndarray. It ignores
+        :new_feats: (optional) Directly give a feature ndarray. It ignores
             new_img if given.
 
         output
-        new_max: updated max cell albel assigned
-        new_lbl: list of labels assigned to new timepoint
-        new_feats: list of ndarrays containing the updated features
+        :new_max: updated max cell albel assigned
+        :new_lbl: list of labels assigned to new timepoint
+        :new_feats: list of ndarrays containing the updated features
 
         '''
         if new_feats is None:
@@ -137,7 +133,7 @@ class Tracker:
                 ])
                 pred_matrix = pred_list.reshape(orig_shape)
                 pred_lbls[i, :] = self.assign_lbls(pred_matrix, prev_lbls[i],
-                                                   self.ctrac_thresh)
+                                                   self.ctrack_thresh)
 
             new_lbls, new_max = self.count_votes(pred_lbls, max_lbl)
 
@@ -151,18 +147,18 @@ class Tracker:
         '''Assign labels using a prediction matrix of nxm where n is the number
         of cells in the previous image and m in the new image. It assigns the
         number zero if it doesn't find the cell.
-        pred_matrix: Probability n x m matrix obtained as an output of rforest
-        prev_labels: List of cell labels for previous timepoint to be compared.
+        :pred_matrix: Probability n x m matrix obtained as an output of rforest
+        :prev_labels: List of cell labels for previous timepoint to be compared.
         ---
         input
 
-        pred_matrix: Matrix with probabilities of the corresponding two cells
+        :pred_matrix: Matrix with probabilities of the corresponding two cells
         being the same.
-        prev_lbls: List of ints representing the cell labels in the previous tp.
+        :prev_lbls: List of ints representing the cell labels in the previous tp.
 
         output
 
-        new_lbls: Newly assigned labels obtained, new cells as zero.
+        :new_lbls: Newly assigned labels obtained, new cells as zero.
         '''
 
         # We remove any possible conflict by taking the maximum vals
@@ -188,13 +184,13 @@ class Tracker:
         If there is only one, assigns the most common value.
         ----
         input
-        pred_lbls: ndarray(nvals*nprevtps). Cell assignment prediction for
+        :pred_lbls: ndarray(nvals*nprevtps). Cell assignment prediction for
             each previous timepoint.
-        max_lbl: int to indicate the current max label
+        :max_lbl: int to indicate the current max label
 
         output
-        decision: list of labels assigned for new cells after comparing multiple tps.
-        new_max: updated maximum cell label
+        :decision: list of labels assigned for new cells after comparing multiple tps.
+        :new_max: updated maximum cell label
         '''
         counts = np.apply_along_axis(Counter, 0, pred_lbls)
         decision = np.zeros(pred_lbls.shape[1], dtype=int)
@@ -224,10 +220,10 @@ class Tracker:
         Handler function to calculate the timepoints of a list of images
         ---
         input
-        img_list: list of ndarrays, one for each timepoint
+        :img_list: list of ndarrays, one for each timepoint
 
-        output:
-        cell_lbls: list of lists of ints the corresponding cell labels
+        output
+        :cell_lbls: list of lists of ints the corresponding cell labels
         '''
         cell_lbls = []
         feats = []
@@ -255,8 +251,8 @@ class Tracker:
         and return the ndarray containing the cells in the z-axis
         ---
         input
-        filename: str indication the png location
-        cell_id: list of ints, where the ints are cell labels
+        :filename: str indication the png location
+        :cell_id: list of ints, where the ints are cell labels
 
         output
         ndarray (size_x, size_y, ncells). ndarray containing the mask for cells
@@ -273,11 +269,11 @@ class Tracker:
     def calc_mother_bud_stats(self, pred, flattener, masks, feats=None):
         '''
         ---
-        input:
-        pred: output from cnn
-        flattener: TODO Ask Julian for help here
-        mask: 3d ndarray (size_x, size_y, ncells)
-        feats: ndarray (ncells, nfeats)
+        input
+        :pred: output from cnn
+        :flattener: TODO Ask Julian for help here
+        :mask: 3d ndarray (size_x, size_y, ncells)
+        :feats: ndarray (ncells, nfeats)
         '''
 
         if feats is None:
@@ -375,20 +371,20 @@ class Tracker:
         '''
         Calculate features and track cells and budassignments
         input
-        masks: 3d int ndarray (size_x, size_y, ncells) containing cell masks
+        :masks: 3d int ndarray (size_x, size_y, ncells) containing cell masks
         pred
         flattener
-        max_lbl: int indicating the last assigned cell label
-        prev_feats: list of ndarrays of size (ncells x nfeatures)
+        :max_lbl: int indicating the last assigned cell label
+        :prev_feats: list of ndarrays of size (ncells x nfeatures)
         containing the features of previous timepoints
-        cell_lbls: list of list of ints corresponding to the cell labels in
+        :cell_lbls: list of list of ints corresponding to the cell labels in
             the previous timepoints
 
-        output
-        feats: 2d float ndarray (ncells, nfeatures) containing the feature
+        returns
+        :feats: 2d float ndarray (ncells, nfeatures) containing the feature
         values for each cell
-        new_lbls: list of int, contains information on the global id of the cell
-        ba_props: 2d ndarray (ncells, ncells) with probability of cells being
+        :new_lbls: list of int, contains information on the global id of the cell
+        :ba_props: 2d ndarray (ncells, ncells) with probability of cells being
         daughter of one another
         '''
 
@@ -416,12 +412,7 @@ class Tracker:
         new_lbls_ind = (np.repeat(new_lbls, nlbls).reshape(-1, nlbls),
                         np.tile(new_lbls, nlbls).reshape(-1, nlbls))
         ba_cum[new_lbls_ind] += ba_pred_matrix
-        mother_lbls = self.assign_lbls(ba_pred_matrix[new_lbls_ind],
-                                       self.ctrac_thresh)
+        newmothers = self.assign_lbls(ba_pred_matrix[new_lbls_ind],
+                                      self.ctrack_thresh)
 
-        #add the new ba_probs
-        #extract labels of relevance (using new_lbls)
-        #make assignment using self.assign_lbls
-        #return assignment and updated ba_pred_matrix_cum
-
-        return (feats, new_lbls, max_lbls, mother_lbls, ba_cum)
+        return (feats, new_lbls, max_lbls, newmothers, ba_cum)

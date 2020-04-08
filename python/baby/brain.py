@@ -1,6 +1,5 @@
-from __future__ import (
-    absolute_import, division, print_function, unicode_literals
-)
+from __future__ import (absolute_import, division, print_function,
+                        unicode_literals)
 from os.path import dirname, join, isfile
 from itertools import repeat
 
@@ -28,7 +27,8 @@ default_params = {
     'nclosing': (1, 0, 0),
     'nopening': (1, 0, 0),
     'connectivity': (2, 2, 1),
-    'pedge_thresh': 0.001, 'fit_radial': True,
+    'pedge_thresh': 0.001,
+    'fit_radial': True,
     'ingroup_edge_segment': True,
     'use_group_thresh': True,
     'group_thresh_expansion': 0.1
@@ -56,29 +56,31 @@ class BabyBrain(object):
     :param graph: optionally specify the Tensorflow graph to load the neural
         network model into (useful only for Tensorflow versions <2)
     '''
-
-    def __init__(self, morph_model_file=None, flattener_file=None,
-                 celltrack_model_file=None, budassign_model_file=None,
-                 default_image_size=None, params=default_params,
-                 session=None, graph=None):
+    def __init__(self,
+                 morph_model_file=None,
+                 flattener_file=None,
+                 celltrack_model_file=None,
+                 budassign_model_file=None,
+                 default_image_size=None,
+                 params=default_params,
+                 session=None,
+                 graph=None):
 
         self.reshaped_models = {}
 
         if morph_model_file is None:
-            morph_model_file = join(
-                models_path, 'I5_msd_d80_20190916.hdf5')
+            morph_model_file = join(models_path, 'I5_msd_d80_20190916.hdf5')
         elif not isfile(morph_model_file):
             morph_model_file = join(models_path, morph_model_file)
 
         if flattener_file is None:
-            flattener_file = join(
-                models_path, 'flattener_v2_20190905.json')
+            flattener_file = join(models_path, 'flattener_v2_20190905.json')
         elif not isfile(flattener_file):
             flattener_file = join(models_path, flattener_file)
 
         if budassign_model_file is None:
-            budassign_model_file = join(
-                models_path, 'baby_randomforest_20190906.pkl')
+            budassign_model_file = join(models_path,
+                                        'baby_randomforest_20190906.pkl')
         elif not isfile(budassign_model_file):
             budassign_model_file = join(models_path, budassign_model_file)
 
@@ -98,19 +100,23 @@ class BabyBrain(object):
                 K.set_session(session)
                 print('Loading model into session "{}"...'.format(
                     K.get_session()))
-                self.morph_model = models.load_model(
-                    morph_model_file, custom_objects={
-                        'bce_dice_loss': bce_dice_loss,
-                        'dice_loss': dice_loss,
-                        'dice_coeff': dice_coeff
-                    })
+                self.morph_model = models.load_model(morph_model_file,
+                                                     custom_objects={
+                                                         'bce_dice_loss':
+                                                         bce_dice_loss,
+                                                         'dice_loss':
+                                                         dice_loss,
+                                                         'dice_coeff':
+                                                         dice_coeff
+                                                     })
         else:
-            self.morph_model = models.load_model(
-                morph_model_file, custom_objects={
-                    'bce_dice_loss': bce_dice_loss,
-                    'dice_loss': dice_loss,
-                    'dice_coeff': dice_coeff
-                })
+            self.morph_model = models.load_model(morph_model_file,
+                                                 custom_objects={
+                                                     'bce_dice_loss':
+                                                     bce_dice_loss,
+                                                     'dice_loss': dice_loss,
+                                                     'dice_coeff': dice_coeff
+                                                 })
 
         self.flattener = SegmentationFlattening(flattener_file)
         self.params = params
@@ -158,7 +164,8 @@ class BabyBrain(object):
                 self.reshaped_models[nndims] = self.morph_model
             else:
                 i = layers.Input(shape=X.shape[1:])
-                self.reshaped_models[nndims] = models.Model(i, self.morph_model(i))
+                self.reshaped_models[nndims] = models.Model(
+                    i, self.morph_model(i))
 
         if tf_version[0] == 1:
             print('Running prediction in session "{}"...'.format(
@@ -168,7 +175,10 @@ class BabyBrain(object):
 
         return [p[:, :imdims[0], :imdims[1], :] for p in pred]
 
-    def segment(self, bf_img_batch, yield_edgemasks=False, yield_masks=False,
+    def segment(self,
+                bf_img_batch,
+                yield_edgemasks=False,
+                yield_masks=False,
                 yield_preds=False):
         '''Generator yielding segmented output for a batch of input images
 
@@ -191,10 +201,11 @@ class BabyBrain(object):
             morph_preds = split_batch_pred(self.morph_predict(batch))
 
             for cnn_output in morph_preds:
-                edges, masks, coords = morph_seg_grouped(
-                    cnn_output, self.flattener, return_masks=True,
-                    return_coords=True, **self.params
-                )
+                edges, masks, coords = morph_seg_grouped(cnn_output,
+                                                         self.flattener,
+                                                         return_masks=True,
+                                                         return_coords=True,
+                                                         **self.params)
 
                 if len(coords) > 0:
                     centres, radii, angles = zip(*coords)
@@ -221,8 +232,9 @@ class BabyBrain(object):
         '''Implementation of legacy runner function... TODO
         '''
         output = []
-        for seg_output in self.segment(
-                bf_img_batch, yield_masks=True, yield_preds=True):
+        for seg_output in self.segment(bf_img_batch,
+                                       yield_masks=True,
+                                       yield_preds=True):
             ba_probs = self.tracker.calc_mother_bud_stats(
                 seg_output['preds'], self.flattener, seg_output['masks'])
             del seg_output['preds']
@@ -231,9 +243,13 @@ class BabyBrain(object):
             output.append(seg_output)
         return output
 
-    def segment_and_track(self, bf_img_batch, max_lbl_batch=None,
-                          prev_cell_lbls_batch=None, prev_feats_batch=None,
-                          yield_edgemasks=False, yield_next=False):
+    def segment_and_track(self,
+                          bf_img_batch,
+                          max_lbl_batch=None,
+                          prev_cell_lbls_batch=None,
+                          prev_feats_batch=None,
+                          yield_edgemasks=False,
+                          yield_next=False):
         '''Generator yielding segmented and tracked output for a batch of input
         images
 
@@ -254,12 +270,14 @@ class BabyBrain(object):
         if prev_feats_batch is None:
             prev_feats_batch = repeat([])  # NB: must be read only
 
-        segment_gen = self.segment(bf_img_batch, yield_masks=True,
-                                   yield_edgemasks=True, yield_preds=True)
+        segment_gen = self.segment(bf_img_batch,
+                                   yield_masks=True,
+                                   yield_edgemasks=True,
+                                   yield_preds=True)
         sync_gen = zip(segment_gen, max_lbl_batch, prev_cell_lbls_batch,
                        prev_feats_batch)
         for seg, maxlbl, prevlbls, prevfeats in sync_gen:
-            newfeats, newlbls, newmaxlbl, ba_probs = \
+            newfeats, newlbls, newmaxlbl, newmothers, ba_probs = \
                 self.tracker.coord_trackers(
                     seg['masks'], seg['preds'], self.flattener, maxlbl,
                     prevlbls, prevfeats)
@@ -272,6 +290,6 @@ class BabyBrain(object):
                 del seg['edgemasks']
 
             if yield_next:
-                yield seg, newmaxlbl, newlbls, newfeats
+                yield seg, newmaxlbl, newlbls, newmothers, newfeats
             else:
                 yield seg
