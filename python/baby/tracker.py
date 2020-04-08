@@ -1,97 +1,39 @@
 '''
 Tracker class to perform cell tracking inside baby.
 
-
 How to run:
+TODO Add this
 
-tracker = Tracker(PATH, exp)
-img_list = [tracker.get_cells(fname, cid) for
-            fname, cid in tracker.loczip.loc[(1,4)][['filename', 'cell_id']].values]
-img_list = tracker.get_tseries_lbls(img_list)
 '''
 from collections import Counter
-
 import pickle
-import pandas as pd
 import numpy as np
-
 from imageio import imread
 from skimage.measure import regionprops_table
+from skimage.draw import polygon
 from scipy.ndimage.morphology import binary_fill_holes
 
-from skimage.draw import polygon
 
-# TODO BABY: Check if calling RFC from sklearn is necessary if we load rf from pickle
-# from sklearn.ensemble import RandomForestClassifier
-
-# Functions to use folders as input locations
-# TODO: To erase when incorporating tracker to baby
-from image_io import set_dirs, get_poses
-
-# I/O Management
-PATH = '/home/alan/Desktop/UoE/Experiments/microfluidics/segmented_figs/'
-EXP = 'train_lineage'
-
-
-class SegManager:
-    '''
-    Base class to read baby output (segmentation data)
-    and extract and analyse it.
-    '''
-
-    # TODO SPARETIME: Check init inheritance and do it properly
-    def __init__(self, path, exp):
-        #TODO BABY: Get rid of path directories and use BABY's I/O
-        self.expdir, self.indir, self.outdir = set_dirs(path, exp)
-        self.indices = ['position', 'trap', 'tp']
-        self.cindices = self.indices + ['cell_id']
-        self.locs, self.loczip = self.load_poses()
-
-    def load_poses(self):
-        '''
-        Helper function to load poses from a folder.
-        TODO: To erase when incorporating tracker to baby
-
-        '''
-        # Load file with locations and make it tp-wise instead of cell-wise
-        locs = get_poses(self.indir)
-
-        cells_lists = locs.groupby(self.indices)['cell_id'].apply(list)
-
-        nodups = locs.drop_duplicates(subset='filename').set_index(
-            self.indices, drop=False)[['filename', 'position', 'trap', 'tp']]
-        return (locs, pd.concat([nodups, cells_lists], axis=1).sort_index())
-
-
-class Tracker(SegManager):
+class Tracker:
     '''
     Class used to manage cell tracking.
 
     Initialization parameters:
 
-    - TEMP (TODO: Erase when incorporated to baby)
-    path: experiments path
-    exp: experiments folder name
-    --------
-
     model: sklearn.ensemble.RandomForestClassifier object
     nstepsback: int Number of timepoints to go back
-    prob_thresh: float Cut-off value to assume a cell is not new
+    ctrac_thresh: float Cut-off value to assume a cell is not new
     '''
 
     # TODO BABY: Change PATH+EXP to await function and plug to baby
     def __init__(self,
-                 path,
-                 exp,
-                 ba_model=None,
                  ctrack_model=None,
+                 ba_model=None,
                  nstepsback=None,
-                 prob_thresh=None):
+                 ctrack_thresh=None,
+                 ba_thresh=None):
         '''
-        Features from outlines used:
         '''
-        super().__init__(path, exp)
-
         self.feats2use = ('centroid', 'area', 'minor_axis_length',
                           'major_axis_length', 'convex_area')
         # self.mb_feats = ('centroid', 'area', 'minor_axis_length')
@@ -105,19 +47,19 @@ class Tracker(SegManager):
         self.xtrafeats = ('distance', )
 
         if ba_model is None:
-            with open(filename, 'rb') as file_to_load:
-                self.ba_model = pickle.load('models/test.pkl')
+            with open('models/test.pkl', 'rb') as file_to_load:
+                self.ba_model = pickle.load(file_to_load)
         if ctrack_model is None:
-            with open(filename, 'rb') as file_to_load:
-                self.ctrack_cell = pickle.load('models/test.pkl')
+            with open('models/test.pkl', 'rb') as file_to_load:
+                self.ctrack_model = pickle.load(file_to_load)
 
         # Number of timepoints to use for assignment
         if nstepsback is None:
             self.nstepsback = 2
-
-        # Minimal probability required to assume that cells are the same.
-        if prob_thresh is None:
-            self.prob_thresh = 0.5
+        if ctrack_thresh is None:
+            self.ctrack_thresh = 0.5
+        if ba_thresh is None:
+            self.ba_thresh = 0.5
 
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
@@ -194,7 +136,8 @@ class Tracker(SegManager):
                         feats_3darray.reshape(-1, feats_3darray.shape[2]))
                 ])
                 pred_matrix = pred_list.reshape(orig_shape)
-                pred_lbls[i, :] = self.assign_lbls(pred_matrix, prev_lbls[i])
+                pred_lbls[i, :] = self.assign_lbls(pred_matrix, prev_lbls[i],
+                                                   self.ctrac_thresh)
 
             new_lbls, new_max = self.count_votes(pred_lbls, max_lbl)
 
@@ -204,7 +147,7 @@ class Tracker(SegManager):
 
         return (new_lbls, new_feats, new_max)
 
-    def assign_lbls(self, pred_matrix, prev_lbls):
+    def assign_lbls(self, pred_matrix, prev_lbls, thresh, norm=False):
         '''Assign labels using a prediction matrix of nxm where n is the number
         of cells in the previous image and m in the new image. It assigns the
         number zero if it doesn't find the cell.
@@ -227,11 +170,15 @@ class Tracker(SegManager):
         for j, i in enumerate(pred_matrix.argmax(0)):
             clean_mat[i, j] = pred_matrix[i, j]
 
-        # assign available hits
-        new_lbls = np.repeat(0, pred_matrix.shape[1])
-        for i, j in enumerate(clean_mat.argmax(1)):
-            if pred_matrix[i, j] > self.prob_thresh:
-                new_lbls[j] = prev_lbls[i]
+        # Normalise (useful for aggregating probabilities)
+        if norm:
+            clean_mat = clean_mat / (clean_mat + 1).max(1)[:, np.newaxis]
+
+            # assign available hits
+            new_lbls = np.repeat(0, pred_matrix.shape[1])
+            for i, j in enumerate(clean_mat.argmax(1)):
+                if pred_matrix[i, j] > thresh:
+                    new_lbls[j] = prev_lbls[i]
 
         return new_lbls
 
@@ -325,7 +272,6 @@ class Tracker(SegManager):
     ### Assign mother-
     def calc_mother_bud_stats(self, pred, flattener, masks, feats=None):
         '''
-
         ---
         input:
         pred: output from cnn
@@ -424,8 +370,8 @@ class Tracker(SegManager):
 
     # Utility functions
 
-    def coord_trackers(self, masks, pred, flattener, max_lbls, cell_lbls,
-                       prev_feats):
+    def coord_trackers(self, masks, pred, flattener, ba_cum, max_lbls,
+                       cell_lbls, prev_feats):
         '''
         Calculate features and track cells and budassignments
         input
@@ -446,34 +392,36 @@ class Tracker(SegManager):
         daughter of one another
         '''
 
+        # Get features
         feats = np.array([[
             feat[0]
             for feat in regionprops_table(masks[..., i],
                                           properties=self.feats2use).values()
-        ] for i in range(seg.shape[2])])
+        ] for i in range(masks.shape[2])])
 
         new_lbls, _, max_lbls = self.get_new_lbls(
             masks, cell_lbls[-self.nstepsback:], prev_feats[-self.nstepsback:],
             max_lbls)
 
-        #assign mo-da prob here?
-        ba_probs = self.calc_mother_bud_stats(pred, flattener, masks, feats)
+        ba_pred_matrix = self.calc_mother_bud_stats(pred, flattener, masks,
+                                                    feats)
 
-        return (feats, new_lbls, max_lbls, ba_probs)
+        # if necessary, increase the matrix size
+        if max_lbls > len(ba_cum):
+            new_size = (np.floor(max_lbls / 32).astype(int) + 1) * 32
+            ba_cum = np.pad(ba_cum, (0, new_size), 'constant')
 
+        # Subindex matrix with cells present in this image
+        nlbls = len(new_lbls)
+        new_lbls_ind = (np.repeat(new_lbls, nlbls).reshape(-1, nlbls),
+                        np.tile(new_lbls, nlbls).reshape(-1, nlbls))
+        ba_cum[new_lbls_ind] += ba_pred_matrix
+        mother_lbls = self.assign_lbls(ba_pred_matrix[new_lbls_ind],
+                                       self.ctrac_thresh)
 
-# ------------------
-# TODO: Move this to trainer.py once incorporated to BABY
-def aslist(val):
-    '''
-    Helper function useful to convert int cell_ids to lists
-    '''
-    # Convenience fn to convert x to a list if not one already
-    if not isinstance(val, list):
-        val = list(val)
+        #add the new ba_probs
+        #extract labels of relevance (using new_lbls)
+        #make assignment using self.assign_lbls
+        #return assignment and updated ba_pred_matrix_cum
 
-    return val
-
-
-# create a cum matrix as grow
-# #Build them
+        return (feats, new_lbls, max_lbls, mother_lbls, ba_cum)
