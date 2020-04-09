@@ -79,7 +79,8 @@ class BabyBrain(object):
             flattener_file = join(models_path, flattener_file)
 
         if celltrack_model_file is None:
-            celltrack_model_file = join(models_path, 'celltracker_test.pkl')
+            celltrack_model_file = join(models_path,
+                                        'ctrack_randomforest_20200325.pkl')
         elif not isfile(celltrack_model_file):
             celltrack_model_file = join(models_path, celltrack_model_file)
 
