@@ -20,7 +20,7 @@ class Tracker:
     Initialization parameters:
 
     :ctrack_model: sklearn.ensemble.RandomForestClassifier object
-    :ba_model: sklearn.ensemble.RandomForestClassifier object. 
+    :ba_model: sklearn.ensemble.RandomForestClassifier object.
     :nstepsback: int Number of timepoints to go back
     :ctrac_thresh: float Cut-off value to assume a cell is not new
     '''
@@ -211,7 +211,7 @@ class Tracker:
 
     def get_tseries_lbls(self, img_list):
         '''
-        Independent function to do cell tracking for an 
+        Independent function to do cell tracking for an
         ---
         input
         :img_list: list of 3d ndarrays (size_x, size_y, ncells)
@@ -271,6 +271,8 @@ class Tracker:
         :mask: 3d ndarray (size_x, size_y, ncells)
         :feats: ndarray (ncells, nfeats)
         '''
+
+        masks = masks.transpose((2,0,1))  # make ncells the first index
 
         if feats is None:
             feats = [
