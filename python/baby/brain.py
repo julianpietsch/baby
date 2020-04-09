@@ -78,6 +78,12 @@ class BabyBrain(object):
         elif not isfile(flattener_file):
             flattener_file = join(models_path, flattener_file)
 
+        if celltrack_model_file is None:
+            celltrack_model_file = join(models_path,
+                                        'ctrack_randomforest_20200325.pkl')
+        elif not isfile(celltrack_model_file):
+            celltrack_model_file = join(models_path, celltrack_model_file)
+
         if budassign_model_file is None:
             budassign_model_file = join(models_path,
                                         'baby_randomforest_20190906.pkl')
@@ -220,7 +226,9 @@ class BabyBrain(object):
                 }
 
                 if yield_masks:
-                    output['masks'] = masks
+                    xy_shape = cnn_output.shape[1:3]
+                    output['masks'] = np.dstack(
+                        (np.zeros(xy_shape, dtype='bool'),) + tuple(masks))
                 if yield_edgemasks:
                     output['edgemasks'] = edges
                 if yield_preds:
@@ -276,8 +284,8 @@ class BabyBrain(object):
 
         for seg, state in zip(segment_gen, tracker_states):
             tracking = self.tracker.step_trackers(
-                    seg['masks'], seg['pred'][i_budneck], seg['pred'][i_bud],
-                    state=state, assignbuds=assignbuds)
+                seg['masks'].astype('int'), seg['preds'][i_budneck],
+                seg['preds'][i_bud], state=state, assignbuds=assignbuds)
 
             del seg['preds']
             del seg['masks']
