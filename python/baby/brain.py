@@ -245,9 +245,8 @@ class BabyBrain(object):
 
     def segment_and_track(self,
                           bf_img_batch,
-                          max_lbl_batch=None,
-                          prev_cell_lbls_batch=None,
-                          prev_feats_batch=None,
+                          tracker_states=None,
+                          assignbuds=False,
                           yield_edgemasks=False,
                           yield_next=False):
         '''Generator yielding segmented and tracked output for a batch of input
@@ -259,37 +258,41 @@ class BabyBrain(object):
             in each output dict
 
         :yields: for each image in the batch a dict specifying centres, angles,
-            radii, cell labels, and mother-daughter probabilities for each cell
-            detected in the image
+            radii, cell labels, and mother assignments for each cell detected
+            in the image
         '''
 
-        if max_lbl_batch is None:
-            max_lbl_batch = repeat(0)
-        if prev_cell_lbls_batch is None:
-            prev_cell_lbls_batch = repeat([])  # NB: must be read only
-        if prev_feats_batch is None:
-            prev_feats_batch = repeat([])  # NB: must be read only
+        if tracker_states is None:
+            tracker_states = repeat(None)
+
+        tnames = self.flattener.names()
+        i_budneck = tnames.index('bud_neck')
+        i_bud = tnames.index('sml_fill')
 
         segment_gen = self.segment(bf_img_batch,
                                    yield_masks=True,
                                    yield_edgemasks=True,
                                    yield_preds=True)
-        sync_gen = zip(segment_gen, max_lbl_batch, prev_cell_lbls_batch,
-                       prev_feats_batch)
-        for seg, maxlbl, prevlbls, prevfeats in sync_gen:
-            newfeats, newlbls, newmaxlbl, newmothers, ba_probs = \
-                self.tracker.coord_trackers(
-                    seg['masks'], seg['preds'], self.flattener, maxlbl,
-                    prevlbls, prevfeats)
 
-            seg['ba_probs'] = ba_probs
+        for seg, state in zip(segment_gen, tracker_states):
+            tracking = self.tracker.step_trackers(
+                    seg['masks'], seg['pred'][i_budneck], seg['pred'][i_bud],
+                    state=state, assignbuds=assignbuds)
 
             del seg['preds']
             del seg['masks']
             if not yield_edgemasks:
                 del seg['edgemasks']
 
+            if assignbuds:
+                new_lbls, ma, state = tracking
+                seg['m_assign'] = ma
+            else:
+                new_lbls, state = tracking
+
+            seg['cell_label'] = new_lbls
+
             if yield_next:
-                yield seg, newmaxlbl, newlbls, newmothers, newfeats
+                yield seg, state
             else:
                 yield seg

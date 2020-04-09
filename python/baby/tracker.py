@@ -13,6 +13,8 @@ from skimage.measure import regionprops_table
 from skimage.draw import polygon
 from scipy.ndimage.morphology import binary_fill_holes
 
+models_path = join(dirname(__file__), '..', '..', 'models')
+
 
 class Tracker:
     '''
@@ -45,11 +47,17 @@ class Tracker:
         self.xtrafeats = ('distance', )
 
         if ba_model is None:
-            with open('models/test.pkl', 'rb') as file_to_load:
-                self.ba_model = pickle.load(file_to_load)
+            ba_model_file = join(models_path, 'baby_randomforest_20190906.pkl')
+            with open(ffile, 'rb') as file_to_load:
+                ba_model = pickle.load(file_to_load)
+        self.ba_model = ba_model
+
         if ctrack_model is None:
-            with open('models/test.pkl', 'rb') as file_to_load:
-                self.ctrack_model = pickle.load(file_to_load)
+            ctrack_model_file = join(models_path, 'test.pkl')
+            with open(ctrack_model_file, 'rb') as file_to_load:
+                ctrack_model = pickle.load(file_to_load)
+        self.ctrack_model = ctrack_model
+
         if nstepsback is None:
             self.nstepsback = 2
         if ctrack_thresh is None:
@@ -238,8 +246,8 @@ class Tracker:
             feats.append(new_feats)
 
             # Where to put this line? Or also yield new_feats?
-            self.calc_mother_bud_stats(pred,
-                                       flattener,
+            self.calc_mother_bud_stats(p_budneck,
+                                       p_bud,
                                        img_list,
                                        feats=new_feats)
 
@@ -266,12 +274,14 @@ class Tracker:
         return np.dstack(cell_masks)
 
     ### Assign mother-
-    def calc_mother_bud_stats(self, pred, flattener, masks, feats=None):
+    def calc_mother_bud_stats(self, p_budneck, p_bud, masks, feats=None):
         '''
         ---
         input
-        :pred: output from cnn
-        :flattener: TODO Ask Julian for help here
+        :p_budneck: 2d ndarray (size_x, size_y) giving the probability that a
+            pixel corresponds to a bud neck
+        :p_bud: 2d ndarray (size_x, size_y) giving the probability that a pixel
+            corresponds to a bud
         :mask: 3d ndarray (size_x, size_y, ncells)
         :feats: ndarray (ncells, nfeats)
         '''
@@ -281,19 +291,10 @@ class Tracker:
                 regionprops_table(m.astype('int'), properties=self.mb.feats)[0]
                 for m in masks
             ]
+        elif len(feats) != len(masks):
+            raise Exception('number of features must match number of masks')
 
         ncells = len(masks)
-
-        # Assign mothers to daughters (masks and rprops will be updated)
-        # mb_stats = get_mother_bud_stats(pred,
-        #                                 self.flattener,
-        #                                 masks=masks)
-
-        tnames = flattener.names()
-        p_budneck = pred[tnames.index('bud_neck')]
-        p_bud = pred[tnames.index('sml_fill')]
-
-        ncells = len(feats)
 
         p_bud_mat, p_budneck_mat, size_ratio_mat, adjacency_mat = np.repeat(
             np.zeros((ncells, ncells)), 4)
@@ -366,53 +367,90 @@ class Tracker:
 
     # Utility functions
 
-    def coord_trackers(self, masks, pred, flattener, ba_cum, max_lbls,
-                       cell_lbls, prev_feats):
+    def step_trackers(self, masks, p_budneck, p_bud, state=None, assignbuds=False):
         '''
         Calculate features and track cells and budassignments
         input
         :masks: 3d int ndarray (size_x, size_y, ncells) containing cell masks
-        pred
-        flattener
-        :max_lbl: int indicating the last assigned cell label
-        :prev_feats: list of ndarrays of size (ncells x nfeatures)
-        containing the features of previous timepoints
-        :cell_lbls: list of list of ints corresponding to the cell labels in
-            the previous timepoints
+        :p_budneck: 2d ndarray (size_x, size_y) giving the probability that a
+            pixel corresponds to a bud neck
+        :p_bud: 2d ndarray (size_x, size_y) giving the probability that a pixel
+            corresponds to a bud
+        :state: running state for the tracker, or None for initialisation
 
-        returns
-        :feats: 2d float ndarray (ncells, nfeatures) containing the feature
-        values for each cell
+        returns a tuple consisting of
         :new_lbls: list of int, contains information on the global id of the cell
-        :ba_props: 2d ndarray (ncells, ncells) with probability of cells being
-        daughter of one another
+        :m_assign: list of int, specifying the assigned mother for each cell
+        :state: the updated state to be used in a subsequent step
         '''
 
-        # Get features
+        if state is None:
+            state = {}
+
+        max_lbl = state.get('max_lbl', 0)
+        cell_lbls = state.get('cell_lbls', [])
+        prev_feats = state.get('prev_feats', [])
+
+        # Get features for cells at this time point
         feats = np.array([[
             feat[0]
             for feat in regionprops_table(masks[..., i],
                                           properties=self.feats2use).values()
         ] for i in range(masks.shape[2])])
 
-        new_lbls, _, max_lbls = self.get_new_lbls(
-            masks, cell_lbls[-self.nstepsback:], prev_feats[-self.nstepsback:],
-            max_lbls)
+        cell_lbls = cell_lbls[-self.nstepsback:]
+        prev_feats = prev_feats[-self.nstepsback:]
 
-        ba_pred_matrix = self.calc_mother_bud_stats(pred, flattener, masks,
-                                                    feats)
+        new_lbls, _, max_lbl = self.get_new_lbls(
+            masks, cell_lbls, prev_feats, max_lbl)
 
-        # if necessary, increase the matrix size
-        if max_lbls > len(ba_cum):
-            new_size = (np.floor(max_lbls / 32).astype(int) + 1) * 32
-            ba_cum = np.pad(ba_cum, (0, new_size), 'constant')
+        ba_probs = self.calc_mother_bud_stats(p_budneck, p_bud, masks, feats)
 
-        # Subindex matrix with cells present in this image
-        nlbls = len(new_lbls)
-        new_lbls_ind = (np.repeat(new_lbls, nlbls).reshape(-1, nlbls),
-                        np.tile(new_lbls, nlbls).reshape(-1, nlbls))
-        ba_cum[new_lbls_ind] += ba_pred_matrix
-        newmothers = self.assign_lbls(ba_pred_matrix[new_lbls_ind],
-                                      self.ctrack_thresh)
+        # if necessary, allocate more memory for state vectors/matrices
+        init = {
+            'lifetime': np.zeros(0),  # vector (>=max_lbl)
+            'p_is_mother': np.zeros(0),  # vector (>=max_lbl)
+            'p_was_bud': np.zeros(0),  # vector (>=max_lbl)
+            'ba_cum': np.zeros((0,0))  # matrix (>=max_lbl, >=max_lbl)
+        }
+        for k, v in init:
+            v = state.get(k, v)
+            l = len(v)
+            if max_lbl > l:
+                state[k] = np.pad(v, (0, l - max_lbl + 32, 'constant'))
 
-        return (feats, new_lbls, max_lbls, newmothers, ba_cum)
+        lifetime = state['lifetime']
+        p_is_mother = state['p_is_mother']
+        p_was_bud = state['p_was_bud']
+        ba_cum = state['ba_cum']
+
+        # Update lineage state variables
+        lblinds = new_lbls - 1  # new_lbls are indexed from 1
+        lifetime[lblinds] += 1
+        p_is_mother[lblinds] = np.maximum(p_is_mother[lblinds],
+                                           ba_probs.sum(1))
+        p_was_bud[lblinds] = np.maximum(p_was_bud[lblinds],
+                                         ba_probs.max(0))
+        ba_cum[np.ix_(lblinds, lblinds)] += ba_probs * (
+            1 - p_is_mother[lblinds][None,])
+
+        # Finally update the state
+        state = {
+            'max_lbl': max_lbl,
+            'cell_lbls': cell_lbls + [new_lbls],
+            'prev_feats': prev_feats + [feats],
+            'lifetime': lifetime,
+            'p_is_mother': p_is_mother,
+            'p_was_bud': p_was_bud,
+            'ba_cum': ba_cum
+        }
+
+        if assignbuds:
+            # Calculate mother assignments for this time point
+            ma = ba_cum[0:max_lbl, 0:max_lbl].argmax(0) + 1
+            # Cell must have been a bud and been present for at least 2 tps
+            isbud = (p_was_bud[0:max_lbl] > 0.5) & (lifetime[0:max_lbl] > 2)
+            ma[!isbud] = 0  # 0 indicates no assignment (lbls indexed from 1)
+            return new_lbls, ma, state
+        else:
+            return new_lbls, state
