@@ -12,8 +12,9 @@ from imageio import imread
 from skimage.measure import regionprops_table
 from skimage.draw import polygon
 from scipy.ndimage.morphology import binary_fill_holes
+import os
 
-models_path = join(dirname(__file__), '..', '..', 'models')
+models_path = os.path.join(os.path.dirname(__file__), '..', '..', 'models')
 
 
 class Tracker:
@@ -47,13 +48,14 @@ class Tracker:
         self.xtrafeats = ('distance', )
 
         if ba_model is None:
-            ba_model_file = join(models_path, 'baby_randomforest_20190906.pkl')
-            with open(ffile, 'rb') as file_to_load:
+            ba_model_file = os.path.join(models_path,
+                                  'baby_randomforest_20190906.pkl')
+            with open(ba_model_file, 'rb') as file_to_load:
                 ba_model = pickle.load(file_to_load)
         self.ba_model = ba_model
 
         if ctrack_model is None:
-            ctrack_model_file = join(models_path, 'test.pkl')
+            ctrack_model_file = os.path.join(models_path, 'test.pkl')
             with open(ctrack_model_file, 'rb') as file_to_load:
                 ctrack_model = pickle.load(file_to_load)
         self.ctrack_model = ctrack_model
@@ -450,7 +452,8 @@ class Tracker:
             ma = ba_cum[0:max_lbl, 0:max_lbl].argmax(0) + 1
             # Cell must have been a bud and been present for at least 2 tps
             isbud = (p_was_bud[0:max_lbl] > 0.5) & (lifetime[0:max_lbl] > 2)
-            ma[!isbud] = 0  # 0 indicates no assignment (lbls indexed from 1)
+            ma[(not isbud)] = 0  # 0 indicates no assignment (lbls indexed
+            # from 1)
             return new_lbls, ma, state
         else:
             return new_lbls, state

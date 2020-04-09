@@ -14,7 +14,7 @@ from functools import reduce
 from operator import mul
 import numpy as np
 
-from baby.run import BabyRunner
+from python.baby.brain import BabyBrain
 
 
 routes = web.RouteTableDef()
@@ -127,7 +127,7 @@ class TaskMaster(object):
         # Load BabyRunner
         print('Starting new runner for model "{}"...'.format(model_name))
 
-        baby = BabyRunner(**modelsets[model_name],
+        baby = BabyBrain(**modelsets[model_name],
                           session=self.tf_session, graph=self.tf_graph)
 
         if self.runners.get(model_name) == 'pending':
