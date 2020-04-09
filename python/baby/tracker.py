@@ -6,6 +6,7 @@ TODO Add this
 
 '''
 from collections import Counter
+from os.path import dirname, join
 import pickle
 import numpy as np
 from imageio import imread
@@ -450,7 +451,7 @@ class Tracker:
             ma = ba_cum[0:max_lbl, 0:max_lbl].argmax(0) + 1
             # Cell must have been a bud and been present for at least 2 tps
             isbud = (p_was_bud[0:max_lbl] > 0.5) & (lifetime[0:max_lbl] > 2)
-            ma[!isbud] = 0  # 0 indicates no assignment (lbls indexed from 1)
+            ma[~isbud] = 0  # 0 indicates no assignment (lbls indexed from 1)
             return new_lbls, ma, state
         else:
             return new_lbls, state
