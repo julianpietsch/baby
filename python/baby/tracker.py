@@ -1,9 +1,5 @@
 '''
 Tracker class to perform cell tracking inside baby.
-
-How to run:
-TODO Add this
-
 '''
 from collections import Counter
 import pickle
@@ -22,7 +18,8 @@ class Tracker:
 
     Initialization parameters:
 
-    :model: sklearn.ensemble.RandomForestClassifier object
+    :ctrack_model: sklearn.ensemble.RandomForestClassifier object
+    :ba_model: sklearn.ensemble.RandomForestClassifier object. 
     :nstepsback: int Number of timepoints to go back
     :ctrac_thresh: float Cut-off value to assume a cell is not new
     '''
@@ -30,10 +27,7 @@ class Tracker:
                  ctrack_model=None,
                  ba_model=None,
                  nstepsback=None,
-                 ctrack_thresh=None,
-                 ba_thresh=None):
-        '''
-        '''
+                 ctrack_thresh=None):
         self.feats2use = ('centroid', 'area', 'minor_axis_length',
                           'major_axis_length', 'convex_area')
         # self.mb_feats = ('centroid', 'area', 'minor_axis_length')
@@ -53,7 +47,7 @@ class Tracker:
         self.ba_model = ba_model
 
         if ctrack_model is None:
-            ctrack_model_file = join(models_path, 'test.pkl')
+            ctrack_model_file = join(models_path, 'ctrack_randomforest_20200325.pkl')
             with open(ctrack_model_file, 'rb') as file_to_load:
                 ctrack_model = pickle.load(file_to_load)
         self.ctrack_model = ctrack_model
@@ -62,8 +56,6 @@ class Tracker:
             self.nstepsback = 2
         if ctrack_thresh is None:
             self.ctrack_thresh = 0.5
-        if ba_thresh is None:
-            self.ba_thresh = 0.5
 
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
@@ -151,7 +143,7 @@ class Tracker:
 
         return (new_lbls, new_feats, new_max)
 
-    def assign_lbls(self, pred_matrix, prev_lbls, thresh, norm=False):
+    def assign_lbls(self, pred_matrix, prev_lbls):
         '''Assign labels using a prediction matrix of nxm where n is the number
         of cells in the previous image and m in the new image. It assigns the
         number zero if it doesn't find the cell.
@@ -174,14 +166,10 @@ class Tracker:
         for j, i in enumerate(pred_matrix.argmax(0)):
             clean_mat[i, j] = pred_matrix[i, j]
 
-        # Normalise (useful for aggregating probabilities)
-        if norm:
-            clean_mat = clean_mat / (clean_mat + 1).max(1)[:, np.newaxis]
-
             # assign available hits
             new_lbls = np.repeat(0, pred_matrix.shape[1])
             for i, j in enumerate(clean_mat.argmax(1)):
-                if pred_matrix[i, j] > thresh:
+                if pred_matrix[i, j] > self.ctrack_thresh:
                     new_lbls[j] = prev_lbls[i]
 
         return new_lbls
@@ -220,15 +208,12 @@ class Tracker:
 
         return (decision.tolist(), new_max)
 
-    ## Handler function
-
     def get_tseries_lbls(self, img_list):
         '''
-        TODO BABY: modify this function to add new images as they appear
-        Handler function to calculate the timepoints of a list of images
+        Independent function to do cell tracking for an 
         ---
         input
-        :img_list: list of ndarrays, one for each timepoint
+        :img_list: list of 3d ndarrays (size_x, size_y, ncells)
 
         output
         :cell_lbls: list of lists of ints the corresponding cell labels
@@ -365,8 +350,6 @@ class Tracker:
 
         return r_points
 
-    # Utility functions
-
     def step_trackers(self, masks, p_budneck, p_bud, state=None, assignbuds=False):
         '''
         Calculate features and track cells and budassignments
@@ -413,11 +396,11 @@ class Tracker:
             'p_was_bud': np.zeros(0),  # vector (>=max_lbl)
             'ba_cum': np.zeros((0,0))  # matrix (>=max_lbl, >=max_lbl)
         }
-        for k, v in init:
-            v = state.get(k, v)
+        for k in init.keys():
+            v = state.get(k)
             l = len(v)
             if max_lbl > l:
-                state[k] = np.pad(v, (0, l - max_lbl + 32, 'constant'))
+                state[k] = np.pad(v, (0, l - max_lbl + 32), 'constant')
 
         lifetime = state['lifetime']
         p_is_mother = state['p_is_mother']
