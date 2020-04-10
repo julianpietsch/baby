@@ -348,10 +348,10 @@ class Tracker:
             'lifetime': np.zeros(0),  # vector (>=max_lbl)
             'p_is_mother': np.zeros(0),  # vector (>=max_lbl)
             'p_was_bud': np.zeros(0),  # vector (>=max_lbl)
-            'ba_cum': np.zeros((0,0))  # matrix (>=max_lbl, >=max_lbl)
+            'ba_cum': np.zeros((0, 0))  # matrix (>=max_lbl, >=max_lbl)
         }
-        for k in init.keys():
-            v = state.get(k)
+        for k, v in init.items():
+            v = state.get(k, v)
             l = len(v)
             if max_lbl > l:
                 state[k] = np.pad(v, (0, l - max_lbl + 32), 'constant')
