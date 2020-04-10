@@ -18,7 +18,7 @@ from .utils import batch_iterator, split_batch_pred
 
 models_path = join(dirname(__file__), '..', '..', 'models')
 
-tf_version = [int(v) for v in tf.version.VERSION.split('.')]
+tf_version = [int(v) for v in tf.__version__.split('.')]
 
 # Default to optimal segmentation parameters found in Jupyter notebook
 # segmentation-190906.ipynb:
@@ -226,9 +226,9 @@ class BabyBrain(object):
                 }
 
                 if yield_masks:
-                    xy_shape = cnn_output.shape[1:3]
+                    xy0_shape = cnn_output.shape[1:3] + (0,)
                     output['masks'] = np.dstack(
-                        (np.zeros(xy_shape, dtype='bool'),) + tuple(masks))
+                        (np.zeros(xy0_shape, dtype='bool'),) + tuple(masks))
                 if yield_edgemasks:
                     output['edgemasks'] = edges
                 if yield_preds:

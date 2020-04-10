@@ -20,7 +20,7 @@ class Tracker:
     Initialization parameters:
 
     :ctrack_model: sklearn.ensemble.RandomForestClassifier object
-    :ba_model: sklearn.ensemble.RandomForestClassifier object. 
+    :ba_model: sklearn.ensemble.RandomForestClassifier object.
     :nstepsback: int Number of timepoints to go back
     :ctrac_thresh: float Cut-off value to assume a cell is not new
     '''
@@ -73,20 +73,21 @@ class Tracker:
         cell-wise substraction of the features in the input ndarrays.
         '''
         nnew = len(new_feats)
+        noutfeats = len(self.outfeats)
 
-        n3darray = np.empty(
-            (len(prev_feats), nnew, self.outfeats + len(self.xtrafeats)))
+        n3darray = np.empty((len(prev_feats), nnew,
+                             noutfeats + len(self.xtrafeats)))
 
-        for i in range(self.outfeats):
+        for i in range(noutfeats):
             n3darray[..., i] = np.subtract.outer(prev_feats[:, i],
                                                  new_feats[:, i])
 
         # Calculate extra features
-        for i, feat in enumerate(self.xtrafeats, self.outfeats):
+        for i, feat in enumerate(self.xtrafeats, noutfeats):
             if feat == 'distance':
                 # Assume that centroid-0 and centroid-1 are in the first two cols
-                n3darray[..., i] = np.sqrt(n3darray[..., 0]**2 +
-                                           n3darray[..., 1]**2)
+                n3darray[..., i] = np.sqrt(
+                    n3darray[..., 0]**2 + n3darray[..., 1]**2)
 
         return n3darray
 
@@ -112,7 +113,7 @@ class Tracker:
 
         output
         :new_max: updated max cell albel assigned
-        :new_lbl: list of labels assigned to new timepoint
+        :new_lbl: numpy array of labels assigned to new timepoint
         :new_feats: list of ndarrays containing the updated features
 
         '''
@@ -135,8 +136,7 @@ class Tracker:
                         feats_3darray.reshape(-1, feats_3darray.shape[2]))
                 ])
                 pred_matrix = pred_list.reshape(orig_shape)
-                pred_lbls[i, :] = self.assign_lbls(pred_matrix, prev_lbls[i],
-                                                   self.ctrack_thresh)
+                pred_lbls[i, :] = self.assign_lbls(pred_matrix, prev_lbls[i])
 
             new_lbls, new_max = self.count_votes(pred_lbls, max_lbl)
 
@@ -211,56 +211,6 @@ class Tracker:
 
         return (decision.tolist(), new_max)
 
-    def get_tseries_lbls(self, img_list):
-        '''
-        Independent function to do cell tracking for an 
-        ---
-        input
-        :img_list: list of 3d ndarrays (size_x, size_y, ncells)
-
-        output
-        :cell_lbls: list of lists of ints the corresponding cell labels
-        '''
-        cell_lbls = []
-        feats = []
-        max_lbls = 0
-
-        for img in img_list:
-            new_lbls, new_feats, max_lbls = self.get_new_lbls(
-                img, cell_lbls[-self.nstepsback:], feats[-self.nstepsback:],
-                max_lbls)
-
-            cell_lbls.append(new_lbls)
-            feats.append(new_feats)
-
-            # Where to put this line? Or also yield new_feats?
-            self.calc_mother_bud_stats(p_budneck,
-                                       p_bud,
-                                       img_list,
-                                       feats=new_feats)
-
-            yield cell_lbls
-
-    def get_cells(self, filename, cell_id):
-        '''
-        Read a filename and cell id (only to get the number of cells)
-        and return the ndarray containing the cells in the z-axis
-        ---
-        input
-        :filename: str indication the png location
-        :cell_id: list of ints, where the ints are cell labels
-
-        output
-        ndarray (size_x, size_y, ncells). ndarray containing the mask for cells
-        in the z-axis
-        '''
-
-        ncells = len(aslist(cell_id))
-        img = imread(filename)
-        cell_masks = np.hsplit(binary_fill_holes(img).astype(int), ncells)
-
-        return np.dstack(cell_masks)
-
     ### Assign mother-
     def calc_mother_bud_stats(self, p_budneck, p_bud, masks, feats=None):
         '''
@@ -274,6 +224,8 @@ class Tracker:
         :feats: ndarray (ncells, nfeats)
         '''
 
+        masks = masks.transpose((2, 0, 1))  # make ncells the first index
+
         if feats is None:
             feats = [
                 regionprops_table(m.astype('int'), properties=self.mb.feats)[0]
@@ -284,8 +236,9 @@ class Tracker:
 
         ncells = len(masks)
 
-        p_bud_mat, p_budneck_mat, size_ratio_mat, adjacency_mat = np.repeat(
-            np.zeros((ncells, ncells)), 4)
+        p_bud_mat, p_budneck_mat, size_ratio_mat, adjacency_mat = [
+            np.zeros((ncells, ncells))
+        ] * 4
 
         for m in range(ncells):
             for d in range(ncells):
@@ -293,8 +246,8 @@ class Tracker:
                     continue
 
                 p_bud_mat[m, d] = np.mean(p_bud[masks[d]])
-                size_ratio_mat[m,
-                               d] = feats[m, self.a_ind] / feats[d, self.a_ind]
+                size_ratio_mat[m, d] = feats[m, self.a_ind] / feats[d,
+                                                                    self.a_ind]
 
                 # Draw rectangle
                 r_points = self.get_rpoints(feats, d, m)
@@ -309,9 +262,9 @@ class Tracker:
                 p_budneck_mat[m, d] = np.mean(pbn) if len(pbn) > 0 else 0
 
                 # Adjacency is the proportion of the joining rectangle that overlaps the mother daughter union
-                adjacency_mat[m,
-                              d] = np.sum((masks[m]
-                                           | masks[d]) & r_im) / np.sum(r_im)
+                adjacency_mat[m, d] = np.sum((masks[m]
+                                              | masks[d]) & r_im) / np.sum(
+                                                  r_im)
 
         mb_stats = np.hstack([
             s.flatten()[:, np.newaxis]
@@ -397,10 +350,10 @@ class Tracker:
             'lifetime': np.zeros(0),  # vector (>=max_lbl)
             'p_is_mother': np.zeros(0),  # vector (>=max_lbl)
             'p_was_bud': np.zeros(0),  # vector (>=max_lbl)
-            'ba_cum': np.zeros((0,0))  # matrix (>=max_lbl, >=max_lbl)
+            'ba_cum': np.zeros((0, 0))  # matrix (>=max_lbl, >=max_lbl)
         }
-        for k in init.keys():
-            v = state.get(k)
+        for k, v in init.items():
+            v = state.get(k, v)
             l = len(v)
             if max_lbl > l:
                 state[k] = np.pad(v, (0, l - max_lbl + 32), 'constant')
@@ -411,14 +364,13 @@ class Tracker:
         ba_cum = state['ba_cum']
 
         # Update lineage state variables
-        lblinds = new_lbls - 1  # new_lbls are indexed from 1
+        lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
         lifetime[lblinds] += 1
         p_is_mother[lblinds] = np.maximum(p_is_mother[lblinds],
-                                           ba_probs.sum(1))
-        p_was_bud[lblinds] = np.maximum(p_was_bud[lblinds],
-                                         ba_probs.max(0))
-        ba_cum[np.ix_(lblinds, lblinds)] += ba_probs * (
-            1 - p_is_mother[lblinds][None,])
+                                          ba_probs.sum(1))
+        p_was_bud[lblinds] = np.maximum(p_was_bud[lblinds], ba_probs.max(0))
+        ba_cum[np.ix_(
+            lblinds, lblinds)] += ba_probs * (1 - p_is_mother[lblinds][None, ])
 
         # Finally update the state
         state = {
