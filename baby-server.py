@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-from __future__ import absolute_import, division, print_function, unicode_literals
+from __future__ import absolute_import, division, print_function, \
+    unicode_literals
 import asyncio
 import threading
 from aiohttp import web
@@ -15,7 +16,7 @@ from operator import mul
 import numpy as np
 
 from python.baby.brain import BabyBrain
-
+from python.baby.crawler import BabyCrawler
 
 routes = web.RouteTableDef()
 
@@ -30,9 +31,10 @@ MAX_RUNNERS = 3
 MAX_SESSIONS = 5
 SLEEP_TIME = 0.2  # time between threaded checks for data availability
 MAX_ATTEMPTS = 150  # allows for 30s delay before timing out
-MAX_IMG_SIZE = 100*1024*1024  # allows for raw image sizes up to 100 MB
+MAX_IMG_SIZE = 100 * 1024 * 1024  # allows for raw image sizes up to 100 MB
 
 DIMS_ERROR_MSG = '"dims" must be a length 4 integer array: [ntraps, width, height, depth]'
+
 
 ### Helper functions and classes ###
 
@@ -47,6 +49,10 @@ def web_error(message=None, errtype=web.HTTPBadRequest, internalerr=None):
 
 
 class Timeout(Exception):
+    pass
+
+
+class PredMissingError(Exception):
     pass
 
 
@@ -81,7 +87,7 @@ class TaskMaster(object):
         sessioninfo = {'id': sessionid, 'model_name': model_name}
 
         with self._lock:
-            self._session_pool.insert(0,sessionid)
+            self._session_pool.insert(0, sessionid)
             self.sessions[sessionid] = sessioninfo
 
         return sessionid
@@ -128,7 +134,7 @@ class TaskMaster(object):
         print('Starting new runner for model "{}"...'.format(model_name))
 
         baby = BabyBrain(**modelsets[model_name],
-                          session=self.tf_session, graph=self.tf_graph)
+                         session=self.tf_session, graph=self.tf_graph)
 
         if self.runners.get(model_name) == 'pending':
             with self._lock:
@@ -148,13 +154,28 @@ class TaskMaster(object):
 
     def is_valid_session(self, sessionid):
         return sessionid in self.sessions and \
-            self.sessions[sessionid]['model_name'] in self.runners and \
-            self.sessions[sessionid].get('pred') != 'pending'
+               self.sessions[sessionid]['model_name'] in self.runners and \
+               self.sessions[sessionid].get('pred') != 'pending'
 
     def is_valid_depth(self, sessionid, depth):
         return self.get_runner(sessionid).depth == depth
 
+   # def ensure_session_crawler(self, sessionid):
+   #     if 'crawler' in self.sessions[sessionid]:
+   #         pass
+   #     else:
+   #         self.ensure_runner(self.sessions[sessionid]['model_name'])
+   #         while True:
+   #             try:
+   #                 brain = self.get_runner(
+   #                     self.sessions[sessionid]['model_name'])
+   #             except KeyError:
+   #                 continue
+   #             break
+   #         self.sessions[sessionid]['crawler'] = BabyCrawler(brain)
+
     def segment(self, sessionid, img):
+        #crawler = self.sessions[sessionid]['crawler']
         baby = self.get_runner(sessionid)
 
         with self._lock:
@@ -163,6 +184,7 @@ class TaskMaster(object):
         # if tf.keras.backend.get_session() != self.tf_session:
         #     tf.keras.backend.set_session(self.tf_session)
 
+        #pred = crawler.step(img)
         pred = baby.run(img)
 
         with self._lock:
@@ -172,7 +194,7 @@ class TaskMaster(object):
         for i in range(MAX_ATTEMPTS):
             pred = self.sessions[sessionid].get('pred')
             if pred is None:
-                raise Missing
+                raise PredMissingError
             if pred != 'pending':
                 break
             time.sleep(SLEEP_TIME)
@@ -205,15 +227,14 @@ async def get_session(request):
     if model_name not in modelsets:
         raise web.HTTPNotFound(text='"{}" model is unknown'.format(model_name))
 
-    sessionid = taskmstr.new_session(model_name)
-
-    print('Creating new session "{}" with model "{}"...'.format(
-        sessionid, model_name))
-
     # Ensure model is loaded in another thread
     loop = asyncio.get_event_loop()
     loop.run_in_executor(request.app['Executor'],
                          taskmstr.ensure_runner, model_name, modelsets)
+    sessionid = taskmstr.new_session(model_name)
+
+    print('Creating new session "{}" with model "{}"...'.format(
+        sessionid, model_name))
 
     return web.json_response({'sessionid': sessionid})
 
@@ -245,6 +266,7 @@ async def segment(request):
 
     print('Processing query for session "{}"'.format(sessionid))
 
+    #await taskmstr.ensure_session_crawler(sessionid)
     reader = await request.multipart()
 
     field = await reader.next()
@@ -255,18 +277,18 @@ async def segment(request):
     try:
         dims = json.loads(dims)
     except json.JSONDecodeError:
-        raise DIMS_ERROR
+        raise Exception(DIMS_ERROR_MSG)
 
     if type(dims) != list or len(dims) != 4 or \
             not all([type(d) == int and d > 0 for d in dims]):
-        DIMS_ERROR
+        raise Exception(DIMS_ERROR_MSG + " {}".format(dims))
 
     try:
         is_valid_depth = await loop.run_in_executor(
             executor, taskmstr.is_valid_depth, sessionid, dims[3])
     except Timeout:
         raise web_error('session is still loading or has stalled',
-                  errtype=web.HTTPRequestTimeout)
+                        errtype=web.HTTPRequestTimeout)
     if not is_valid_depth:
         raise web_error('image depth is incorrect for this session')
 
@@ -301,7 +323,7 @@ async def segment(request):
         raise web_error(
             'image size ({}) does not match specified dimensions ({})'.format(
                 len(imgbytes), json.dumps(dims)
-        ))
+            ))
 
     try:
         img = np.frombuffer(imgbytes, dtype=DTYPES[bitdepth])
@@ -314,7 +336,7 @@ async def segment(request):
         print('Data received. Writing test image to "baby-server-test.png"...')
         from imageio import imwrite
         imwrite(join(SERVER_DIR, 'baby-server-test.png'),
-                np.squeeze(img[0,:,:,0]))
+                np.squeeze(img[0, :, :, 0]))
         return web.json_response({'status': 'test image written'})
 
     print('Data received. Segmenting {} images...'.format(len(img)))
@@ -336,10 +358,11 @@ async def get_segmentation(request):
     sessionid = request.query['sessionid']
 
     try:
-        pred = await loop.run_in_executor(executor, taskmstr.results, sessionid)
+        pred = await loop.run_in_executor(executor, taskmstr.results,
+                                          sessionid)
     except Timeout:
         raise web_error('segmentation is still running or has stalled',
-                  errtype=web.HTTPRequestTimeout)
+                        errtype=web.HTTPRequestTimeout)
 
     return web.json_response(pred)
 
@@ -349,8 +372,7 @@ app.add_routes(routes)
 app['TaskMaster'] = TaskMaster()
 app['Executor'] = ThreadPoolExecutor(2)
 
-
-if __name__=='__main__':
+if __name__ == '__main__':
     import tensorflow as tf
 
     tf_version = tuple(int(v) for v in tf.version.VERSION.split('.'))
@@ -372,7 +394,8 @@ if __name__=='__main__':
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
             logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+            print(len(gpus), "Physical GPUs,", len(logical_gpus),
+                  "Logical GPUs")
 
         MAX_RUNNERS = 1
     else:
