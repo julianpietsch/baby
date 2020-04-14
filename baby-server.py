@@ -160,23 +160,23 @@ class TaskMaster(object):
     def is_valid_depth(self, sessionid, depth):
         return self.get_runner(sessionid).depth == depth
 
-   # def ensure_session_crawler(self, sessionid):
-   #     if 'crawler' in self.sessions[sessionid]:
-   #         pass
-   #     else:
-   #         self.ensure_runner(self.sessions[sessionid]['model_name'])
-   #         while True:
-   #             try:
-   #                 brain = self.get_runner(
-   #                     self.sessions[sessionid]['model_name'])
-   #             except KeyError:
-   #                 continue
-   #             break
-   #         self.sessions[sessionid]['crawler'] = BabyCrawler(brain)
+    def ensure_session_crawler(self, sessionid):
+        if 'crawler' in self.sessions[sessionid]:
+            pass
+        else:
+            self.ensure_runner(self.sessions[sessionid]['model_name'])
+            while True:
+                try:
+                    brain = self.get_runner(
+                        self.sessions[sessionid]['model_name'])
+                except KeyError:
+                    continue
+                break
+            self.sessions[sessionid]['crawler'] = BabyCrawler(brain)
 
     def segment(self, sessionid, img):
-        #crawler = self.sessions[sessionid]['crawler']
-        baby = self.get_runner(sessionid)
+        crawler = self.sessions[sessionid]['crawler']
+        #baby = self.get_runner(sessionid)
 
         with self._lock:
             self.sessions[sessionid]['pred'] = 'pending'
@@ -184,8 +184,8 @@ class TaskMaster(object):
         # if tf.keras.backend.get_session() != self.tf_session:
         #     tf.keras.backend.set_session(self.tf_session)
 
-        #pred = crawler.step(img)
-        pred = baby.run(img)
+        pred = crawler.step(img)
+        #pred = baby.run(img)
 
         with self._lock:
             self.sessions[sessionid]['pred'] = pred
@@ -266,7 +266,7 @@ async def segment(request):
 
     print('Processing query for session "{}"'.format(sessionid))
 
-    #await taskmstr.ensure_session_crawler(sessionid)
+    await taskmstr.ensure_session_crawler(sessionid)
     reader = await request.multipart()
 
     field = await reader.next()
