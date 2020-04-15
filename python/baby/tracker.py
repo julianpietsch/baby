@@ -58,7 +58,7 @@ class Tracker:
         if nstepsback is None:
             self.nstepsback = 2
         if ctrack_thresh is None:
-            self.ctrack_thresh = 0.5
+            self.ctrack_thresh = 0.85
 
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
@@ -123,27 +123,33 @@ class Tracker:
                     new_img[..., i], properties=self.feats2use).values()
             ] for i in range(new_img.shape[2])])
 
-        if len(prev_feats):
-            pred_lbls = np.zeros((len(prev_feats), len(new_feats)), dtype=int)
+        if new_feats.any():
+            if prev_feats:
+                pred_lbls = np.zeros((len(prev_feats), len(new_feats)), dtype=int)
 
-            for i, prev_feat in enumerate(prev_feats):
-                feats_3darray = self.calc_feat_ndarray(prev_feat, new_feats)
-                orig_shape = feats_3darray.shape[:2]
+                for i, prev_feat in enumerate(prev_feats):
+                    if prev_feat.any():
+                        feats_3darray = self.calc_feat_ndarray(prev_feat, new_feats)
+                        orig_shape = feats_3darray.shape[:2]
 
-                # Flatten for predictions and then reshape back into matrix
-                pred_list = np.array([
-                    val[1] for val in self.ctrack_model.predict_proba(
-                        feats_3darray.reshape(-1, feats_3darray.shape[2]))
-                ])
-                pred_matrix = pred_list.reshape(orig_shape)
-                pred_lbls[i, :] = self.assign_lbls(pred_matrix, prev_lbls[i])
+                            # Flatten for predictions and then reshape back into matrix
+                        pred_list = np.array([
+                            val[1] for val in self.ctrack_model.predict_proba(
+                                feats_3darray.reshape(-1, feats_3darray.shape[2]))
+                        ])
+                        pred_matrix = pred_list.reshape(orig_shape)
+                        pred_lbls[i, :] = self.assign_lbls(pred_matrix, prev_lbls[i])
 
-            new_lbls, new_max = self.count_votes(pred_lbls, max_lbl)
+                    else:
+                        pred_lbls[i, :] = 0
+                
+                new_lbls, new_max = self.count_votes(pred_lbls, max_lbl)
+            else:
+                new_max = len(new_feats)
+                new_lbls = [*range(1, new_max + 1)]
 
         else:
-            new_max = len(new_feats)
-            new_lbls = [*range(1, new_max + 1)]
-
+            return ([], [], max_lbl)
         return (new_lbls, new_feats, new_max)
 
     def assign_lbls(self, pred_matrix, prev_lbls):
@@ -337,13 +343,12 @@ class Tracker:
                                           properties=self.feats2use).values()
         ] for i in range(masks.shape[2])])
 
-        cell_lbls = cell_lbls[-self.nstepsback:]
-        prev_feats = prev_feats[-self.nstepsback:]
+        lastn_lbls = cell_lbls[-self.nstepsback:]
+        lastn_feats = prev_feats[-self.nstepsback:]
 
         new_lbls, _, max_lbl = self.get_new_lbls(
-            masks, cell_lbls, prev_feats, max_lbl)
+            masks, lastn_lbls, lastn_feats, max_lbl)
 
-        ba_probs = self.calc_mother_bud_stats(p_budneck, p_bud, masks, feats)
 
         # if necessary, allocate more memory for state vectors/matrices
         init = {
@@ -364,13 +369,15 @@ class Tracker:
         ba_cum = state['ba_cum']
 
         # Update lineage state variables
-        lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
-        lifetime[lblinds] += 1
-        p_is_mother[lblinds] = np.maximum(p_is_mother[lblinds],
-                                          ba_probs.sum(1))
-        p_was_bud[lblinds] = np.maximum(p_was_bud[lblinds], ba_probs.max(0))
-        ba_cum[np.ix_(
-            lblinds, lblinds)] += ba_probs * (1 - p_is_mother[lblinds][None, ])
+        if new_lbls:
+            ba_probs = self.calc_mother_bud_stats(p_budneck, p_bud, masks, feats)
+            lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
+            lifetime[lblinds] += 1
+            p_is_mother[lblinds] = np.maximum(p_is_mother[lblinds],
+                                              ba_probs.sum(1))
+            p_was_bud[lblinds] = np.maximum(p_was_bud[lblinds], ba_probs.max(0))
+            ba_cum[np.ix_(
+                lblinds, lblinds)] += ba_probs * (1 - p_is_mother[lblinds][None, ])
 
         # Finally update the state
         state = {
