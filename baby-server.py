@@ -160,23 +160,16 @@ class TaskMaster(object):
     def is_valid_depth(self, sessionid, depth):
         return self.get_runner(sessionid).depth == depth
 
-    def ensure_session_crawler(self, sessionid):
-        if 'crawler' in self.sessions[sessionid]:
-            pass
-        else:
-            self.ensure_runner(self.sessions[sessionid]['model_name'])
-            while True:
-                try:
-                    brain = self.get_runner(
-                        self.sessions[sessionid]['model_name'])
-                except KeyError:
-                    continue
-                break
-            self.sessions[sessionid]['crawler'] = BabyCrawler(brain)
-
     def segment(self, sessionid, img):
+        brain = self.get_runner(sessionid)
+
+        if 'crawler' not in self.sessions[sessionid]:
+            # Instantiate local crawler before locking to share
+            crawler = BabyCrawler(brain)
+            with self._lock:
+                self.sessions[sessionid]['crawler'] = crawler
+
         crawler = self.sessions[sessionid]['crawler']
-        #baby = self.get_runner(sessionid)
 
         with self._lock:
             self.sessions[sessionid]['pred'] = 'pending'
@@ -246,7 +239,10 @@ async def get_sessions(request):
     print(taskmstr.sessions)
     print(taskmstr._runner_pool)
     print(taskmstr.runners)
-    return web.json_response(taskmstr.sessions)
+    return web.json_response([
+        {k: v for k, v in s.items() if k not in {'crawler'}}
+        for s in taskmstr.sessions.values()
+    ])
 
 
 @routes.post('/segment')
@@ -266,7 +262,6 @@ async def segment(request):
 
     print('Processing query for session "{}"'.format(sessionid))
 
-    await taskmstr.ensure_session_crawler(sessionid)
     reader = await request.multipart()
 
     field = await reader.next()
