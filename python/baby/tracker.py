@@ -54,9 +54,9 @@ class Tracker:
         self.ctrack_model = ctrack_model
 
         if nstepsback is None:
-            self.nstepsback = 2
+            self.nstepsback = 1
         if ctrack_thresh is None:
-            self.ctrack_thresh = 0.85
+            self.ctrack_thresh = 0.75
 
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
