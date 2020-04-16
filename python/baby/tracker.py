@@ -1,14 +1,11 @@
-'''
-Tracker class to perform cell tracking inside baby.
+''' Tracker class to perform cell tracking inside baby.
 '''
 from collections import Counter
 from os.path import dirname, join
 import pickle
 import numpy as np
-from imageio import imread
 from skimage.measure import regionprops_table
 from skimage.draw import polygon
-from scipy.ndimage.morphology import binary_fill_holes
 
 models_path = join(dirname(__file__), '..', '..', 'models')
 
@@ -32,7 +29,7 @@ class Tracker:
                  ctrack_thresh=None):
         self.feats2use = ('centroid', 'area', 'minor_axis_length',
                           'major_axis_length', 'convex_area')
-        # self.mb_feats = ('centroid', 'area', 'minor_axis_length')
+        self.mb_feats = ('centroid', 'area', 'minor_axis_length')
 
         self.outfeats = list(
             regionprops_table(np.diag((1, 0)),
@@ -49,7 +46,8 @@ class Tracker:
         self.ba_model = ba_model
 
         if ctrack_model is None:
-            ctrack_model_file = join(models_path, 'ctrack_randomforest_20200325.pkl')
+            ctrack_model_file = join(models_path,
+                                     'ctrack_randomforest_20200325.pkl')
             with open(ctrack_model_file, 'rb') as file_to_load:
                 ctrack_model = pickle.load(file_to_load)
         self.ctrack_model = ctrack_model
@@ -111,7 +109,7 @@ class Tracker:
             new_img if given.
 
         output
-        :new_max: updated max cell albel assigned
+        :new_max: updated max cell label assigned
         :new_lbl: numpy array of labels assigned to new timepoint
         :new_feats: list of ndarrays containing the updated features
 
@@ -234,7 +232,7 @@ class Tracker:
 
         if feats is None:
             feats = [
-                regionprops_table(m.astype('int'), properties=self.mb.feats)[0]
+                regionprops_table(m.astype('int'), properties=self.mb_feats)[0]
                 for m in masks
             ]
         elif len(feats) != len(masks):
@@ -312,7 +310,12 @@ class Tracker:
 
         return r_points
 
-    def step_trackers(self, masks, p_budneck, p_bud, state=None, assignbuds=False):
+    def step_trackers(self,
+                      masks,
+                      p_budneck,
+                      p_bud,
+                      state=None,
+                      assignbuds=False):
         '''
         Calculate features and track cells and budassignments
         input
