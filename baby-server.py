@@ -333,7 +333,8 @@ async def segment(request):
         if field is None:
             break
         else:
-            kwargs[field.name] = field.read(decode=True)
+            val = await field.read(decode=True)
+            kwargs[field.name] = json.loads(val)
 
     if request.query.get('test', False):
         print('Data received. Writing test image to "baby-server-test.png"...')

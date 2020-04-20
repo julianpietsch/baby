@@ -407,6 +407,6 @@ class Tracker:
             else:
                 ma = np.zeros(0)
 
-            return new_lbls, ma, state
+            return new_lbls, ma.tolist(), state
         else:
             return new_lbls, state

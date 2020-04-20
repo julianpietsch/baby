@@ -230,7 +230,7 @@ class BabyBrain(object):
                     output['masks'] = np.dstack(
                         (np.zeros(xy0_shape, dtype='bool'),) + tuple(masks))
                 if yield_edgemasks:
-                    output['edgemasks'] = edges
+                    output['edgemasks'] = [edge.tolist() for edge in edges]
                 if yield_preds:
                     output['preds'] = cnn_output
 
