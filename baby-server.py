@@ -160,7 +160,7 @@ class TaskMaster(object):
     def is_valid_depth(self, sessionid, depth):
         return self.get_runner(sessionid).depth == depth
 
-    def segment(self, sessionid, img):
+    def segment(self, sessionid, img, kwargs):
         brain = self.get_runner(sessionid)
 
         if 'crawler' not in self.sessions[sessionid]:
@@ -177,8 +177,7 @@ class TaskMaster(object):
         # if tf.keras.backend.get_session() != self.tf_session:
         #     tf.keras.backend.set_session(self.tf_session)
 
-        pred = crawler.step(img)
-        #pred = baby.run(img)
+        pred = crawler.step(img, **kwargs)
 
         with self._lock:
             self.sessions[sessionid]['pred'] = pred
@@ -289,7 +288,7 @@ async def segment(request):
 
     field = await reader.next()
     if field.name != 'bitdepth':
-        raise web_error('"bitdepth" must be fourth')
+        raise web_error('"bitdepth" must be third')
     bitdepth = await field.read(decode=True)
     try:
         bitdepth = int(bitdepth)
@@ -327,6 +326,15 @@ async def segment(request):
 
     img = img.reshape(dims, order='F')
 
+    # Read optional elements
+    kwargs = {}
+    while True:
+        field = await reader.next()
+        if field is None:
+            break
+        else:
+            kwargs[field.name] = field.read(decode=True)
+
     if request.query.get('test', False):
         print('Data received. Writing test image to "baby-server-test.png"...')
         from imageio import imwrite
@@ -336,7 +344,7 @@ async def segment(request):
 
     print('Data received. Segmenting {} images...'.format(len(img)))
 
-    loop.run_in_executor(executor, taskmstr.segment, sessionid, img)
+    loop.run_in_executor(executor, taskmstr.segment, sessionid, img, kwargs)
 
     return web.json_response({
         'status': 'processing {} trap images'.format(len(img))})
