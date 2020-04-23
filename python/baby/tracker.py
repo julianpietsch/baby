@@ -9,7 +9,6 @@ from skimage.draw import polygon
 
 models_path = join(dirname(__file__), '..', '..', 'models')
 
-
 class Tracker:
     '''
     Class used to manage cell tracking.
@@ -41,7 +40,7 @@ class Tracker:
 
         if ba_model is None:
             ba_model_file = join(models_path, 'baby_randomforest_20190906.pkl')
-            with open(ffile, 'rb') as file_to_load:
+            with open(ba_model_file, 'rb') as file_to_load:
                 ba_model = pickle.load(file_to_load)
         self.ba_model = ba_model
 
@@ -228,7 +227,7 @@ class Tracker:
         :feats: ndarray (ncells, nfeats)
         '''
 
-        masks = masks.transpose((2, 0, 1))  # make ncells the first index
+        masks = masks.transpose((2, 0, 1)) # make ncells the first index
 
         if feats is None:
             feats = [
@@ -240,16 +239,19 @@ class Tracker:
 
         ncells = len(masks)
 
-        p_bud_mat, p_budneck_mat, size_ratio_mat, adjacency_mat = [
-            np.zeros((ncells, ncells))
-        ] * 4
+        p_bud_mat = np.zeros((ncells, ncells))
+        p_budneck_mat = np.zeros((ncells, ncells))
+        size_ratio_mat = np.zeros((ncells, ncells))
+        adjacency_mat = np.zeros((ncells, ncells))
+
 
         for m in range(ncells):
             for d in range(ncells):
                 if m == d:
                     continue
 
-                p_bud_mat[m, d] = np.mean(p_bud[masks[d]])
+                p_bud_mat[m, d] = np.mean(p_bud[masks[d].astype('bool')])
+
                 size_ratio_mat[m, d] = feats[m, self.a_ind] / feats[d,
                                                                     self.a_ind]
 
@@ -262,6 +264,7 @@ class Tracker:
 
                 # Calculate the mean of bud neck probabilities greater than some threshold
                 pbn = p_budneck[r_im].flatten()
+
                 pbn = pbn[pbn > 0.2]
                 p_budneck_mat[m, d] = np.mean(pbn) if len(pbn) > 0 else 0
 
