@@ -194,7 +194,8 @@ class TaskMaster(object):
         if pred == 'pending':
             raise Timeout
 
-        return pred
+        # Return a semi-shallow copy of the pred to limit cache modification
+        return [p.copy() for p in pred]
 
 
 ### API routes ###
@@ -367,6 +368,16 @@ async def get_segmentation(request):
     except Timeout:
         raise web_error('segmentation is still running or has stalled',
                         errtype=web.HTTPRequestTimeout)
+
+    # Format pred output for JSON response (NB: pred is shallow copy from
+    # taskmaster, so in-place editing of dicts is ok):
+    for p in pred:
+        for k, v in p.items():
+            if k == 'edgemasks':
+                # Convert edge masks to lists of x and y coords
+                p[k] = [[x + 1 for x in np.where(m)] for m in v]
+            if isinstance(v, np.ndarray):
+                p[k] = None # heavy ndarrays must be obtained via other routes
 
     return web.json_response(pred)
 

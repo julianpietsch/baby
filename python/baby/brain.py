@@ -225,30 +225,44 @@ class BabyBrain(object):
                     'radii': [r.tolist() for r in radii]
                 }
 
+                _0xy = (0,) + cnn_output.shape[1:3]
                 if yield_masks:
-                    xy0_shape = cnn_output.shape[1:3] + (0,)
-                    output['masks'] = np.dstack(
-                        (np.zeros(xy0_shape, dtype='bool'),) + tuple(masks))
+                    if len(masks) > 0:
+                        output['masks'] = np.stack(masks)
+                    else:
+                        output['masks'] = np.zeros(_0xy, dtype='bool')
                 if yield_edgemasks:
-                    output['edgemasks'] = [edge.tolist() for edge in edges]
+                    if len(edges) > 0:
+                        output['edgemasks'] = np.stack(edges)
+                    else:
+                        output['edgemasks'] = np.zeros(_0xy, dtype='bool')
                 if yield_preds:
                     output['preds'] = cnn_output
 
                 yield output
 
     def run(self, bf_img_batch):
-        '''Implementation of legacy runner function... TODO
+        '''Implementation of legacy runner function...
         '''
         output = []
+
+        tnames = self.flattener.names()
+        i_budneck = tnames.index('bud_neck')
+        i_bud = tnames.index('sml_fill')
+
         for seg_output in self.segment(bf_img_batch,
                                        yield_masks=True,
                                        yield_preds=True):
             ba_probs = self.tracker.calc_mother_bud_stats(
-                seg_output['preds'], self.flattener, seg_output['masks'])
+                seg_output['preds'][i_budneck], seg['preds'][i_bud],
+                seg_output['masks'])
+
             del seg_output['preds']
             del seg_output['masks']
-            seg_output['ba_probs'] = ba_probs.tolist()
+
+            seg_output['ba_probs'] = ba_probs
             output.append(seg_output)
+
         return output
 
     def segment_and_track(self,
@@ -284,7 +298,7 @@ class BabyBrain(object):
 
         for seg, state in zip(segment_gen, tracker_states):
             tracking = self.tracker.step_trackers(
-                seg['masks'].astype('int'), seg['preds'][i_budneck],
+                seg['masks'], seg['preds'][i_budneck],
                 seg['preds'][i_bud], state=state, assignbuds=assignbuds)
 
             del seg['preds']

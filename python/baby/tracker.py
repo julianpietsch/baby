@@ -56,6 +56,23 @@ class Tracker:
         if ctrack_thresh is None:
             self.ctrack_thresh = 0.75
 
+    def calc_feats_from_masks(self, masks, feats2use=None):
+        '''
+        Calculate feature ndarray from ndarray of cell masks
+        ---
+        input
+        :masks: ndarray (ncells, x_size, y_size), typically dtype bool
+        :feats2use: tuple of property names for regionprops_table
+
+        output
+        :n2darray: ndarray (ncells, nfeats)
+        '''
+        return np.array([[
+                feat[0] for feat in regionprops_table(
+                    mask.astype('int'),
+                    properties=feats2use or self.feats2use).values()
+            ] for mask in masks])
+
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
         Calculate feature ndarray using two ndarrays of features.
@@ -98,7 +115,7 @@ class Tracker:
 
         ----
         input
-        :new_img: ndarray (len, width, ncells) containing the cell outlines
+        :new_img: ndarray (ncells, len, width) containing the cell outlines
         :max_lbl: int indicating the last assigned cell label
         :prev_feats: list of ndarrays of size (ncells x nfeatures)
         containing the features of previous timepoints
@@ -114,10 +131,7 @@ class Tracker:
 
         '''
         if new_feats is None:
-            new_feats = np.array([[
-                feat[0] for feat in regionprops_table(
-                    new_img[..., i], properties=self.feats2use).values()
-            ] for i in range(new_img.shape[2])])
+            new_feats = self.calc_feats_from_masks(new_img)
 
         if new_feats.any():
             if prev_feats:
@@ -223,17 +237,16 @@ class Tracker:
             pixel corresponds to a bud neck
         :p_bud: 2d ndarray (size_x, size_y) giving the probability that a pixel
             corresponds to a bud
-        :mask: 3d ndarray (size_x, size_y, ncells)
+        :masks: 3d ndarray (ncells, size_x, size_y)
         :feats: ndarray (ncells, nfeats)
+
+        output
+        :n2darray: 2d ndarray (ncells, ncells) giving probability that a cell
+            (row) is a mother to another cell (column)
         '''
 
-        masks = masks.transpose((2, 0, 1)) # make ncells the first index
-
         if feats is None:
-            feats = [
-                regionprops_table(m.astype('int'), properties=self.mb_feats)[0]
-                for m in masks
-            ]
+            feats = self.calc_feats_from_masks(masks, feats2use=self.mb_feats)
         elif len(feats) != len(masks):
             raise Exception('number of features must match number of masks')
 
@@ -322,7 +335,7 @@ class Tracker:
         '''
         Calculate features and track cells and budassignments
         input
-        :masks: 3d int ndarray (size_x, size_y, ncells) containing cell masks
+        :masks: 3d ndarray (ncells, size_x, size_y) containing cell masks
         :p_budneck: 2d ndarray (size_x, size_y) giving the probability that a
             pixel corresponds to a bud neck
         :p_bud: 2d ndarray (size_x, size_y) giving the probability that a pixel
@@ -343,10 +356,7 @@ class Tracker:
         prev_feats = state.get('prev_feats', [])
 
         # Get features for cells at this time point
-        feats = np.array([[
-            feat[0] for feat in regionprops_table(
-                masks[..., i], properties=self.feats2use).values()
-        ] for i in range(masks.shape[2])])
+        feats = self.calc_feats_from_masks(masks)
 
         lastn_lbls = cell_lbls[-self.nstepsback:]
         lastn_feats = prev_feats[-self.nstepsback:]
