@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-from __future__ import absolute_import, division, print_function, unicode_literals
+from __future__ import absolute_import, division, print_function, \
+    unicode_literals
 import asyncio
 import threading
 from aiohttp import web
@@ -14,8 +15,8 @@ from functools import reduce
 from operator import mul
 import numpy as np
 
-from baby.run import BabyRunner
-
+from python.baby.brain import BabyBrain
+from python.baby.crawler import BabyCrawler
 
 routes = web.RouteTableDef()
 
@@ -30,9 +31,10 @@ MAX_RUNNERS = 3
 MAX_SESSIONS = 5
 SLEEP_TIME = 0.2  # time between threaded checks for data availability
 MAX_ATTEMPTS = 150  # allows for 30s delay before timing out
-MAX_IMG_SIZE = 100*1024*1024  # allows for raw image sizes up to 100 MB
+MAX_IMG_SIZE = 100 * 1024 * 1024  # allows for raw image sizes up to 100 MB
 
 DIMS_ERROR_MSG = '"dims" must be a length 4 integer array: [ntraps, width, height, depth]'
+
 
 ### Helper functions and classes ###
 
@@ -47,6 +49,10 @@ def web_error(message=None, errtype=web.HTTPBadRequest, internalerr=None):
 
 
 class Timeout(Exception):
+    pass
+
+
+class PredMissingError(Exception):
     pass
 
 
@@ -81,7 +87,7 @@ class TaskMaster(object):
         sessioninfo = {'id': sessionid, 'model_name': model_name}
 
         with self._lock:
-            self._session_pool.insert(0,sessionid)
+            self._session_pool.insert(0, sessionid)
             self.sessions[sessionid] = sessioninfo
 
         return sessionid
@@ -127,8 +133,8 @@ class TaskMaster(object):
         # Load BabyRunner
         print('Starting new runner for model "{}"...'.format(model_name))
 
-        baby = BabyRunner(**modelsets[model_name],
-                          session=self.tf_session, graph=self.tf_graph)
+        baby = BabyBrain(**modelsets[model_name],
+                         session=self.tf_session, graph=self.tf_graph)
 
         if self.runners.get(model_name) == 'pending':
             with self._lock:
@@ -148,14 +154,22 @@ class TaskMaster(object):
 
     def is_valid_session(self, sessionid):
         return sessionid in self.sessions and \
-            self.sessions[sessionid]['model_name'] in self.runners and \
-            self.sessions[sessionid].get('pred') != 'pending'
+               self.sessions[sessionid]['model_name'] in self.runners and \
+               self.sessions[sessionid].get('pred') != 'pending'
 
     def is_valid_depth(self, sessionid, depth):
         return self.get_runner(sessionid).depth == depth
 
-    def segment(self, sessionid, img):
-        baby = self.get_runner(sessionid)
+    def segment(self, sessionid, img, kwargs):
+        brain = self.get_runner(sessionid)
+
+        if 'crawler' not in self.sessions[sessionid]:
+            # Instantiate local crawler before locking to share
+            crawler = BabyCrawler(brain)
+            with self._lock:
+                self.sessions[sessionid]['crawler'] = crawler
+
+        crawler = self.sessions[sessionid]['crawler']
 
         with self._lock:
             self.sessions[sessionid]['pred'] = 'pending'
@@ -163,7 +177,7 @@ class TaskMaster(object):
         # if tf.keras.backend.get_session() != self.tf_session:
         #     tf.keras.backend.set_session(self.tf_session)
 
-        pred = baby.run(img)
+        pred = crawler.step(img, **kwargs)
 
         with self._lock:
             self.sessions[sessionid]['pred'] = pred
@@ -172,7 +186,7 @@ class TaskMaster(object):
         for i in range(MAX_ATTEMPTS):
             pred = self.sessions[sessionid].get('pred')
             if pred is None:
-                raise Missing
+                raise PredMissingError
             if pred != 'pending':
                 break
             time.sleep(SLEEP_TIME)
@@ -180,7 +194,8 @@ class TaskMaster(object):
         if pred == 'pending':
             raise Timeout
 
-        return pred
+        # Return a semi-shallow copy of the pred to limit cache modification
+        return [p.copy() for p in pred]
 
 
 ### API routes ###
@@ -205,15 +220,14 @@ async def get_session(request):
     if model_name not in modelsets:
         raise web.HTTPNotFound(text='"{}" model is unknown'.format(model_name))
 
-    sessionid = taskmstr.new_session(model_name)
-
-    print('Creating new session "{}" with model "{}"...'.format(
-        sessionid, model_name))
-
     # Ensure model is loaded in another thread
     loop = asyncio.get_event_loop()
     loop.run_in_executor(request.app['Executor'],
                          taskmstr.ensure_runner, model_name, modelsets)
+    sessionid = taskmstr.new_session(model_name)
+
+    print('Creating new session "{}" with model "{}"...'.format(
+        sessionid, model_name))
 
     return web.json_response({'sessionid': sessionid})
 
@@ -225,7 +239,10 @@ async def get_sessions(request):
     print(taskmstr.sessions)
     print(taskmstr._runner_pool)
     print(taskmstr.runners)
-    return web.json_response(taskmstr.sessions)
+    return web.json_response([
+        {k: v for k, v in s.items() if k not in {'crawler'}}
+        for s in taskmstr.sessions.values()
+    ])
 
 
 @routes.post('/segment')
@@ -255,24 +272,24 @@ async def segment(request):
     try:
         dims = json.loads(dims)
     except json.JSONDecodeError:
-        raise DIMS_ERROR
+        raise Exception(DIMS_ERROR_MSG)
 
     if type(dims) != list or len(dims) != 4 or \
             not all([type(d) == int and d > 0 for d in dims]):
-        DIMS_ERROR
+        raise Exception(DIMS_ERROR_MSG + " {}".format(dims))
 
     try:
         is_valid_depth = await loop.run_in_executor(
             executor, taskmstr.is_valid_depth, sessionid, dims[3])
     except Timeout:
         raise web_error('session is still loading or has stalled',
-                  errtype=web.HTTPRequestTimeout)
+                        errtype=web.HTTPRequestTimeout)
     if not is_valid_depth:
         raise web_error('image depth is incorrect for this session')
 
     field = await reader.next()
     if field.name != 'bitdepth':
-        raise web_error('"bitdepth" must be fourth')
+        raise web_error('"bitdepth" must be third')
     bitdepth = await field.read(decode=True)
     try:
         bitdepth = int(bitdepth)
@@ -301,7 +318,7 @@ async def segment(request):
         raise web_error(
             'image size ({}) does not match specified dimensions ({})'.format(
                 len(imgbytes), json.dumps(dims)
-        ))
+            ))
 
     try:
         img = np.frombuffer(imgbytes, dtype=DTYPES[bitdepth])
@@ -310,16 +327,26 @@ async def segment(request):
 
     img = img.reshape(dims, order='F')
 
+    # Read optional elements
+    kwargs = {}
+    while True:
+        field = await reader.next()
+        if field is None:
+            break
+        else:
+            val = await field.read(decode=True)
+            kwargs[field.name] = json.loads(val)
+
     if request.query.get('test', False):
         print('Data received. Writing test image to "baby-server-test.png"...')
         from imageio import imwrite
         imwrite(join(SERVER_DIR, 'baby-server-test.png'),
-                np.squeeze(img[0,:,:,0]))
+                np.squeeze(img[0, :, :, 0]))
         return web.json_response({'status': 'test image written'})
 
     print('Data received. Segmenting {} images...'.format(len(img)))
 
-    loop.run_in_executor(executor, taskmstr.segment, sessionid, img)
+    loop.run_in_executor(executor, taskmstr.segment, sessionid, img, kwargs)
 
     return web.json_response({
         'status': 'processing {} trap images'.format(len(img))})
@@ -336,10 +363,21 @@ async def get_segmentation(request):
     sessionid = request.query['sessionid']
 
     try:
-        pred = await loop.run_in_executor(executor, taskmstr.results, sessionid)
+        pred = await loop.run_in_executor(executor, taskmstr.results,
+                                          sessionid)
     except Timeout:
         raise web_error('segmentation is still running or has stalled',
-                  errtype=web.HTTPRequestTimeout)
+                        errtype=web.HTTPRequestTimeout)
+
+    # Format pred output for JSON response (NB: pred is shallow copy from
+    # taskmaster, so in-place editing of dicts is ok):
+    for p in pred:
+        for k, v in p.items():
+            if k == 'edgemasks':
+                # Convert edge masks to lists of x and y coords
+                p[k] = [[x + 1 for x in np.where(m)] for m in v]
+            if isinstance(v, np.ndarray):
+                p[k] = None # heavy ndarrays must be obtained via other routes
 
     return web.json_response(pred)
 
@@ -349,8 +387,7 @@ app.add_routes(routes)
 app['TaskMaster'] = TaskMaster()
 app['Executor'] = ThreadPoolExecutor(2)
 
-
-if __name__=='__main__':
+if __name__ == '__main__':
     import tensorflow as tf
 
     tf_version = tuple(int(v) for v in tf.version.VERSION.split('.'))
@@ -372,7 +409,8 @@ if __name__=='__main__':
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
             logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+            print(len(gpus), "Physical GPUs,", len(logical_gpus),
+                  "Logical GPUs")
 
         MAX_RUNNERS = 1
     else:
