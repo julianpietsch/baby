@@ -127,7 +127,7 @@ def get_regions(p_img, threshold):
     """Find regions in a probability image sorted by likelihood"""
     p_thresh = p_img > interior_threshold
     p_label = label(p_thresh, background=0)
-    rprops = regionprops(p_label, p_img, coordinates='rc')
+    rprops = regionprops(p_label, p_img)
     rprops = [r for r in rprops if
               r.major_axis_length > 0 and r.minor_axis_length > 0]
     rprops.sort(key=lambda x: x.mean_intensity, reverse=True)
@@ -188,7 +188,7 @@ def morph_ellipse_seg(cnn_outputs, interior_threshold=0.9,
         # Omit interior masks if they overlap with bud masks
         masks = budmasks + unique_masks(masks, budmasks, threshold=isbud_threshold)
 
-    rprops = [regionprops(m.astype('int'), coordinates='rc')[0] for m in masks]
+    rprops = [regionprops(m.astype('int'))[0] for m in masks]
     rprops = [r for r in rprops if
               r.major_axis_length > 0 and r.minor_axis_length > 0]
 
@@ -253,7 +253,7 @@ def morph_ac_seg(cnn_outputs, interior_threshold=0.9,
 
         outmasks += budmasks
 
-    rprops = [regionprops(m.astype('int'), coordinates='rc')[0] for m in masks]
+    rprops = [regionprops(m.astype('int'))[0] for m in masks]
     rprops = [r for r in rprops if
               r.major_axis_length > 0 and r.minor_axis_length > 0]
 
@@ -317,7 +317,7 @@ def morph_radial_thresh_fit(outline, mask=None, rprops=None):
         mask = binary_fill_holes(outline)
 
     if rprops is None:
-        rprops = regionprops(mask.astype('int'), coordinates='rc')[0]
+        rprops = regionprops(mask.astype('int'))[0]
 
     r_maj = rprops.major_axis_length
     nrays = 4 if r_maj < 5 else 6 if r_maj < 20 else 8
@@ -432,7 +432,7 @@ def morph_radial_thresh_seg(cnn_outputs, interior_threshold=0.9,
 
     # Need mask outlines and region properties
     mseg = [minimum_filter(m, footprint=squareconn) != m for m in masks]
-    rprops = [regionprops(m.astype('int'), coordinates='rc')[0] for m in masks]
+    rprops = [regionprops(m.astype('int'))[0] for m in masks]
 
     outlines = []
     for mask, outline, rp in zip(masks, mseg, rprops):
@@ -468,7 +468,7 @@ def thresh_seg(p_int, interior_threshold=0.5, connectivity=None,
 
 
 def single_region_prop(mask):
-    return regionprops(mask.astype('int'), coordinates='rc')[0]
+    return regionprops(mask.astype('int'))[0]
 
 
 def outlines_to_radial(outlines, rprops, return_outlines=False):

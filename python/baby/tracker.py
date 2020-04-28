@@ -1,14 +1,13 @@
 ''' Tracker class to perform cell tracking inside baby.
 '''
 from collections import Counter
-from os.path import dirname, join
 import pickle
 import numpy as np
 from skimage.measure import regionprops_table
 from skimage.draw import polygon
+import os
 
-models_path = join(dirname(__file__), '..', '..', 'models')
-
+models_path = os.path.join(os.path.dirname(__file__), '..', '..', 'models')
 
 class Tracker:
     '''
@@ -41,13 +40,13 @@ class Tracker:
 
         if ba_model is None:
             ba_model_file = join(models_path, 'baby_randomforest_20190906.pkl')
-            with open(ffile, 'rb') as file_to_load:
+            with open(ba_model_file, 'rb') as file_to_load:
                 ba_model = pickle.load(file_to_load)
         self.ba_model = ba_model
 
         if ctrack_model is None:
-            ctrack_model_file = join(models_path,
-                                     'ctrack_randomforest_20200325.pkl')
+            ctrack_model_file = os.path.join(models_path,
+                                      'ctrack_randomforest_20200325.pkl')
             with open(ctrack_model_file, 'rb') as file_to_load:
                 ctrack_model = pickle.load(file_to_load)
         self.ctrack_model = ctrack_model
@@ -56,6 +55,23 @@ class Tracker:
             self.nstepsback = 1
         if ctrack_thresh is None:
             self.ctrack_thresh = 0.75
+
+    def calc_feats_from_masks(self, masks, feats2use=None):
+        '''
+        Calculate feature ndarray from ndarray of cell masks
+        ---
+        input
+        :masks: ndarray (ncells, x_size, y_size), typically dtype bool
+        :feats2use: tuple of property names for regionprops_table
+
+        output
+        :n2darray: ndarray (ncells, nfeats)
+        '''
+        return np.array([[
+                feat[0] for feat in regionprops_table(
+                    mask.astype('int'),
+                    properties=feats2use or self.feats2use).values()
+            ] for mask in masks])
 
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
@@ -99,7 +115,7 @@ class Tracker:
 
         ----
         input
-        :new_img: ndarray (len, width, ncells) containing the cell outlines
+        :new_img: ndarray (ncells, len, width) containing the cell outlines
         :max_lbl: int indicating the last assigned cell label
         :prev_feats: list of ndarrays of size (ncells x nfeatures)
         containing the features of previous timepoints
@@ -115,10 +131,7 @@ class Tracker:
 
         '''
         if new_feats is None:
-            new_feats = np.array([[
-                feat[0] for feat in regionprops_table(
-                    new_img[..., i], properties=self.feats2use).values()
-            ] for i in range(new_img.shape[2])])
+            new_feats = self.calc_feats_from_masks(new_img)
 
         if new_feats.any():
             if prev_feats:
@@ -224,32 +237,34 @@ class Tracker:
             pixel corresponds to a bud neck
         :p_bud: 2d ndarray (size_x, size_y) giving the probability that a pixel
             corresponds to a bud
-        :mask: 3d ndarray (size_x, size_y, ncells)
+        :masks: 3d ndarray (ncells, size_x, size_y)
         :feats: ndarray (ncells, nfeats)
+
+        output
+        :n2darray: 2d ndarray (ncells, ncells) giving probability that a cell
+            (row) is a mother to another cell (column)
         '''
 
-        masks = masks.transpose((2, 0, 1))  # make ncells the first index
-
         if feats is None:
-            feats = [
-                regionprops_table(m.astype('int'), properties=self.mb_feats)[0]
-                for m in masks
-            ]
+            feats = self.calc_feats_from_masks(masks, feats2use=self.mb_feats)
         elif len(feats) != len(masks):
             raise Exception('number of features must match number of masks')
 
         ncells = len(masks)
 
-        p_bud_mat, p_budneck_mat, size_ratio_mat, adjacency_mat = [
-            np.zeros((ncells, ncells))
-        ] * 4
+        p_bud_mat = np.zeros((ncells, ncells))
+        p_budneck_mat = np.zeros((ncells, ncells))
+        size_ratio_mat = np.zeros((ncells, ncells))
+        adjacency_mat = np.zeros((ncells, ncells))
+
 
         for m in range(ncells):
             for d in range(ncells):
                 if m == d:
                     continue
 
-                p_bud_mat[m, d] = np.mean(p_bud[masks[d]])
+                p_bud_mat[m, d] = np.mean(p_bud[masks[d].astype('bool')])
+
                 size_ratio_mat[m, d] = feats[m, self.a_ind] / feats[d,
                                                                     self.a_ind]
 
@@ -262,6 +277,7 @@ class Tracker:
 
                 # Calculate the mean of bud neck probabilities greater than some threshold
                 pbn = p_budneck[r_im].flatten()
+
                 pbn = pbn[pbn > 0.2]
                 p_budneck_mat[m, d] = np.mean(pbn) if len(pbn) > 0 else 0
 
@@ -319,7 +335,7 @@ class Tracker:
         '''
         Calculate features and track cells and budassignments
         input
-        :masks: 3d int ndarray (size_x, size_y, ncells) containing cell masks
+        :masks: 3d ndarray (ncells, size_x, size_y) containing cell masks
         :p_budneck: 2d ndarray (size_x, size_y) giving the probability that a
             pixel corresponds to a bud neck
         :p_bud: 2d ndarray (size_x, size_y) giving the probability that a pixel
@@ -340,10 +356,7 @@ class Tracker:
         prev_feats = state.get('prev_feats', [])
 
         # Get features for cells at this time point
-        feats = np.array([[
-            feat[0] for feat in regionprops_table(
-                masks[..., i], properties=self.feats2use).values()
-        ] for i in range(masks.shape[2])])
+        feats = self.calc_feats_from_masks(masks)
 
         lastn_lbls = cell_lbls[-self.nstepsback:]
         lastn_feats = prev_feats[-self.nstepsback:]
@@ -406,6 +419,6 @@ class Tracker:
             else:
                 ma = np.zeros(0)
 
-            return new_lbls, ma, state
+            return new_lbls, ma.tolist(), state
         else:
             return new_lbls, state
