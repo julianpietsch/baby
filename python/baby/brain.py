@@ -64,7 +64,8 @@ class BabyBrain(object):
                  default_image_size=None,
                  params=default_params,
                  session=None,
-                 graph=None):
+                 graph=None,
+                 print_info=False):
 
         self.reshaped_models = {}
 
@@ -100,12 +101,15 @@ class BabyBrain(object):
             self.session = session
             self.graph = graph
 
-        print('Loading Keras model "{}"...'.format(morph_model_file))
+        self.print_info = print_info
+        if self.print_info:
+            print('Loading Keras model "{}"...'.format(morph_model_file))
         if tf_version[0] == 1:
             with self.graph.as_default():
                 K.set_session(session)
-                print('Loading model into session "{}"...'.format(
-                    K.get_session()))
+                if self.print_info:
+                    print('Loading model into session "{}"...'.format(
+                        K.get_session()))
                 self.morph_model = models.load_model(morph_model_file,
                                                      custom_objects={
                                                          'bce_dice_loss':
@@ -173,7 +177,7 @@ class BabyBrain(object):
                 self.reshaped_models[nndims] = models.Model(
                     i, self.morph_model(i))
 
-        if tf_version[0] == 1:
+        if tf_version[0] == 1 and self.print_info:
             print('Running prediction in session "{}"...'.format(
                 K.get_session()))
 
@@ -268,20 +272,44 @@ class BabyBrain(object):
     def segment_and_track(self,
                           bf_img_batch,
                           tracker_states=None,
-                          assignbuds=False,
+                          yield_next=False,
                           yield_edgemasks=False,
-                          yield_next=False):
+                          assign_mothers=False,
+                          return_baprobs=False):
         '''Generator yielding segmented and tracked output for a batch of input
         images
 
         :param bf_img_batch: a list of ndarray with shape (X, Y, Z), or
             equivalently an ndarray with shape (N_images, X, Y, Z)
-        :param yield_edgemasks: if set to True, additionally yield edge masks
-            in each output dict
+        :param tracker_states: a generator of tracker states from the previous
+            time point as yielded by this function when `yield_next` is True
+        :param yield_next: whether to yield updated tracking states for
+            subsequent calls to this function
+        :param yield_edgemasks: whether to include edge masks in the output
+        :param assign_mothers: whether to include mother assignments in the
+            output
+        :param return_baprobs: whether to include the bud assignment
+            probability matrix in the output
 
-        :yields: for each image in the batch a dict specifying centres, angles,
-            radii, cell labels, and mother assignments for each cell detected
-            in the image
+        :yields: for each image in `bf_img_batch` a dict with
+            - centres: list of float pairs corresponding to (x, y) coords for
+              each detected cell,
+            - angles: list of lists of floats corresponding, for each cell, to
+              angles (radians) used to form active contour outline in radial
+              space
+            - radii: list of lists of floats corresponding, for each cell, to
+              radii used to form active contour outline in radial space
+            - cell_label: list of int corresponding to assigned global ID for
+              each cell detected in this image (indexed from 1)
+            - mother_assign: (optional) list of int specifying for each
+              (global) cell label ID, the cell label ID of the corresponding
+              mother (0 if no mother was found)
+            - p_bud_assign: (optional) matrix as a list of lists of floats,
+              specifying the probability that a cell (outer list) is a mother
+              to another cell (inner lists) in this image
+
+            If `yield_next` is True, yields the dict described above and
+            tracker states for this time point as a tuple
         '''
 
         if tracker_states is None:
@@ -299,20 +327,23 @@ class BabyBrain(object):
         for seg, state in zip(segment_gen, tracker_states):
             tracking = self.tracker.step_trackers(
                 seg['masks'], seg['preds'][i_budneck],
-                seg['preds'][i_bud], state=state, assignbuds=assignbuds)
+                seg['preds'][i_bud], state=state,
+                assign_mothers=assign_mothers,
+                return_baprobs=return_baprobs)
 
             del seg['preds']
             del seg['masks']
             if not yield_edgemasks:
                 del seg['edgemasks']
 
-            if assignbuds:
-                new_lbls, ma, state = tracking
-                seg['m_assign'] = ma
-            else:
-                new_lbls, state = tracking
+            seg['cell_label'] = tracking['cell_label']
+            state = tracking['state']
 
-            seg['cell_label'] = new_lbls
+            if assign_mothers:
+                seg['mother_assign'] = tracking['mother_assign']
+
+            if return_baprobs:
+                seg['p_bud_assign'] = tracking['p_bud_assign']
 
             if yield_next:
                 yield seg, state

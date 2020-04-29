@@ -140,6 +140,8 @@ class TaskMaster(object):
             with self._lock:
                 self.runners[model_name] = baby
 
+        print('...runner for model "{}" is ready!'.format(model_name))
+
     def get_runner(self, sessionid):
         for i in range(MAX_ATTEMPTS):
             runner = self.runners[self.sessions[sessionid]['model_name']]
@@ -235,14 +237,19 @@ async def get_session(request):
 @routes.get('/sessions')
 async def get_sessions(request):
     taskmstr = request.app['TaskMaster']
-    print(taskmstr._session_pool)
-    print(taskmstr.sessions)
-    print(taskmstr._runner_pool)
-    print(taskmstr.runners)
-    return web.json_response([
-        {k: v for k, v in s.items() if k not in {'crawler'}}
-        for s in taskmstr.sessions.values()
-    ])
+    session_info = []
+    for session in taskmstr.sessions.values():
+        info = {k: v for k, v in session.items() if k not in {'crawler'}}
+        if 'model_name' in info:
+            runner = taskmstr.runners.get(info['model_name'], 'missing')
+            if isinstance(runner, BabyBrain):
+                runner = 'ready'
+            elif not isinstance(runner, str):
+                runner = 'corrupted'
+            info['runner'] = runner
+        session_info.append(info)
+
+    return web.json_response(session_info)
 
 
 @routes.post('/segment')

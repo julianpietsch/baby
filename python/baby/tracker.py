@@ -331,7 +331,8 @@ class Tracker:
                       p_budneck,
                       p_bud,
                       state=None,
-                      assignbuds=False):
+                      assign_mothers=False,
+                      return_baprobs=False):
         '''
         Calculate features and track cells and budassignments
         input
@@ -341,11 +342,18 @@ class Tracker:
         :p_bud: 2d ndarray (size_x, size_y) giving the probability that a pixel
             corresponds to a bud
         :state: running state for the tracker, or None for initialisation
+        :assign_mothers: whether to include mother assignments in the returned
+            output
+        :return_baprobs: whether to include bud assignment probability matrix
+            in the returned output
 
-        returns a tuple consisting of
-        :new_lbls: list of int, contains information on the global id of the cell
-        :m_assign: list of int, specifying the assigned mother for each cell
+        returns a dict consisting of
+        :cell_label: list of int, the tracked global ID for each cell mask
         :state: the updated state to be used in a subsequent step
+        :mother_assign: (optional) list of int, specifying the assigned mother
+            for each cell
+        :p_bud_assign: (optional) matrix (list of lists of floats), bud assignment
+            probability matrix from `calc_mother_bud_stats`
         '''
 
         if state is None:
@@ -362,7 +370,7 @@ class Tracker:
         lastn_feats = prev_feats[-self.nstepsback:]
 
         new_lbls, _, max_lbl = self.get_new_lbls(masks, lastn_lbls,
-                                                 lastn_feats, max_lbl)
+                                                 lastn_feats, max_lbl, feats)
 
         # if necessary, allocate more memory for state vectors/matrices
         init = {
@@ -378,13 +386,13 @@ class Tracker:
             if max_lbl > l:
                 state[k] = np.pad(v, (0, l - max_lbl + 32), 'constant')
 
-        lifetime = state.get('lifetime', np.zeros(0))
-        p_is_mother = state.get('p_is_mother', np.zeros(0))
-        p_was_bud = state.get('p_was_bud', np.zeros(0))
-        ba_cum = state.get('ba_cum', np.zeros((0, 0)))
+        lifetime = state.get('lifetime', init['lifetime'])
+        p_is_mother = state.get('p_is_mother', init['p_is_mother'])
+        p_was_bud = state.get('p_was_bud', init['p_was_bud'])
+        ba_cum = state.get('ba_cum', init['ba_cum'])
 
         # Update lineage state variables
-        if new_lbls:
+        if len(masks) > 0:
             ba_probs = self.calc_mother_bud_stats(p_budneck, p_bud, masks,
                                                   feats)
             lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
@@ -396,6 +404,8 @@ class Tracker:
             ba_cum[np.ix_(
                 lblinds,
                 lblinds)] += ba_probs * (1 - p_is_mother[lblinds][None, ])
+        else:
+            ba_probs = np.zeros((0, 0))
 
         # Finally update the state
         state = {
@@ -408,8 +418,13 @@ class Tracker:
             'ba_cum': ba_cum
         }
 
-        if assignbuds:
-            if new_lbls:
+        output = {
+            'cell_label': new_lbls,
+            'state': state
+        }
+
+        if assign_mothers:
+            if max_lbl > 0:
                 # Calculate mother assignments for this time point
                 ma = ba_cum[0:max_lbl, 0:max_lbl].argmax(0) + 1
                 # Cell must have been a bud and been present for at least 2 tps
@@ -419,6 +434,9 @@ class Tracker:
             else:
                 ma = np.zeros(0)
 
-            return new_lbls, ma.tolist(), state
-        else:
-            return new_lbls, state
+            output['mother_assign'] = ma.tolist()
+
+        if return_baprobs:
+            output['p_bud_assign'] = ba_probs.tolist()
+
+        return output
