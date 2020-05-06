@@ -28,13 +28,16 @@ def best_IoU(IoUs):
     assignments = -np.ones(nts, dtype='int')
 
     if nps > 0:
-        for t in range(nts):
-            maxind = np.argmax(IoUs[t, :])
-            maxIoU =  IoUs[t, maxind]
+        for _ in range(nts):
+            # Start with the best pair first
+            t, p = np.unravel_index(np.argmax(IoUs), IoUs.shape)
+            maxIoU =  IoUs[t, p]
             if maxIoU > 0:
                 best[t] = maxIoU
-                IoUs[:, maxind] = -np.Inf  # this object has now been claimed
-                assignments[t] = maxind
+                assignments[t] = p
+                # This pair has now been claimed
+                IoUs[:, p] = -np.Inf
+                IoUs[t, :] = -np.Inf
 
     return best, assignments
 
