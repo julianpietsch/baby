@@ -364,17 +364,18 @@ class SmoothedLabelAugmenter(Augmenter):
 
 
 class DownscalingAugmenter(SmoothedLabelAugmenter):
-    def __init__(self, *args, pixdev=4, **kwargs):
+    def __init__(self, *args, pixdev=4, xy_scaled=None, **kwargs):
         super(DownscalingAugmenter, self).__init__(*args,**kwargs)
         self.probs[self.aug_order.index('downscale')] = 1
         self.pixdev = pixdev
+        self.xy_scaled = xy_scaled or self.xy_out
 
     def downscale(self, img, lbl, maxpix=None):
         inshape = img.shape[:2]
         if maxpix is None:
             if self.xy_in is not None:
                 inshape = self.xy_in
-            maxpix = np.max([0, np.min(inshape) - np.max(self.xy_out)])
+            maxpix = np.max([0, np.min(inshape) - np.max(self.xy_scaled)])
 
         pix = np.arange(np.max([0, maxpix - self.pixdev]), maxpix+1)
         if len(pix) == 0 or len(pix) == 1:
