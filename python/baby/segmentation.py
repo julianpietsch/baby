@@ -803,9 +803,10 @@ def refine_radial_grouped(grouped_coords, grouped_p_edges):
         for c, (centre, radii, angles) in enumerate(g_coords):
             ind = nbhd_ids.index((g, c))
             rho, phi = radial_edges[ind]
+            p_weighted = probs * indep_weights[ind]
             other_weights = indep_weights[:ind] + indep_weights[ind + 1:]
-            p_weighted = probs * indep_weights[ind] * \
-                    (1 - np.mean(other_weights, axis=0))
+            if len(other_weights) > 0:
+                 p_weighted *= (1 - np.mean(other_weights, axis=0))
 
             # Remove insignificant fit data
             signif = p_weighted > 0.1
