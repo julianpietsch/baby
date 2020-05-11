@@ -2,13 +2,59 @@ import numpy as np
 import itertools
 from scipy.ndimage import binary_fill_holes
 
+from typing import Union, Iterable, Any, Optional
+
 from .segmentation import mask_containment, iterative_erosion, thresh_seg, \
     binary_edge, single_region_prop, outlines_to_radial, get_edge_scores, \
     refine_radial_grouped
 
 
+# class ContainmentFunction:
+#     def __init__(self, threshold: float = .8):
+#         self.threshold = threshold
+#
+#     def __call__(self, *args, **kwargs):
+#         return mask_containment(*args, **kwargs) > self.threshold
+
+
+# Making a callable object instance:
+#
+# a = lambda a, b: a + b
+#
+# def a(a, b):
+#     return a + b
+#
+# class A:
+#     def __call__(self, a, b):
+#         return a + b
+# a = A()
+
+
+Group = list
+
+class Group:
+    def __init__(self, name):
+        self.name = name
+        self.targets = dict()
+        self.n_erode = None
+        self.max_n_erode = None
+        self.lower = None
+        self.upper = None
+        self.areas = None
+        self.coords = None
+        self.edges = None
+        self.masks = None
+        self.edge_scores = None
+
+    def assign_targets(self):
+        pass
+
+    def segment_group(self):
+        pass
+
+
 class MorphSegGrouped:
-    def __init__(self, flattener, cellgroups=['large', 'medium', 'small'],
+    def __init__(self, flattener, cellgroups=None,
                  interior_threshold=0.5, nclosing=0, nopening=0,
                  connectivity=2,
                  min_area=10, pedge_thresh=None, fit_radial=False,
@@ -20,6 +66,8 @@ class MorphSegGrouped:
 
         # Todo: assertions about valid options (e.g. 0 < interior_threshold
         #  < 1)
+        if cellgroups is None:
+            cellgroups = ['large', 'medium', 'small']
 
         # Initialize the flattener
         # Todo: assign, not initialize
@@ -30,7 +78,7 @@ class MorphSegGrouped:
         self.cellgroups = [(g,) if isinstance(g, str) else g for g in
                            cellgroups]
         self.interior_threshold = self.broadcast_arg(
-            interior_threshold, 'interior_threshold', float)
+            interior_threshold, 'interior_threshold')
         self.nclosing = self.broadcast_arg(nclosing, 'nclosing')
         self.nopening = self.broadcast_arg(nopening, 'nopening')
         self.min_area = self.broadcast_arg(min_area, 'min_area')
@@ -103,6 +151,10 @@ class MorphSegGrouped:
         except TypeError:
             return [arg] * self.ngroups
 
+    # Todo: This is ideally the form of the input argument
+    def contains(self, a, b):
+        return self.containment_func(a, b) > self.containment_thresh
+
     # todo: parameters as arguments, group_segs as member attribute, remove
     #  return
     def remove_duplicates(self, group_segs):
@@ -113,52 +165,32 @@ class MorphSegGrouped:
         :return: The group segmentations with duplicates removed
         """
 
-        # todo: implement without indices
+        if self.pedge_thresh is None:
+            def accessor(group):
+                return group[3] # Todo: group class member
+        else:
+            def accessor(group):
+                return group[1]
+
+        # def accessor(group):
+        #     return getattr(group, 'a' if self.pedge_thresh else 'b')
+
         for lower_group, upper_group in zip(group_segs, group_segs[1:]):
-            containment = np.array([self.containment_func(lower[0], upper[0])
-                                    for lower in lower_group
-                                    for upper in upper_group])
+            pairs = [(lower, upper)
+                     for lower in lower_group
+                     for upper in upper_group
+                     if self.contains(lower[0], upper[0])]
 
-        for lower_group_index, upper_group_index in zip(range(0, ngroups - 1),
-                                                        range(1, ngroups)):
-            lower_group = group_segs[lower_group_index]
-            upper_group = group_segs[upper_group_index]
-
-            pairs = np.array([(li, ui) for ui in range(len(upper_group))
-                              for li in range(len(lower_group))])
-            containment = np.array(
-                [self.containment_func(lower_group[li][0], upper_group[ui][0])
-                 for li, ui in pairs])
-
-            pairs = pairs[containment > self.containment_thresh]
-
-            if self.pedge_thresh is not None:
-                # Todo: use sets rather than lists
-                lower_group_discard = [lower_idx for lower_idx, upper_idx in
-                                       pairs if lower_group[lower_idx][3] <
-                                       upper_group[upper_idx][3]]
-                upper_group_discard = [upper_idx for lower_idx, upper_idx in
-                                       pairs if lower_group[lower_idx][3] >=
-                                       upper_group[upper_idx][3]]
-            else:
-                lower_group_discard = [lower_idx for lower_idx, upper_idx in
-                                       pairs if lower_group[lower_idx][1] <
-                                       upper_group[upper_idx][1]]
-                upper_group_discard = [upper_idx for lower_idx, upper_idx in
-                                       pairs if lower_group[lower_idx][1] >=
-                                       upper_group[upper_idx][1]]
-
-            group_segs[lower_group_index] = [val for lower_idx, val in
-                                             enumerate(lower_group) if
-                                             lower_idx not in lower_group_discard]
-            group_segs[upper_group_index] = [val for upper_idx, val in
-                                             enumerate(upper_group) if
-                                             upper_idx not in upper_group_discard]
+            for lower, upper in pairs:
+                if accessor(lower) < accessor(upper):
+                    lower_group.remove(lower)
+                else:
+                    upper_group.remove(upper)
 
         return group_segs
 
+    # todo: move to group class.
     def erode_predictions(self, pred_interior, pred_edge, group):
-        # todo: move to group class.
         max_nerode = self.params[group]['max_nerode']
         if len(pred_interior) == 1:
             pred_interior = pred_interior[0]
@@ -173,6 +205,7 @@ class MorphSegGrouped:
             pred_edge = np.dstack(pred_edge).max(axis=2)
         return pred_interior, pred_edge
 
+    # Todo: Move to group class
     def segment_group(self, pred_interior, conn, nc, no,
                       thresh, border_rect, bounds, max_nerode):
         """
@@ -270,6 +303,7 @@ class MorphSegGrouped:
             outputs = list(itertools.chain.from_iterable([
                 [(edge, mask, coord) for mask, _, _, _, edge, coord in group]
                 for group in group_segs]))
+
             if len(outputs) > 0:
                 edges, masks, coords = zip(*outputs)
             else:
