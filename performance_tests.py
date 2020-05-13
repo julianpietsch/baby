@@ -3,10 +3,24 @@
 import sys
 from os.path import join
 from time import perf_counter
-from contextlib import contextmanager
+from contextlib import closing
 from itertools import chain, repeat
 import json
 import numpy as np
+
+
+class Tee(object):
+    def __init__(self, file=None):
+        self._file = file
+
+    def write(self, string):
+        if self._file:
+            self._file.write(string)
+        sys.stdout.write(string)
+
+    def close(self):
+        if self._file:
+            self._file.close()
 
 
 class TimingLogger(object):
@@ -30,6 +44,12 @@ class TimingLogger(object):
             print(self._held_output, end='', file=self._file)
         print(' took {:.3f} seconds.'.format(perf_counter() - self._start_time),
                 file=self._file)
+
+    def separator(self):
+        print('\n--------------------------------\n', file=self._file)
+
+    def log(self, text):
+        print(text, file=self._file)
 
     def copy(self):
         return TimingLogger(file=self._file)
@@ -102,7 +122,8 @@ def load_brain(timing, model='evolve_brightfield_60x_5z'):
     with open(join(models_path, '..', 'modelsets.json'), 'r') as f:
         modelsets = json.load(f)
     bb = BabyBrain(session=tf_session, graph=tf_graph, **modelsets[model])
-    print('\n--------------------------------\n')
+
+    timing.separator()
     timing.finish()
     return bb
 
@@ -147,7 +168,7 @@ def crawl_expt(timing, seg_expt, bb, ntps=5):
     outer_timing.start('...crawling through {:d} time points'.format(ntps),
                        hold_output=True)
 
-    print('Start crawling...')
+    timing.log('Start crawling...')
     crawler = BabyCrawler(bb)
     output = []
     for tp in range(ntps):
@@ -186,7 +207,7 @@ def subtask_timings(timing, seg_expt, bb, ntps=5):
     outer_timing.start('...stepping through {:d} time points'.format(ntps),
                        hold_output=True)
 
-    print('Stepping through sub-tasks for {:d} time points...'.format(ntps))
+    timing.log('Stepping through sub-tasks for {:d} time points...'.format(ntps))
 
     # Running time to load and preprocess 5 tps
     trap_locs = seg_expt.trap_locations[pos]
@@ -244,16 +265,18 @@ if __name__ == "__main__":
     from optparse import OptionParser
     usage = "usage: %prog [options] experiment_dir"
     parser = OptionParser(usage=usage)
-    parser.add_option("-f", "--file", dest="filename",
-                      help="write timing info to FILE", metavar="FILE")
-    parser.add_option("-m", "--modelset", dest="modelset",
-                      default="evolve_brightfield_60x_5z",
-                      help="specify the MODEL set to use", metavar="MODEL")
-    parser.add_option("-p", "--position", dest="pos", metavar="POSNAME",
+    dflt_model = "evolve_brightfield_60x_5z"
+    parser.add_option(
+        "-m", metavar="MODELSET", default=dflt_model, dest="modelset",
+        help="specify the MODELSET to use (default '{}')".format(dflt_model)
+    )
+    parser.add_option("-p", dest="pos", metavar="POSNAME",
                       help="specify the position POSNAME to use")
-    parser.add_option("-t", "--ntimepoints", dest="ntps",
+    parser.add_option("-t", "--ntps", dest="ntps",
                       type='int', default=5, metavar="N",
                       help="crawl through (up to) N time points if available")
+    parser.add_option("-f", "--file", dest="filename", metavar="FILE",
+                      help="write timing info to FILE (also to std out)")
 
     (options, args) = parser.parse_args()
 
@@ -261,27 +284,25 @@ if __name__ == "__main__":
         parser.print_help()
         sys.exit()
 
+    file_handle = None
     if options.filename:
-        cm = open(options.filename, 'wt')
-    else:
-        @contextmanager
-        def stdout_context():
-            yield sys.stdout
-        cm = stdout_context()
+        file_handle = open(options.filename, 'wt')
 
-    with cm as f:
+    with closing(Tee(file_handle)) as f:
         timing = TimingLogger(file=f)
 
         bb = load_brain(timing, model=options.modelset)
 
-        print('\n--------------------------------\n')
+        timing.separator()
 
         seg_expt = load_seg_expt(timing, args[0], pos=options.pos)
 
-        print('\n--------------------------------\n')
+        timing.separator()
 
         subtask_timings(timing, seg_expt, bb, ntps=options.ntps)
 
-        print('\n--------------------------------\n')
+        timing.separator()
 
         output = crawl_expt(timing, seg_expt, bb, ntps=options.ntps)
+
+        timing.separator()
