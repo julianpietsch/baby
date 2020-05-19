@@ -12,7 +12,7 @@ from typing import NamedTuple, Union
 import json
 
 from .segmentation import binary_edge
-from .utils import ExtendedEncoder, as_python_object
+from .utils import EncodableNamedTuple, jsonify, as_python_object
 
 # Depth-wise structuring elements for square or full connectivity
 dwsquareconn = diamond(1)[..., None]
@@ -121,6 +121,7 @@ def segoutline_flattening(fill_stack, info):
     return imout
 
 
+@EncodableNamedTuple
 class CellGroup(NamedTuple):
     """Defines a cell group for creation of SegmentationFlattening targets
     """
@@ -130,6 +131,7 @@ class CellGroup(NamedTuple):
     focus: Union[int, float, None] = None
 
 
+@EncodableNamedTuple
 class PredTarget(NamedTuple):
     """Defines a target for SegmentationFlattening objects
     """
@@ -257,20 +259,26 @@ class SegmentationFlattening(object):
 
     def save(self, filename):
         with open(filename, 'wt') as f:
-            json.dump({
+            json.dump(jsonify({
                 'groupdef': self.groupdef,
                 'groupprops': self.groupprops,
                 'targets': self.targets
-            }, f, cls=ExtendedEncoder)
+            }), f)
 
     def load(self, filename):
         with open(filename, 'rt') as f:
             data = json.load(f, object_hook=as_python_object)
-        # Backwards-compatible loading for when focus was not a group prop
-        self.groupdef = {k: tuple(g) + (None,) if len(g) == 4 else tuple(g)
-                         for k, g in data.get('groupdef', {}).items()}
+
+        # Map any legacy versions of the group definitions to CellGroup
+        gdefs = data.get('groupdef', {})
+        self.groupdef = {k: g if isinstance(g, CellGroup)
+                         else CellGroup(*(g[:3] + g[4:5]))
+                         for k, g in gdefs.items()}
+        # Map any legacy versions of the target definitions to PredTarget
+        self.targets = [t if isinstance(t, PredTarget)
+                        else PredTarget(*(t[0:3] + gdefs[t[1]][3:4]))
+                        for t in data.get('targets', [])]
         self.groupprops = data.get('groupprops', {})
-        self.targets = data.get('targets', [])
 
     def __call__(self, filled_stack, info):
         filled_stack = filled_stack > 0
@@ -316,8 +324,8 @@ class SegmentationFlattening(object):
         focusAssignments[None] = np.ones(areas.shape, dtype='bool')
 
         # Process focus if any groups require it
-        focusNums = list({g[4] for g in self.groupdef.values()
-                          if g[4] is not None})
+        focusNums = list({g.focus for g in self.groupdef.values()
+                          if g.focus is not None})
         if len(focusNums) > 0:
             cellFocus = info.get('focusStack', [])
             if type(cellFocus) != list:
@@ -333,8 +341,8 @@ class SegmentationFlattening(object):
                                 for i, f in enumerate(focusNums)}
 
         groupinds = {
-            g: (np.flatnonzero((areas >= lt) & (areas < ut) & budonly[bo]
-                               & focusAssignments[f]), ne)
+            g: np.flatnonzero((areas >= lt) & (areas < ut) & budonly[bo]
+                    & focusAssignments[f])
             for g, (lt, ut, bo, ne, f) in self.groupdef.items()
         }
         # print(groupinds)
@@ -376,7 +384,7 @@ class SegmentationFlattening(object):
                 groupims[g]['budneck'] = budneck
 
         return np.dstack([filled_stack[...,[]]] + [
-            groupims[g][p] for _, g, p in self.targets])
+            groupims[t.group][t.prop] for t in self.targets])
 
 
 def flattener_norm_func(flattener):
