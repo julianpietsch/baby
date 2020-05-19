@@ -8,6 +8,7 @@ from skimage.measure import regionprops
 from skimage.draw import polygon
 from skimage.morphology import diamond
 from itertools import chain
+from typing import NamedTuple, Union
 import json
 
 from .segmentation import binary_edge
@@ -120,6 +121,25 @@ def segoutline_flattening(fill_stack, info):
     return imout
 
 
+class CellGroup(NamedTuple):
+    """Defines a cell group for creation of SegmentationFlattening targets
+    """
+    lower: Union[int, float] = 1
+    upper: Union[int, float] = np.Inf
+    budonly: bool = False
+    focus: Union[int, float, None] = None
+
+
+class PredTarget(NamedTuple):
+    """Defines a target for SegmentationFlattening objects
+    """
+    name: str
+    group: str
+    prop: str
+    nerode: int = 0
+    ndilate: int = 0
+
+
 class SegmentationFlattening(object):
     def __init__(self, filename=None):
         self.propdepends = {
@@ -138,15 +158,55 @@ class SegmentationFlattening(object):
         if filename is not None:
             self.load(filename)
 
-    def addGroup(self, name, lower=1, upper=np.Inf, nerode=0,
+    def addGroup(self, name, lower=1, upper=np.Inf,
                  budonly=False, focus=None):
+        """Add a new cell group to this flattener
+
+        :param name: a unique name to identify this group
+        :param lower: the lower size threshold (in pixels) of cells to include
+            in this group
+        :param upper: the upper size threshold (in pixels) of cells to include
+            in this group
+        :param budonly: whether to limit this group to cells annotated as buds
+        :param focus: a float specifying the focal plane that this group
+            should correspond to. Cells with a focus annotation will be
+            allocated to the group with the closest focal match.
+        """
         assert name not in self.groupdef, \
             '"{}" group already exists'.format(name)
-        self.groupdef[name] = (lower, upper, budonly, nerode, focus)
+        self.groupdef[name] = CellGroup(lower, upper, budonly, focus)
         self.groupprops[name] = set()
 
-    def addTarget(self, name, group, prop, focusStacks=[]):
-        assert name not in {n for n, _, _ in self.targets}, \
+    def addTarget(self, name, group, prop, nerode=0, ndilate=0,
+                  focusStacks=[]):
+        """Add a new prediction target to this flattener
+
+        :param name: a unique name to identify this target
+        :param group: the name identifying the cell group from which this
+            target should be generated
+        :param prop: the type of mask that should be generated for this
+            target. Valid values are currently:
+            - 'filled': True for all edge and interior pixels in the specified
+              group, False otherwise;
+            - 'edge': True for all edge pixels of cells in the specified
+              group, False otherwise;
+            - 'overlap': True for all pixels corresponding to at least two
+              cells in the specified group, False otherwise;
+            - 'interior': True for all pixels
+            - 'filledsum': The integer number of cells present at each pixel;
+            - 'budneck': For all cells in this group, if a mother has been
+              annotated, then set to True those pixels where the daughter
+              overlaps with a dilated version of its mother
+        :param nerode: the number of erosions that should be applied for
+            generation of this target.
+        :param ndilate: the number of dilations that should be applied for
+            generation of this target.
+        :param focusStacks: a list of floats specifying focal planes. If
+            non-empty, this is shorthand for creating a new group for each of
+            the specified focal planes (copying the properties of the
+            specified cell group) and creating a corresponding target.
+        """
+        assert name not in {t.name for t in self.targets}, \
             '"{}" target already exists'.format(name)
         assert group in self.groupdef, \
             '"{}" group does not exist'.format(group)
@@ -154,46 +214,46 @@ class SegmentationFlattening(object):
             '"{}" is not a valid property'.format(prop)
 
         if len(focusStacks) > 0:
-            lower, upper, budonly, nerode, _ = self.groupdef[group]
+            gdict = self.groupdef[group]._asdict()
+            del gdict['focus']
             for f in focusStacks:
                 fgroup = '_'.join([group, str(f)])
-                self.addGroup(fgroup, lower=lower, upper=upper,
-                              nerode=nerode, budonly=budonly, focus=f)
-                self.targets.append(('_'.join([name, str(f)]), fgroup, prop))
-                self.groupprops[fgroup] = self.groupprops[group].union(
-                    {prop}, self.propdepends[prop])
+                self.addGroup(fgroup, focus=f, **gdict)
+                self.addTarget('_'.join([name, str(f)]),
+                               fgroup, prop, nerode=nerode,
+                               ndilate=ndilate, focusStacks=[])
         else:
-            self.targets.append((name, group, prop))
+            self.targets.append(PredTarget(name, group, prop, nerode, ndilate))
             self.groupprops[group] = self.groupprops[group].union(
                 {prop}, self.propdepends[prop])
 
     def names(self):
-        return tuple(name for name, _, _ in self.targets)
+        return tuple(t.name for t in self.targets)
 
     def getGroupTargets(self, group, propfilter=None):
         assert group in self.groupdef, \
             '"{}" group does not exist'.format(group)
         if type(propfilter) == list:
             # Return targets in order of properties provided
-            grouptargets = {p: n for n, g, p in self.targets if g == group}
+            grouptargets = {t.prop: t.name for t in self.targets if t.group == group}
             return [grouptargets.get(p) for p in propfilter]
         else:
             if propfilter is None:
-                propfilter = self.propdepends.keys()
+                propfilter = self.propdepends
 
             # Return filtered targets in order of addition
-            return [n for n, g, p in self.targets
-                    if g == group and p in propfilter]
+            return [t.name for t in self.targets
+                    if t.group == group and t.prop in propfilter]
 
     def getTargetDef(self, name):
-        target = [(p, g) for n, g, p in self.targets if n == name]
+        target = [t for t in self.targets if t.name == name]
         assert len(target) == 1 , \
             '"{}" target does not exist'.format(name)
 
-        prop, group = target[0]
-        lower, upper, budonly, nerode, focus = self.groupdef[group]
-        return {'prop': prop, 'lower': lower, 'upper': upper,
-                'budonly': budonly, 'nerode': nerode, 'focus': focus}
+        target = target[0]
+        tdef = self.groupdef[target.group]._asdict()
+        tdef.update(target._asdict())
+        return tdef
 
     def save(self, filename):
         with open(filename, 'wt') as f:

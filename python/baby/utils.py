@@ -26,9 +26,23 @@ class PathEncoder(json.JSONEncoder):
             return json.JSONEncoder.default(self, o)
 
 
+class JSONencodable:
+    def toJSON(self):
+        pass
+
+    @staticmethod
+    def fromJSON(obj):
+        pass
+
+
 class ExtendedEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, tuple):
+    def _iterencode(self, obj, markers=None):
+        if isinstance(obj, NamedTuple):
+            gen = self._iterencode_dict({
+                '_python_NamedTuple': obj._asdict(),
+                '__class__': obj.__class__
+            })
+        elif isinstance(obj, tuple):
             return {'_python_tuple': list(obj)}
         elif isinstance(obj, set):
             return {'_python_set': list(obj)}
