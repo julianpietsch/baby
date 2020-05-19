@@ -1,5 +1,5 @@
 from collections import Iterable
-from itertools import chain, compress
+from itertools import chain, compress, repeat
 import numpy as np
 from numpy import newaxis as nax
 from scipy.ndimage import (
@@ -7,6 +7,7 @@ from scipy.ndimage import (
     binary_closing, binary_opening, binary_fill_holes
 )
 from scipy import interpolate
+from scipy.optimize import least_squares
 from skimage.measure import label, regionprops
 from skimage.segmentation import morphological_geodesic_active_contour
 from skimage.morphology import diamond, erosion
@@ -306,8 +307,11 @@ def eval_radial_spline(x, rho, phi):
     try:
         return interpolate.splev(np.mod(x - offset, 2*np.pi), tck)
     except ValueError as err:
+        print('x:')
         print(x)
+        print('rho:')
         print(rho)
+        print('phi:')
         print(phi)
         raise err
 
@@ -505,7 +509,29 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
                       use_group_thresh=False, group_thresh_expansion=0.,
                       ingroup_edge_segment=False,
                       containment_thresh=0.8, containment_func=mask_containment,
+                      refine_outlines=False,
                       return_masks=False, return_coords=False):
+    """Morphological segmentation for model predictions of flattener targets
+
+    :param pred: list of prediction images (ndarray with shape (x, y))
+        matching `flattener.names()`
+    :param flattener: an instance of `SegmentationFlattening` defining the
+        prediction targets `pred`
+    :param cellgroups: list of `flattener` group names to be used for the
+        segmentation task. Tuples of group names can also be included in the
+        list, in which case, those groups will be merged, generating a new
+        group.
+
+    :returns: a list of boolean edge images (ndarray shape (x, y)), one for
+        each cell identified. If `return_masks` and/or `return_coords` are
+        true, the output will be a tuple of edge images, filled masks, and/or
+        radial coordinates.
+    """
+
+    if len(pred) == 0:
+        raise Exception('there must be at least one prediction image')
+
+    shape = np.squeeze(pred[0]).shape
 
     ngroups = len(cellgroups)
     def broadcast_arg(arg, argname, t=int):
@@ -527,7 +553,6 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
     tnames = flattener.names()
 
     if not fit_radial and len(pred) > 0:
-        shape = np.squeeze(pred[0]).shape
         border_rect = np.zeros(shape, dtype='bool')
         border_rect[0,:] = True
         border_rect[:,0] = True
@@ -535,6 +560,7 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
         border_rect[:,-1] = True
 
     group_segs = []
+    p_edges = []
     for group, thresh, nc, no, ma, conn in \
             zip(cellgroups, interior_threshold, nclosing,
                 nopening, min_area, connectivity):
@@ -579,6 +605,9 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
                      for p, ne in zip(p_int, nerode)]
             p_int = np.dstack(p_int).max(axis=2)
             p_edge = np.dstack(p_edge).max(axis=2)
+
+        # Save the edge predictions for refinement later
+        p_edges.append(p_edge)
 
         if ingroup_edge_segment:
             p_int = p_int * (1 - p_edge)
@@ -646,13 +675,24 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
         group_segs[lgi] = [val for li, val in enumerate(lg) if li not in lg_discard]
         group_segs[ugi] = [val for ui, val in enumerate(ug) if ui not in ug_discard]
 
-    outputs = list(chain.from_iterable([
-        [(e, m, c) for m, _, _, _, e, c in group] for group in group_segs
-    ]))
-    if len(outputs) > 0:
-        edges, masks, coords = zip(*outputs)
+    if refine_outlines:
+        # Refine outlines using edge predictions
+        grouped_coords = [[cell[-1] for cell in group] for group in group_segs]
+        coords = list(chain.from_iterable(
+            refine_radial_grouped(grouped_coords, p_edges)))
+        edges = [draw_radial(radii, angles, centre, shape)
+                 for centre, radii, angles in coords]
+        if return_masks:
+            masks = [binary_fill_holes(e) for e in edges]
     else:
-        edges, masks, coords = 3 * [[]]
+        # Extract edges, masks and AC coordinates from initial segmentation
+        outputs = list(chain.from_iterable([
+            [(e, m, c) for m, _, _, _, e, c in group] for group in group_segs
+        ]))
+        if len(outputs) > 0:
+            edges, masks, coords = zip(*outputs)
+        else:
+            edges, masks, coords = 3 * [[]]
 
     if return_coords or return_masks:
         output = (edges,)
@@ -663,6 +703,133 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
         return output
     else:
         return edges
+
+
+def rc_to_radial(rr_cc, centre):
+    """Helper function to convert row-column coords to radial coords
+    """
+    rr, cc = rr_cc
+    rloc, cloc = centre
+    rr = rr - rloc
+    cc = cc - cloc
+    return np.sqrt(rr**2 + cc**2), np.arctan2(cc, rr)
+
+
+def prior_resid_weight(resid, gauss_scale=5, exp_scale=1):
+    """Weights radial residuals to bias towards the initial guess
+
+    Weight decays as a gaussian for positive residuals and exponentially for
+    negative residuals. So assuming `resid = rho_guess - rho_initial`, then
+    larger radii are favoured.
+    """
+    return (resid >= 0) * np.exp(-resid**2 / gauss_scale) \
+            + (resid < 0) * np.exp(resid / exp_scale)
+
+
+def adj_rspline_coords(adj, ref_radii, ref_angles):
+    """Map optimisation-space radial spline params to standard values
+
+    Params in optimisation space are specified relative to reference radii and
+    reference angles. If constrained to [-1, 1], optimisation parameters will
+    allow a 30% change in radius, or change in angle up to 1/4 the distance
+    between consecutive angles.
+    """
+    npoints = len(ref_radii)
+    return (
+        # allow up to 30% change in radius
+        ref_radii * (1 + 0.3 * adj[:npoints]),
+        # allow changes in angle up to 1/4 the distance between points
+        ref_angles + adj[npoints:] * np.pi / (2 * npoints)
+    )
+
+def adj_rspline_resid(adj, rho, phi, probs, ref_radii, ref_angles):
+    """Weighted residual for radial spline optimisation 
+
+    Optimisation params (`adj`) are mapped according to `adj_rspline_coords`.
+    Target points are given in radial coordinates `rho` and `phi` with weights
+    `probs`. Optimisation is defined relative to radial spline params
+    `ref_radii` and `ref_angles`.
+    """
+    radii, angles = adj_rspline_coords(adj, ref_radii, ref_angles)
+    return probs * (rho - eval_radial_spline(phi, radii, angles))
+
+
+def refine_radial_grouped(grouped_coords, grouped_p_edges):
+    """Refine initial radial spline by optimising to predicted edge
+
+    Neighbouring groups are used to re-weight predicted edges belonging to
+    other cells using the initial guess 
+    """
+
+    # Determine edge pixel locations and probabilities from NN prediction
+    p_edge_locs = [np.where(p_edge > 0.2) for p_edge in grouped_p_edges]
+    p_edge_probs = [p_edge[rr, cc] for p_edge, (rr, cc) in
+                    zip(grouped_p_edges, p_edge_locs)]
+    p_edge_count = [len(rr) for rr, _ in p_edge_locs]
+
+    opt_coords = []
+    ngroups = len(grouped_coords)
+    for g, g_coords in enumerate(grouped_coords):
+        # If this group has no predicted edges, keep initial and skip
+        if p_edge_count[g] == 0:
+            opt_coords.append(g_coords)
+            continue
+
+        # Compile a list of all cells in this and neighbouring groups
+        nbhd = list(chain.from_iterable([
+            [((gi, ci), coords) for ci, coords in enumerate(grouped_coords[gi])]
+            for gi in range(max(g - 1, 0), min(g + 2, ngroups))
+            if p_edge_count[gi] > 0  # only keep if there are predicted edges
+        ]))
+        if len(nbhd) > 0:
+            nbhd_ids, nbhd_coords = zip(*nbhd)
+        else:
+            nbhd_ids, nbhd_coords = 2 * [[]]
+
+        # Calculate edge pixels in radial coords for all cells in this and
+        # neighbouring groups:
+        radial_edges = [rc_to_radial(p_edge_locs[g], centre)
+                        for centre, _, _ in nbhd_coords]
+
+        # Calculate initial residuals and prior weights
+        resids = [rho - eval_radial_spline(phi, radii, angles)
+                  for (rho, phi), (_, radii, angles)
+                  in zip(radial_edges, nbhd_coords)]
+        indep_weights = [prior_resid_weight(r) for r in resids]
+
+        probs = p_edge_probs[g]
+
+        g_opt_coords = []
+        for c, (centre, radii, angles) in enumerate(g_coords):
+            ind = nbhd_ids.index((g, c))
+            rho, phi = radial_edges[ind]
+            p_weighted = probs * indep_weights[ind]
+            other_weights = indep_weights[:ind] + indep_weights[ind + 1:]
+            if len(other_weights) > 0:
+                 p_weighted *= (1 - np.mean(other_weights, axis=0))
+
+            # Remove insignificant fit data
+            signif = p_weighted > 0.1
+            if signif.sum() < 10:
+                # With insufficient data, skip optimisation
+                g_opt_coords.append((centre, radii, angles))
+                continue
+            p_weighted = p_weighted[signif]
+            phi = phi[signif]
+            rho = rho[signif]
+
+            nparams = len(radii) + len(angles)
+            opt = least_squares(
+                adj_rspline_resid, np.zeros(nparams),
+                bounds=(-np.ones(nparams), np.ones(nparams)),
+                args=(rho, phi, p_weighted, radii, angles), ftol=5e-2
+            )
+
+            g_opt_coords.append((centre,) + adj_rspline_coords(opt.x, radii, angles))
+
+        opt_coords.append(g_opt_coords)
+
+    return opt_coords
 
 
 def morph_radial_edge_seg(cnn_outputs):

@@ -189,7 +189,8 @@ class BabyBrain(object):
                 bf_img_batch,
                 yield_edgemasks=False,
                 yield_masks=False,
-                yield_preds=False):
+                yield_preds=False,
+                refine_outlines=False):
         '''Generator yielding segmented output for a batch of input images
 
         :param bf_img_batch: a list of ndarray with shape (X, Y, Z), or
@@ -215,6 +216,7 @@ class BabyBrain(object):
                                                          self.flattener,
                                                          return_masks=True,
                                                          return_coords=True,
+                                                         refine_outlines=refine_outlines,
                                                          **self.params)
 
                 if len(coords) > 0:
@@ -275,7 +277,8 @@ class BabyBrain(object):
                           yield_next=False,
                           yield_edgemasks=False,
                           assign_mothers=False,
-                          return_baprobs=False):
+                          return_baprobs=False,
+                          refine_outlines=False):
         '''Generator yielding segmented and tracked output for a batch of input
         images
 
@@ -322,7 +325,8 @@ class BabyBrain(object):
         segment_gen = self.segment(bf_img_batch,
                                    yield_masks=True,
                                    yield_edgemasks=True,
-                                   yield_preds=True)
+                                   yield_preds=True,
+                                   refine_outlines=refine_outlines)
 
         for seg, state in zip(segment_gen, tracker_states):
             tracking = self.tracker.step_trackers(
