@@ -138,8 +138,14 @@ class PredTarget(NamedTuple):
     name: str
     group: str
     prop: str
-    nerode: int = 0
-    ndilate: int = 0
+    nerode: int = 0  # Erosions applied to cells before flattening
+    ndilate: int = 0  # Dilations applied to cells before flattening
+    ndilate_overlaps: int = 0  # Dilations applied after determining overlaps
+    ndilate_mother: int = 2 # Dilations applied only to mothers
+
+
+class UnrecognisedProp(Exception):
+    pass
 
 
 class SegmentationFlattening(object):
@@ -341,50 +347,67 @@ class SegmentationFlattening(object):
                                 for i, f in enumerate(focusNums)}
 
         groupinds = {
-            g: np.flatnonzero((areas >= lt) & (areas < ut) & budonly[bo]
-                    & focusAssignments[f])
-            for g, (lt, ut, bo, ne, f) in self.groupdef.items()
+            k: np.flatnonzero((areas >= g.lower) & (areas < g.upper)
+                              & budonly[g.budonly] & focusAssignments[g.focus])
+            for k, g in self.groupdef.items()
         }
-        # print(groupinds)
 
-        groupims = {}
-        for g, (inds, nerode) in groupinds.items():
-            gprops = self.groupprops.get(g, set())
-            groupims[g] = {}
+        targetims = [filled_stack[..., []]]
+        for t in self.targets:
+            g = t.group
+            inds = groupinds[g]
 
-            if 'filled' in gprops:
-                groupims[g]['filled'] = filled_stack[:,:,inds].any(axis=2)
+            if t.prop in {'edge'}:
+                imstack = edge_stack[:, :, inds]
+            else:
+                imstack = filled_stack[:, :, inds]
 
-            if 'filledsum' in gprops:
-                groupims[g]['filledsum'] = filled_stack[:,:,inds].sum(axis=2)
+            # Apply specified dilations and/or erosions to each cell
+            # independently: 
+            if t.ndilate > 0:
+                imstack = binary_dilation(
+                    imstack, dwsquareconn, iterations=t.ndilate)
+            if t.nerode > 0:
+                imstack = binary_erosion(
+                    imstack, dwsquareconn, iterations=t.nerode)
 
-            if 'edge' in gprops:
-                groupims[g]['edge'] = edge_stack[:,:,inds].any(axis=2)
-
-            if 'overlap' in gprops:
-                groupims[g]['overlap'] = filled_stack[:,:,inds].sum(axis=2) > 1
-
-            if 'interior' in gprops:
-                interiors = filled_stack[:,:,inds]
-                if nerode > 0:
-                    for c in range(interiors.shape[2]):
-                        interiors[:,:,c] = binary_erosion(
-                            interiors[:,:,c], iterations=nerode)
-                groupims[g]['interior'] = \
-                    interiors.any(axis=2) & ~groupims[g]['overlap']
-
-            if 'budneck' in gprops:
-                budneck = np.zeros(shape, dtype='bool')
+            # Apply property-specific flattening operations
+            if t.prop in {'filled', 'edge'}:
+                imflat = imstack.any(axis=2)
+            elif t.prop == 'filledsum':
+                imflat = imstack.sum(axis=2)
+            elif t.prop in {'overlap', 'interior'}:
+                # Overlaps between cells in this group
+                # NB: gets reused below in for 'interior' calculation
+                imflat = imstack.sum(axis=2) > 1
+                if t.ndilate_overlaps > 0:
+                    imflat = binary_dilation(
+                        imflat, iterations=t.ndilate_overlaps)
+            elif t.prop == 'budneck':
+                imflat = np.zeros(shape, dtype='bool')
                 for m, b in bmpairs:
+                    # Skip buds outside the specified group:
                     if b not in inds:
                         continue
-                    mim = filled_stack[..., m]
-                    bim = filled_stack[..., b]
-                    budneck |= binary_dilation(mim, iterations=2) & bim
-                groupims[g]['budneck'] = budneck
+                    # Get bud mask from imstack (with erosions/dilations)
+                    bim = imstack[..., inds.index(b)]
+                    # Get mother mask from complete stack and apply
+                    # mother-specific dilation:
+                    mim = binary_dilation(filled_stack[..., m],
+                                          iterations=t.ndilate_mother)
+                    imflat |= mim & bim
+            else:
+                raise UnrecognisedProp(
+                    'Unrecognised prop "{}"'.format(t.prop))
 
-        return np.dstack([filled_stack[...,[]]] + [
-            groupims[t.group][t.prop] for t in self.targets])
+            if t.prop == 'interior':
+                # Like 'filled' except that overlaps are also excluded
+                # Overlaps are used as calculated and stored in `imflat`
+                imflat = imstack.any(axis=2) & (~imflat)
+            
+            targetims.append(imflat)
+
+        return np.dstack(targetims)
 
 
 def flattener_norm_func(flattener):
