@@ -501,6 +501,13 @@ def iterative_erosion(img, iterations=1, **kwargs):
         img = erosion(img, **kwargs)
     return img
 
+def iterative_dilation(img, iterations=1, **kwargs):
+    if iterations is None:
+        return img
+    for _ in range(iterations):
+        img = erosion(img, **kwargs)
+    return img
+
 
 def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
                       interior_threshold=0.5, nclosing=0, nopening=0,
