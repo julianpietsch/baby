@@ -30,13 +30,17 @@ from .segmentation import mask_containment, iterative_erosion, thresh_seg, \
 # a = A()
 
 class Cell:
-    def __init__(self, area, coords, edge, mask, predicted_edge):
+    def __init__(self, area, mask, predicted_edge, border_rect,
+                 fit_radial=True):
         self.area = area
-        self.coords = coords
-        self.edge = edge
         self.mask = mask
-        self._edge_score = None
         self.predicted_edge = predicted_edge
+        self.fit_radial = fit_radial
+        self.border_rect = border_rect
+
+        self._coords = None
+        self._edge = None
+        self._edge_score = None
 
     @property
     def edge_score(self):
@@ -45,7 +49,30 @@ class Cell:
                                                self.predicted_edge)[0]
         return self._edge_score
 
+    def _calculate_properties(self, fit_radial):
+        self._edge = binary_edge(self.mask)
+        if fit_radial:
+            rprop = single_region_prop(self.mask)
+            coords, edges = outlines_to_radial(edge, rprop,
+                                               return_outlines=True)
+            self._mask = binary_fill_holes(self.edge)
+        else:
+            edge = e | (border_rect & m)
+            coords = tuple()
+        self._coords = coords
+        self._edge = edge
 
+    @property
+    def edge(self):
+        if self._edge is None:
+            self._calculate_properties(fit_radial=self.fit_radial)
+        return self._edge
+
+    @property
+    def coords(self):
+        if self._coords is None:
+            self._calculate_properties(fit_radial=self.fit_radial)
+        return self._coords
 
 class Target:
     def __init__(self, name, flattener, available_targets=None):
@@ -220,24 +247,8 @@ class Group:
             ndilate=self.max_n_erode,
             return_area=True, connectivity=self.__connectivity)
                        if self.lower <= a < self.upper]
-
-        if len(masks_areas) > 0:
-            masks, areas = zip(*masks_areas)
-            edges = [binary_edge(m) for m in masks]
-            # Todo move to Cell
-            if fit_radial:
-                rprops = [single_region_prop(m) for m in masks]
-                coords, edges = outlines_to_radial(edges, rprops,
-                                                   return_outlines=True)
-                masks = [binary_fill_holes(o) for o in edges]
-            else:
-                edges = [e | (border_rect & m) for e, m in zip(edges, masks)]
-                coords = [tuple()] * len(masks)
-        else:
-            masks, areas, edges, coords = [], [], [], []
-
-        self.cells = [Cell(a, e, c, m, p_edge)
-                      for a, e, c, m in zip(areas, edges, coords, masks)]
+        self.cells = [Cell(a, m, p_edge, border_rect, fit_radial=fit_radial)
+                      for m, a in masks_areas]
 
 
 def broadcast_arg(arg: Union[Iterable, Any],

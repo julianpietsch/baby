@@ -126,7 +126,7 @@ def morph_thresh_seg(cnn_outputs, interior_threshold=0.9,
 
 def get_regions(p_img, threshold):
     """Find regions in a probability image sorted by likelihood"""
-    p_thresh = p_img > interior_threshold
+    p_thresh = p_img > threshold
     p_label = label(p_thresh, background=0)
     rprops = regionprops(p_label, p_img)
     rprops = [r for r in rprops if
