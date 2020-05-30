@@ -475,14 +475,12 @@ def single_region_prop(mask):
     return regionprops(mask.astype('int'))[0]
 
 
-def outlines_to_radial(outlines, rprops, return_outlines=False):
-    coords = [(rp.centroid,) + morph_radial_thresh_fit(outline, None, rp)
-             for outline, rp in zip(outlines, rprops)]
-
-    if return_outlines:
-        outlines = [draw_radial(radii, angles, centroid, o.shape)
-                    for (centroid, radii, angles), o in zip(coords, outlines)]
-        return (coords, outlines)
+def outline_to_radial(outline, rprop, return_outline=False):
+    coords = (rprop.centroid,) + morph_radial_thresh_fit(outline, None, rprop)
+    if return_outline:
+        centroid, radii, angles = coords
+        outlines = draw_radial(radii, angles, centroid, outline.shape)
+        return coords, outlines
     else:
         return coords
 
@@ -636,8 +634,8 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
 
         if fit_radial:
             rprops = [single_region_prop(m) for m in masks]
-            coords, edges = outlines_to_radial(
-                edges, rprops, return_outlines=True)
+            coords, edges = outline_to_radial(
+                edges, rprops, return_outline=True)
             masks = [binary_fill_holes(o) for o in edges]
         else:
             edges = [e | (border_rect & m) for e, m in zip(edges, masks)]
@@ -772,6 +770,7 @@ def refine_radial_grouped(grouped_coords, grouped_p_edges):
     p_edge_locs = [np.where(p_edge > 0.2) for p_edge in grouped_p_edges]
     p_edge_probs = [p_edge[rr, cc] for p_edge, (rr, cc) in
                     zip(grouped_p_edges, p_edge_locs)]
+
     p_edge_count = [len(rr) for rr, _ in p_edge_locs]
 
     opt_coords = []

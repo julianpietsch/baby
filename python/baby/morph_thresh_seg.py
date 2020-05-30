@@ -1,11 +1,13 @@
 import numpy as np
 import itertools
+
+
 from scipy.ndimage import binary_fill_holes
 
-from typing import Union, Iterable, Any, Optional
+from typing import Union, Iterable, Any, Optional, List
 
 from .segmentation import mask_containment, iterative_erosion, thresh_seg, \
-    binary_edge, single_region_prop, outlines_to_radial, get_edge_scores, \
+    binary_edge, single_region_prop, outline_to_radial, get_edge_scores, \
     refine_radial_grouped, iterative_dilation
 
 
@@ -53,8 +55,8 @@ class Cell:
         self._edge = binary_edge(self.mask)
         if fit_radial:
             rprop = single_region_prop(self.mask)
-            coords, edges = outlines_to_radial(edge, rprop,
-                                               return_outlines=True)
+            coords, edge = outline_to_radial(self.edge, rprop,
+                                             return_outline=True)
             self._mask = binary_fill_holes(self.edge)
         else:
             edge = e | (border_rect & m)
@@ -75,45 +77,52 @@ class Cell:
         return self._coords
 
 class Target:
-    def __init__(self, name, flattener, available_targets=None):
+    def __init__(self, name, flattener, desired_targets=None):
         self.name = name
         self.flattener = flattener
-        self._interior = None
-        self._overlap = None
-        self._edge = None
         self._definition = None
+        self._available_targets = dict()
 
-        if available_targets is None:
-            available_targets = ['interior', 'filled', 'edge', 'overlap']
-        self.available_targets = {target: None for target in available_targets}
+        if desired_targets is None:
+            desired_targets = ['interior', 'filled', 'edge', 'overlap']
+        self.__desired_targets = desired_targets
+
+    @property
+    def available_targets(self):
+        if not self._available_targets:
+            self._calculate_targets()
+        return self._available_targets
 
     def __getitem__(self, item):
-        if item in self.available_targets and \
-                self.available_targets[item] is None:
+        if item in self.available_targets and self.available_targets[item] \
+                is None:
             self._calculate_targets()
-
         return self.available_targets[item]
 
     def __contains__(self, item):
         return item in self.available_targets
 
     def _calculate_targets(self):
-        self.available_targets.update(dict(zip(
-            self.available_targets.keys(),
-            self.flattener.getGroupTargets(
-                self.name,
-                self.available_targets.keys()))))
+        targets = self.flattener.getGroupTargets(self.name,
+                                                 self.__desired_targets)
+        self._available_targets.update(dict(zip(
+            self.__desired_targets,
+            targets)))
 
-        none_targets = [k for k, v in self.available_targets.items()
+        none_targets = [k for k, v in self._available_targets.items()
                         if v is None]
         for none_target in none_targets:
-            del self.available_targets[none_target]
+            del self._available_targets[none_target]
 
-        if 'interior' not in self.available_targets \
-                and 'filled' in self.available_targets:
-            self.available_targets['interior'] = filled
-        else:
-            raise ValueError('No interior or filled target specified')
+        if 'interior' not in self._available_targets:
+            if 'filled' in self._available_targets:
+                self._available_targets['interior'] = self._available_targets[
+                    'filled']
+            else:
+                raise ValueError('No interior or filled target specified in '
+                             f'available targets {self.available_targets}')
+
+
 
     @property
     def definition(self):
@@ -124,8 +133,10 @@ class Target:
 
     def prediction(self, pred, target_name):
         if target_name in self:
-            return pred[self.flattener.names.index(self[target_name])]
-        return np.zeros(pred.shape[0], pred.shape[1])
+            result = pred[self.flattener.names().index(self[target_name])]
+        else:
+            result = np.zeros((pred.shape[1], pred.shape[2]))
+        return result
 
 
 class Group:
@@ -148,6 +159,8 @@ class Group:
 
         # Computed members
         self._n_erode = None
+        self._lower = None
+        self._upper = None
 
         # Dunno yet, probably functions
         self.cells = []
@@ -162,10 +175,10 @@ class Group:
             expansion = self.__thresh_expansion * (lower
                                                    if upper == float('inf')
                                                    else upper - lower)
-            lower = max(lower - expansion, self.min_area)
+            lower = max(lower - expansion, self.__min_area)
             upper += expansion
         else:
-            lower, upper = self.min_area, float('inf')
+            lower, upper = self.__min_area, float('inf')
         self._lower = lower
         self._upper = upper
 
@@ -201,21 +214,18 @@ class Group:
         return len(self.cells)
 
     def prediction(self, pred, target_name, erode=False):
-        predictions = [pred[target.prediction(target_name)]
+        predictions = [target.prediction(pred, target_name)
                        for target in self.targets]
         if erode:
             predictions = self.erode_predictions(predictions)
-        return np.dstack(predictions).max(axis=2)
+        result = np.dstack(predictions)
+        return result.max(axis=2)
 
     def erode_predictions(self, predictions: List) -> List:
-        if len(predictions) == 1:
-            predictions = predictions[0]
-        else:
-            # Perform morphological erosion on any group members that do not
-            # match the maximum (NB: erosion here is non-binary):
-            predictions = [iterative_erosion(p, self.max_n_erode -
-                                             self.n_erode)
-                           for p in predictions]
+        # Perform morphological erosion on any group members that do not
+        # match the maximum (NB: erosion here is non-binary):
+        predictions = [iterative_erosion(p, self.max_n_erode - n_erode)
+                       for p, n_erode in zip(predictions, self.n_erode)]
         return predictions
 
     def segment(self, pred, border_rect, fit_radial=False):
@@ -247,7 +257,7 @@ class Group:
             ndilate=self.max_n_erode,
             return_area=True, connectivity=self.__connectivity)
                        if self.lower <= a < self.upper]
-        self.cells = [Cell(a, m, p_edge, border_rect, fit_radial=fit_radial)
+        self.cells = [Cell(a, m, pred_edge, border_rect, fit_radial=fit_radial)
                       for m, a in masks_areas]
 
 
@@ -259,6 +269,8 @@ def broadcast_arg(arg: Union[Iterable, Any],
     try:
         if len(arg) != n_groups:
             raise ValueError(f'"{argname}" is of incorrect length')
+        else:
+            return arg
     except TypeError:
         return [arg] * n_groups
 
@@ -271,9 +283,26 @@ class MorphSegGrouped:
                  use_group_thresh=False, group_thresh_expansion=0.,
                  edge_sub_dilations=None,
                  containment_thresh=0.8, containment_func=mask_containment,
-                 refine_outlines=False,
                  return_masks=False, return_coords=False):
+        """
 
+        :param flattener:
+        :param cellgroups:
+        :param interior_threshold:
+        :param nclosing:
+        :param nopening:
+        :param connectivity:
+        :param min_area:
+        :param pedge_thresh:
+        :param fit_radial:
+        :param use_group_thresh:
+        :param group_thresh_expansion:
+        :param edge_sub_dilations:
+        :param containment_thresh:
+        :param containment_func:
+        :param return_masks:
+        :param return_coords:
+        """
         # Todo: assertions about valid options
         #  (e.g. 0 < interior_threshold < 1)
         # Assign options and parameters
@@ -281,7 +310,6 @@ class MorphSegGrouped:
         self.fit_radial = fit_radial
         self.containment_thresh = containment_thresh
         self.containment_func = containment_func
-        self.refine_outlines = refine_outlines
         self.return_masks = return_masks
         self.return_coords = return_coords
 
@@ -304,17 +332,16 @@ class MorphSegGrouped:
 
         # Initialize the different groups and their targets
         self.groups = []
-        for i, target_names in enumerate(self.cell_groups):
+        for i, target_names in enumerate(cellgroups):
             targets = [Target(name, flattener) for name in target_names]
             self.groups.append(Group(targets, min_area=min_area[i],
-                                     use_thresh=use_group_thresh,
-                                     thresh_expansion=group_thresh_expansion,
-                                     interior_threshold=interior_threshold[i],
-                                     n_closing=n_closing[i],
-                                     n_opening=n_opening[i],
-                                     connectivity=connectivity[i],
-                                     edge_sub_dilations=edge_sub_dilations[i]))
-
+                                 use_thresh=use_group_thresh,
+                                 thresh_expansion=group_thresh_expansion,
+                                 interior_threshold=interior_threshold[i],
+                                 n_closing=n_closing[i],
+                                 n_opening=n_opening[i],
+                                 connectivity=connectivity[i],
+                                 edge_sub_dilations=edge_sub_dilations[i]))
         self.group_segs = None
 
     # Todo: This is ideally the form of the input argument
@@ -334,7 +361,7 @@ class MorphSegGrouped:
                 return cell.areas
         else:
             def accessor(cell):
-                return cell.edge_scores
+                return cell.edge_score
 
         # def accessor(group):
         #     return getattr(group, 'a' if self.pedge_thresh else 'b')
@@ -344,25 +371,30 @@ class MorphSegGrouped:
             pairs = [(lower, upper)
                      for lower in lower_group.cells
                      for upper in upper_group.cells
-                     if self.contains(lower.masks, upper.masks)]
+                     if self.contains(lower.mask, upper.mask)]
 
             for lower, upper in pairs:
                 if accessor(lower) < accessor(upper):
-                    lower_group.remove(lower)
+                    lower_group.cells.remove(lower)
                 else:
-                    upper_group.remove(upper)
+                    upper_group.cells.remove(upper)
 
     # Todo: rename
-    def extract_edges(self, shape):
+    def extract_edges(self, pred, shape, refine_outlines):
         masks = [[]]
-        if self.refine_outlines:
+        if refine_outlines:
             # Refine outlines using edge predictions
             grouped_coords = [cell.coords for group in self.groups
                               for cell in group.cells]
-            predicted_edges = [[target.prediction('edge') for target in
-                                group.targets] for group in self.groups]
-            coords = list(itertools.chain.from_iterable(
-                refine_radial_grouped(grouped_coords, predicted_edges)))
+            predicted_edges = [group.prediction(pred, 'edge') for group in
+                               self.groups]
+
+            if predicted_edges:
+                coords = list(itertools.chain.from_iterable(
+                    refine_radial_grouped(grouped_coords,
+                                          np.squeeze(predicted_edges))))
+            else:
+                coords = tuple()
             edges = [draw_radial(radii, angles, centre, shape)
                      for centre, radii, angles in coords]
             if self.return_masks:
@@ -378,7 +410,7 @@ class MorphSegGrouped:
                 edges, masks, coords = 3 * [[]]
         return edges, masks, coords
 
-    def segment(self, pred):
+    def segment(self, pred, refine_outlines=False):
         """
         Take the output of the neural network and turn it into an instance
         segmentation output.
@@ -403,7 +435,8 @@ class MorphSegGrouped:
 
         # Remove cells that are duplicated in several groups
         self.remove_duplicates()
-        edges, masks, coords = self.extract_edges(shape)
+        edges, masks, coords = self.extract_edges(pred, shape,
+                                                  refine_outlines=refine_outlines)
 
         output = tuple(itertools.compress([edges, masks, coords],
                                           [True, self.return_masks,
