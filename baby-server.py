@@ -179,10 +179,15 @@ class TaskMaster(object):
         # if tf.keras.backend.get_session() != self.tf_session:
         #     tf.keras.backend.set_session(self.tf_session)
 
+        t_start = time.perf_counter()
         pred = crawler.step(img, **kwargs)
+        t_elapsed = time.perf_counter() - t_start
+
+        print('...images segmented in {:.3f} seconds.'.format(t_elapsed))
 
         with self._lock:
             self.sessions[sessionid]['pred'] = pred
+            self.sessions[sessionid]['processing_time'] = t_elapsed
 
     def results(self, sessionid):
         for i in range(MAX_ATTEMPTS):
