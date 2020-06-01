@@ -355,7 +355,7 @@ class SegmentationFlattening(object):
         targetims = [filled_stack[..., []]]
         for t in self.targets:
             g = t.group
-            inds = groupinds[g]
+            inds = groupinds[g].tolist()
 
             if t.prop in {'edge'}:
                 imstack = edge_stack[:, :, inds]
@@ -363,7 +363,7 @@ class SegmentationFlattening(object):
                 imstack = filled_stack[:, :, inds]
 
             # Apply specified dilations and/or erosions to each cell
-            # independently: 
+            # independently:
             if t.ndilate > 0:
                 imstack = binary_dilation(
                     imstack, dwsquareconn, iterations=t.ndilate)
@@ -404,7 +404,7 @@ class SegmentationFlattening(object):
                 # Like 'filled' except that overlaps are also excluded
                 # Overlaps are used as calculated and stored in `imflat`
                 imflat = imstack.any(axis=2) & (~imflat)
-            
+
             targetims.append(imflat)
 
         return np.dstack(targetims)
