@@ -39,20 +39,20 @@ class Tracker:
         self.xtrafeats = ('distance', )
 
         if ba_model is None:
-            ba_model_file = join(models_path, 'baby_randomforest_20190906.pkl')
+            ba_model_file = os.path.join(models_path, 'baby_randomforest_20190906.pkl')
             with open(ba_model_file, 'rb') as file_to_load:
                 ba_model = pickle.load(file_to_load)
         self.ba_model = ba_model
 
         if ctrack_model is None:
             ctrack_model_file = os.path.join(models_path,
-                                      'ctrack_randomforest_20200325.pkl')
+                                      'ctrack_randomforest_20200513.pkl')
             with open(ctrack_model_file, 'rb') as file_to_load:
                 ctrack_model = pickle.load(file_to_load)
         self.ctrack_model = ctrack_model
 
         if nstepsback is None:
-            self.nstepsback = 1
+            self.nstepsback = 2
         if ctrack_thresh is None:
             self.ctrack_thresh = 0.75
 
@@ -125,9 +125,9 @@ class Tracker:
             new_img if given.
 
         output
-        :new_max: updated max cell label assigned
-        :new_lbl: numpy array of labels assigned to new timepoint
+        :new_lbls: list of labels assigned to new timepoint
         :new_feats: list of ndarrays containing the updated features
+        :new_max: updated max cell label assigned
 
         '''
         if new_feats is None:
@@ -135,10 +135,12 @@ class Tracker:
 
         if new_feats.any():
             if prev_feats:
-                pred_lbls = np.zeros(
-                    (len(prev_feats), len(new_feats)), dtype=int)
+                counts = Counter([lbl for lbl_set in prev_lbls for lbl in lbl_set])
+                lbls_order = list(counts.keys())
+                max_prob = np.zeros(
+                    (len(lbls_order), len(new_feats)), dtype=float)
 
-                for i, prev_feat in enumerate(prev_feats):
+                for i, (lblset, prev_feat) in enumerate(zip(prev_lbls, prev_feats)):
                     if prev_feat.any():
                         feats_3darray = self.calc_feat_ndarray(
                             prev_feat, new_feats)
@@ -151,10 +153,26 @@ class Tracker:
                                     2]))
                         ])
                         pred_matrix = pred_list.reshape(orig_shape)
-                        pred_lbls[i, :] = self.assign_lbls(
-                            pred_matrix, prev_lbls[i])
+                        # print('cumprob', cum_prob)
+                        # print('lbls order', lbls_order)
+                        # print('lennfeats', len(new_feats))
+                        # print('predmat', pred_matrix)
+                        # print('prevlbls', prev_lbls)
 
-                new_lbls, new_max = self.count_votes(pred_lbls, max_lbl)
+                        for j,lbl in enumerate(lblset):
+                            # cum_prob[lbls_order.index(lbl), :] = cum_prob[
+                            #     lbls_order.index(lbl), :] + pred_matrix[j,:]
+                            max_prob[lbls_order.index(lbl), :] = np.maximum(
+                               max_prob[lbls_order.index(lbl), :], pred_matrix[j,:])
+
+                # avg_prob = cum_prob / np.array(list(counts.values()))[:, None]
+                new_lbls = self.assign_lbls(max_prob, lbls_order)
+                new_cells_pos = new_lbls==0
+                new_max = max_lbl + sum(new_cells_pos)
+                new_lbls[new_cells_pos] = [*range(max_lbl+1, new_max+1)]
+                # ensure that label output is consistently a list
+                new_lbls = new_lbls.tolist()
+
             else:
                 new_max = len(new_feats)
                 new_lbls = [*range(1, new_max + 1)]
@@ -174,59 +192,31 @@ class Tracker:
 
         :pred_matrix: Matrix with probabilities of the corresponding two cells
         being the same.
-        :prev_lbls: List of ints representing the cell labels in the previous tp.
+        :prev_lbls: List or ndarray of ints representing the cell labels in
+        the previous tp.
 
         output
 
-        :new_lbls: Newly assigned labels obtained, new cells as zero.
+        :new_lbls: ndarray of newly assigned labels obtained, new cells as
+        zero.
         '''
 
         # We remove any possible conflict by taking the maximum vals
-        clean_mat = np.zeros(pred_matrix.shape)
-        for j, i in enumerate(pred_matrix.argmax(0)):
-            clean_mat[i, j] = pred_matrix[i, j]
+        if pred_matrix.any():
+            clean_mat = np.zeros(pred_matrix.shape)
+            for j, i in enumerate(pred_matrix.argmax(0)):
+                clean_mat[i, j] = pred_matrix[i, j]
 
-            # assign available hits
-            new_lbls = np.repeat(0, pred_matrix.shape[1])
-            for i, j in enumerate(clean_mat.argmax(1)):
-                if pred_matrix[i, j] > self.ctrack_thresh:
-                    new_lbls[j] = prev_lbls[i]
+                # assign available hits
+                new_lbls = np.repeat(0, pred_matrix.shape[1])
+                for i, j in enumerate(clean_mat.argmax(1)):
+                    if pred_matrix[i, j] > self.ctrack_thresh:
+                        new_lbls[j] = prev_lbls[i]
+        else:
+            new_lbls = np.array([], dtype=int)
+                        
 
         return new_lbls
-
-    def count_votes(self, pred_lbls, max_lbl):
-        '''
-        Counts the individual cell assignment in the new image.
-        If there is only one, assigns the most common value.
-        ----
-        input
-        :pred_lbls: ndarray(nvals*nprevtps). Cell assignment prediction for
-            each previous timepoint.
-        :max_lbl: int to indicate the current max label
-
-        output
-        :decision: list of labels assigned for new cells after comparing multiple tps.
-        :new_max: updated maximum cell label
-        '''
-        counts = np.apply_along_axis(Counter, 0, pred_lbls)
-        decision = np.zeros(pred_lbls.shape[1], dtype=int)
-        # Count the amount of times a cell label was selected
-
-        for i, count in enumerate(counts):
-            common = np.array(count.most_common())
-            if len(common) > 1:
-                common = common[common.all(axis=1)]
-                common = common[common[:, 1] == common[0, 1]]
-
-            # TODO FUTURE: Use probability or timepoint to pick cell when tied
-            decision[i] = np.min(common[:, 0])
-
-        # Give new numbers to unassigned cells
-        new_cells = decision == 0
-        new_max = max_lbl + np.sum(new_cells)
-        decision[new_cells] = [*range(max_lbl + 1, new_max + 1)]
-
-        return (decision.tolist(), new_max)
 
     ### Assign mother-
     def calc_mother_bud_stats(self, p_budneck, p_bud, masks, feats=None):
@@ -392,7 +382,7 @@ class Tracker:
         ba_cum = state.get('ba_cum', init['ba_cum'])
 
         # Update lineage state variables
-        if len(masks) > 0:
+        if len(masks) > 0 and new_lbls:
             ba_probs = self.calc_mother_bud_stats(p_budneck, p_bud, masks,
                                                   feats)
             lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
