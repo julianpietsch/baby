@@ -634,10 +634,10 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
 
         if fit_radial:
             rprops = [single_region_prop(m) for m in masks]
-            coords, edges = zip(*[
+            coords, edges = list(zip(*[
                 outline_to_radial(edge, rprop, return_outline=True)
                 for edge, rprop in zip(edges, rprops)
-            ])
+            ])) or ([], [])
             masks = [binary_fill_holes(o) for o in edges]
         else:
             edges = [e | (border_rect & m) for e, m in zip(edges, masks)]
@@ -750,7 +750,7 @@ def adj_rspline_coords(adj, ref_radii, ref_angles):
     )
 
 def adj_rspline_resid(adj, rho, phi, probs, ref_radii, ref_angles):
-    """Weighted residual for radial spline optimisation 
+    """Weighted residual for radial spline optimisation
 
     Optimisation params (`adj`) are mapped according to `adj_rspline_coords`.
     Target points are given in radial coordinates `rho` and `phi` with weights
@@ -765,7 +765,7 @@ def refine_radial_grouped(grouped_coords, grouped_p_edges):
     """Refine initial radial spline by optimising to predicted edge
 
     Neighbouring groups are used to re-weight predicted edges belonging to
-    other cells using the initial guess 
+    other cells using the initial guess
     """
 
     # Determine edge pixel locations and probabilities from NN prediction
