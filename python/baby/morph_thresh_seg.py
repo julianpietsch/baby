@@ -358,7 +358,7 @@ class MorphSegGrouped:
 
         if self.pedge_thresh is None:
             def accessor(cell):
-                return cell.areas
+                return cell.area
         else:
             def accessor(cell):
                 return cell.edge_score
