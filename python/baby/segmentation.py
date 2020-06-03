@@ -634,8 +634,10 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
 
         if fit_radial:
             rprops = [single_region_prop(m) for m in masks]
-            coords, edges = outline_to_radial(
-                edges, rprops, return_outline=True)
+            coords, edges = zip(*[
+                outline_to_radial(edge, rprop, return_outline=True)
+                for edge, rprop in zip(edges, rprops)
+            ])
             masks = [binary_fill_holes(o) for o in edges]
         else:
             edges = [e | (border_rect & m) for e, m in zip(edges, masks)]
