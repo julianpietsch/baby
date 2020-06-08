@@ -149,7 +149,7 @@ def load_seg_expt(timing, source_dir, pos=None):
     return seg_expt
 
 
-def crawl_expt(timing, seg_expt, bb, ntps=5):
+def crawl_expt(timing, seg_expt, bb, ntps=5, refine_outlines=True):
     """Crawl through time points
 
     :param timing: instance of TimingLogger
@@ -179,14 +179,16 @@ def crawl_expt(timing, seg_expt, bb, ntps=5):
         timing.finish()
 
         timing.start('Stepping crawler for {:d} traps...'.format(len(tp_traps)))
-        output.append(crawler.step(tp_traps, with_edgemasks=True,
-                                   assignbuds=True, refine_outlines=True))
+        output.append(crawler.step(
+            tp_traps, with_edgemasks=True,
+            assignbuds=True, refine_outlines=refine_outlines
+        ))
         timing.finish()
     outer_timing.finish()
     return output
 
 
-def subtask_timings(timing, seg_expt, bb, ntps=5):
+def subtask_timings(timing, seg_expt, bb, ntps=5, refine_outlines=True):
     """Step through sub-tasks of the crawler
 
     :param timing: instance of TimingLogger
@@ -236,9 +238,8 @@ def subtask_timings(timing, seg_expt, bb, ntps=5):
         timing.start('Segmenting time point {:d}...'.format(tp + 1))
         seg_masks = []
         for cnn_output in cnn_outputs[tp]:
-            _, masks = morph_seg_grouped(
-                cnn_output, bb.flattener, return_masks=True,
-                refine_outlines=True, **bb.params)
+            _, masks, _ = bb.morph_segmenter.segment(
+                cnn_output, refine_outlines=refine_outlines)
             seg_masks.append(masks)
         tp_seg_masks.append(seg_masks)
         timing.finish()
@@ -277,6 +278,9 @@ if __name__ == "__main__":
                       help="crawl through (up to) N time points if available")
     parser.add_option("-f", "--file", dest="filename", metavar="FILE",
                       help="write timing info to FILE (also to std out)")
+    parser.add_option("-b", "--basic-edges", action="store_false",
+                      dest="refine_outlines", default=True,
+                      help="Turn outline refinement off")
 
     (options, args) = parser.parse_args()
 
@@ -299,10 +303,12 @@ if __name__ == "__main__":
 
         timing.separator()
 
-        subtask_timings(timing, seg_expt, bb, ntps=options.ntps)
+        subtask_timings(timing, seg_expt, bb, ntps=options.ntps,
+                        refine_outlines=options.refine_outlines)
 
         timing.separator()
 
-        output = crawl_expt(timing, seg_expt, bb, ntps=options.ntps)
+        output = crawl_expt(timing, seg_expt, bb, ntps=options.ntps,
+                            refine_outlines=options.refine_outlines)
 
         timing.separator()

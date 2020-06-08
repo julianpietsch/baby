@@ -21,6 +21,13 @@ def calc_IoUs(true_segs, pred_segs, fill_holes=True):
 
 
 def best_IoU(IoUs):
+    """Return the IoUs for the best-matching pairs
+
+    Note that this function starts with best-matching pairs, unlike what would
+    be expected for the precision-recall calculations, where the predictions
+    are assumed to be ordered from most confident to least confident.
+    """
+
     IoUs = IoUs.copy() # we will make changes to IoUs
     nts, nps = IoUs.shape
 
@@ -43,6 +50,11 @@ def best_IoU(IoUs):
 
 
 def calc_PR(IoUs, iou_thresh=0.5):
+    """Calculate precision and recall from IoU matrix
+
+    Note that this function expects the predictions to be ordered from the one
+    with highest confidence to the one with lowest confidence.
+    """
     IoUs = IoUs.copy()  # we will make changes to IoUs
     nts, nps = IoUs.shape
 
@@ -90,3 +102,22 @@ def calc_AP(IoUs, probs=None, iou_thresh=0.5):
 def edge_prob(cnn_output, segs):
     p_edge = cnn_output[0]
     return np.array([np.mean(p_edge[s]) for s in segs])
+
+
+def flattener_seg_probs(cnn_output, flattener, segs):
+    """Estimate the probability of segmentation from flattener CNN
+
+    NB: ignores layers that are bud-only or layers that specify focus
+    """
+    valid_targets = [not d['budonly'] and not d['focus'] for d in
+                     [flattener.getTargetDef(n) for n in flattener.names()]] 
+    cnn_output = cnn_output[valid_targets]
+    info = {'cellLabels': [1], 'buds': [0]}
+    probs = []
+    for seg in segs:
+        segflat = flattener(binary_fill_holes(seg)[..., None], info)
+        segflat = segflat[..., valid_targets].transpose((2, 0, 1))
+        target_probs = [
+            o[s].mean() for o, s in zip(cnn_output, segflat) if s.any()]
+        probs.append(np.mean(target_probs))
+    return np.array(probs)

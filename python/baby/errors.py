@@ -1,0 +1,2 @@
+class BadParam(Exception):
+    pass

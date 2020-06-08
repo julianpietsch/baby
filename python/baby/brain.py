@@ -15,6 +15,7 @@ from .segmentation import morph_seg_grouped
 from .tracker import Tracker
 from .preprocessing import robust_norm, SegmentationFlattening
 from .utils import batch_iterator, split_batch_pred
+from .morph_thresh_seg import MorphSegGrouped
 
 models_path = join(dirname(__file__), '..', '..', 'models')
 
@@ -29,7 +30,7 @@ default_params = {
     'connectivity': (2, 2, 1),
     'pedge_thresh': 0.001,
     'fit_radial': True,
-    'ingroup_edge_segment': True,
+    'edge_sub_dilations': 0,
     'use_group_thresh': True,
     'group_thresh_expansion': 0.1
 }
@@ -56,6 +57,7 @@ class BabyBrain(object):
     :param graph: optionally specify the Tensorflow graph to load the neural
         network model into (useful only for Tensorflow versions <2)
     '''
+
     def __init__(self,
                  morph_model_file=None,
                  flattener_file=None,
@@ -113,23 +115,27 @@ class BabyBrain(object):
                 self.morph_model = models.load_model(morph_model_file,
                                                      custom_objects={
                                                          'bce_dice_loss':
-                                                         bce_dice_loss,
+                                                             bce_dice_loss,
                                                          'dice_loss':
-                                                         dice_loss,
+                                                             dice_loss,
                                                          'dice_coeff':
-                                                         dice_coeff
+                                                             dice_coeff
                                                      })
         else:
             self.morph_model = models.load_model(morph_model_file,
                                                  custom_objects={
                                                      'bce_dice_loss':
-                                                     bce_dice_loss,
+                                                         bce_dice_loss,
                                                      'dice_loss': dice_loss,
                                                      'dice_coeff': dice_coeff
                                                  })
 
         self.flattener = SegmentationFlattening(flattener_file)
         self.params = params
+        self.morph_segmenter = MorphSegGrouped(self.flattener,
+                                               return_masks=True,
+                                               return_coords=True,
+                                               **self.params)
 
         # Load tracker models and initialise Tracker
         with open(celltrack_model_file, 'rb') as f:
@@ -212,12 +218,8 @@ class BabyBrain(object):
             morph_preds = split_batch_pred(self.morph_predict(batch))
 
             for cnn_output in morph_preds:
-                edges, masks, coords = morph_seg_grouped(cnn_output,
-                                                         self.flattener,
-                                                         return_masks=True,
-                                                         return_coords=True,
-                                                         refine_outlines=refine_outlines,
-                                                         **self.params)
+                edges, masks, coords = self.morph_segmenter.segment(cnn_output,
+                                                                    refine_outlines=refine_outlines)
 
                 if len(coords) > 0:
                     centres, radii, angles = zip(*coords)

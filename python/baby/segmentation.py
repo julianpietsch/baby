@@ -14,6 +14,7 @@ from skimage.morphology import diamond, erosion
 from skimage.draw import ellipse_perimeter
 from skimage import filters
 
+from .errors import BadParam
 
 squareconn = diamond(1) # 3x3 filter for 1-connected patches
 fullconn = np.ones((3,3), dtype='uint8')
@@ -126,7 +127,7 @@ def morph_thresh_seg(cnn_outputs, interior_threshold=0.9,
 
 def get_regions(p_img, threshold):
     """Find regions in a probability image sorted by likelihood"""
-    p_thresh = p_img > interior_threshold
+    p_thresh = p_img > threshold
     p_label = label(p_thresh, background=0)
     rprops = regionprops(p_label, p_img)
     rprops = [r for r in rprops if
@@ -475,14 +476,12 @@ def single_region_prop(mask):
     return regionprops(mask.astype('int'))[0]
 
 
-def outlines_to_radial(outlines, rprops, return_outlines=False):
-    coords = [(rp.centroid,) + morph_radial_thresh_fit(outline, None, rp)
-             for outline, rp in zip(outlines, rprops)]
-
-    if return_outlines:
-        outlines = [draw_radial(radii, angles, centroid, o.shape)
-                    for (centroid, radii, angles), o in zip(coords, outlines)]
-        return (coords, outlines)
+def outline_to_radial(outline, rprop, return_outline=False):
+    coords = (rprop.centroid,) + morph_radial_thresh_fit(outline, None, rprop)
+    if return_outline:
+        centroid, radii, angles = coords
+        outlines = draw_radial(radii, angles, centroid, outline.shape)
+        return coords, outlines
     else:
         return coords
 
@@ -498,6 +497,13 @@ def iterative_erosion(img, iterations=1, **kwargs):
         return img
 
     for i in range(iterations):
+        img = erosion(img, **kwargs)
+    return img
+
+def iterative_dilation(img, iterations=1, **kwargs):
+    if iterations is None:
+        return img
+    for _ in range(iterations):
         img = erosion(img, **kwargs)
     return img
 
@@ -528,8 +534,9 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
         radial coordinates.
     """
 
-    if len(pred) == 0:
-        raise Exception('there must be at least one prediction image')
+    if len(pred) != len(flattener.names()):
+        raise BadParam(
+            '"pred" arg does not match number of flattener targets')
 
     shape = np.squeeze(pred[0]).shape
 
@@ -629,8 +636,10 @@ def morph_seg_grouped(pred, flattener, cellgroups=['large', 'medium', 'small'],
 
         if fit_radial:
             rprops = [single_region_prop(m) for m in masks]
-            coords, edges = outlines_to_radial(
-                edges, rprops, return_outlines=True)
+            coords, edges = list(zip(*[
+                outline_to_radial(edge, rprop, return_outline=True)
+                for edge, rprop in zip(edges, rprops)
+            ])) or ([], [])
             masks = [binary_fill_holes(o) for o in edges]
         else:
             edges = [e | (border_rect & m) for e, m in zip(edges, masks)]
@@ -743,7 +752,7 @@ def adj_rspline_coords(adj, ref_radii, ref_angles):
     )
 
 def adj_rspline_resid(adj, rho, phi, probs, ref_radii, ref_angles):
-    """Weighted residual for radial spline optimisation 
+    """Weighted residual for radial spline optimisation
 
     Optimisation params (`adj`) are mapped according to `adj_rspline_coords`.
     Target points are given in radial coordinates `rho` and `phi` with weights
@@ -758,13 +767,14 @@ def refine_radial_grouped(grouped_coords, grouped_p_edges):
     """Refine initial radial spline by optimising to predicted edge
 
     Neighbouring groups are used to re-weight predicted edges belonging to
-    other cells using the initial guess 
+    other cells using the initial guess
     """
 
     # Determine edge pixel locations and probabilities from NN prediction
     p_edge_locs = [np.where(p_edge > 0.2) for p_edge in grouped_p_edges]
     p_edge_probs = [p_edge[rr, cc] for p_edge, (rr, cc) in
                     zip(grouped_p_edges, p_edge_locs)]
+
     p_edge_count = [len(rr) for rr, _ in p_edge_locs]
 
     opt_coords = []
