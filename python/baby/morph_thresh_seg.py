@@ -9,7 +9,7 @@ from typing import Union, Iterable, Any, Optional, List
 from .errors import BadParam
 from .segmentation import mask_containment, iterative_erosion, thresh_seg, \
     binary_edge, single_region_prop, outline_to_radial, get_edge_scores, \
-    refine_radial_grouped, iterative_dilation
+    refine_radial_grouped, iterative_dilation, draw_radial
 
 
 # class ContainmentFunction:
@@ -385,15 +385,15 @@ class MorphSegGrouped:
         masks = [[]]
         if refine_outlines:
             # Refine outlines using edge predictions
-            grouped_coords = [cell.coords for group in self.groups
-                              for cell in group.cells]
+            grouped_coords = [[cell.coords for cell in group.cells]
+                              for group in self.groups]
             predicted_edges = [group.prediction(pred, 'edge') for group in
                                self.groups]
 
             if predicted_edges:
                 coords = list(itertools.chain.from_iterable(
                     refine_radial_grouped(grouped_coords,
-                                          np.squeeze(predicted_edges))))
+                                          predicted_edges)))
             else:
                 coords = tuple()
             edges = [draw_radial(radii, angles, centre, shape)
