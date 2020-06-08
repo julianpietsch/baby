@@ -6,6 +6,7 @@ from scipy.ndimage import binary_fill_holes
 
 from typing import Union, Iterable, Any, Optional, List
 
+from .errors import BadParam
 from .segmentation import mask_containment, iterative_erosion, thresh_seg, \
     binary_edge, single_region_prop, outline_to_radial, get_edge_scores, \
     refine_radial_grouped, iterative_dilation
@@ -422,8 +423,9 @@ class MorphSegGrouped:
         true, the output will be a tuple of edge images, filled masks, and/or
         radial coordinates.
         """
-        if len(pred) == 0:
-            raise Exception('there must be at least one prediction image')
+        if len(pred) != len(self.flattener.names()):
+            raise BadParam(
+                '"pred" arg does not match number of flattener targets')
         shape = np.squeeze(pred[0]).shape
         border_rect = np.pad(
             np.zeros(tuple(x - 1 for x in shape), dtype='bool'),
