@@ -10,7 +10,7 @@ from scipy import interpolate
 from scipy.optimize import least_squares
 from skimage.measure import label, regionprops
 from skimage.segmentation import morphological_geodesic_active_contour
-from skimage.morphology import diamond, erosion
+from skimage.morphology import diamond, erosion, dilation
 from skimage.draw import ellipse_perimeter
 from skimage import filters
 
@@ -504,7 +504,7 @@ def iterative_dilation(img, iterations=1, **kwargs):
     if iterations is None:
         return img
     for _ in range(iterations):
-        img = erosion(img, **kwargs)
+        img = dilation(img, **kwargs)
     return img
 
 
