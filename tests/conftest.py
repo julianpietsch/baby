@@ -16,11 +16,20 @@ def pytest_addoption(parser):
         "--save-cnn-predictions", action="store_true", default=False,
         help="When running CNN tests, save the predictions to image dir"
     )
+    parser.addoption(
+        "--save-crawler-output", action="store_true", default=False,
+        help="When running crawler tests, save the predictions to tmp dir"
+    )
 
 
 @pytest.fixture(scope='session')
 def save_cnn_predictions(request):
     return request.config.getoption("--save-cnn-predictions")
+
+
+@pytest.fixture(scope='session')
+def save_crawler_output(request):
+    return request.config.getoption("--save-crawler-output")
 
 
 @pytest.fixture(scope='session')
@@ -63,6 +72,7 @@ def tf_session_graph():
         )
 
     return tf_session, tf_graph
+
 
 @pytest.fixture(scope='session')
 def bb_evolve60(modelsets, tf_session_graph):
