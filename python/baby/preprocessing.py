@@ -8,10 +8,11 @@ from skimage.measure import regionprops
 from skimage.draw import polygon
 from skimage.morphology import diamond
 from itertools import chain
+from typing import NamedTuple, Union
 import json
 
 from .segmentation import binary_edge
-from .utils import ExtendedEncoder, as_python_object
+from .utils import EncodableNamedTuple, jsonify, as_python_object
 
 # Depth-wise structuring elements for square or full connectivity
 dwsquareconn = diamond(1)[..., None]
@@ -120,6 +121,33 @@ def segoutline_flattening(fill_stack, info):
     return imout
 
 
+@EncodableNamedTuple
+class CellGroup(NamedTuple):
+    """Defines a cell group for creation of SegmentationFlattening targets
+    """
+    lower: Union[int, float] = 1
+    upper: Union[int, float] = np.Inf
+    budonly: bool = False
+    focus: Union[int, float, None] = None
+
+
+@EncodableNamedTuple
+class PredTarget(NamedTuple):
+    """Defines a target for SegmentationFlattening objects
+    """
+    name: str
+    group: str
+    prop: str
+    nerode: int = 0  # Erosions applied to cells before flattening
+    ndilate: int = 0  # Dilations applied to cells before flattening
+    ndilate_overlaps: int = 0  # Dilations applied after determining overlaps
+    ndilate_mother: int = 2 # Dilations applied only to mothers
+
+
+class UnrecognisedProp(Exception):
+    pass
+
+
 class SegmentationFlattening(object):
     def __init__(self, filename=None):
         self.propdepends = {
@@ -138,15 +166,55 @@ class SegmentationFlattening(object):
         if filename is not None:
             self.load(filename)
 
-    def addGroup(self, name, lower=1, upper=np.Inf, nerode=0,
+    def addGroup(self, name, lower=1, upper=np.Inf,
                  budonly=False, focus=None):
+        """Add a new cell group to this flattener
+
+        :param name: a unique name to identify this group
+        :param lower: the lower size threshold (in pixels) of cells to include
+            in this group
+        :param upper: the upper size threshold (in pixels) of cells to include
+            in this group
+        :param budonly: whether to limit this group to cells annotated as buds
+        :param focus: a float specifying the focal plane that this group
+            should correspond to. Cells with a focus annotation will be
+            allocated to the group with the closest focal match.
+        """
         assert name not in self.groupdef, \
             '"{}" group already exists'.format(name)
-        self.groupdef[name] = (lower, upper, budonly, nerode, focus)
+        self.groupdef[name] = CellGroup(lower, upper, budonly, focus)
         self.groupprops[name] = set()
 
-    def addTarget(self, name, group, prop, focusStacks=[]):
-        assert name not in {n for n, _, _ in self.targets}, \
+    def addTarget(self, name, group, prop, nerode=0, ndilate=0,
+                  focusStacks=[]):
+        """Add a new prediction target to this flattener
+
+        :param name: a unique name to identify this target
+        :param group: the name identifying the cell group from which this
+            target should be generated
+        :param prop: the type of mask that should be generated for this
+            target. Valid values are currently:
+            - 'filled': True for all edge and interior pixels in the specified
+              group, False otherwise;
+            - 'edge': True for all edge pixels of cells in the specified
+              group, False otherwise;
+            - 'overlap': True for all pixels corresponding to at least two
+              cells in the specified group, False otherwise;
+            - 'interior': True for all pixels
+            - 'filledsum': The integer number of cells present at each pixel;
+            - 'budneck': For all cells in this group, if a mother has been
+              annotated, then set to True those pixels where the daughter
+              overlaps with a dilated version of its mother
+        :param nerode: the number of erosions that should be applied for
+            generation of this target.
+        :param ndilate: the number of dilations that should be applied for
+            generation of this target.
+        :param focusStacks: a list of floats specifying focal planes. If
+            non-empty, this is shorthand for creating a new group for each of
+            the specified focal planes (copying the properties of the
+            specified cell group) and creating a corresponding target.
+        """
+        assert name not in {t.name for t in self.targets}, \
             '"{}" target already exists'.format(name)
         assert group in self.groupdef, \
             '"{}" group does not exist'.format(group)
@@ -154,63 +222,69 @@ class SegmentationFlattening(object):
             '"{}" is not a valid property'.format(prop)
 
         if len(focusStacks) > 0:
-            lower, upper, budonly, nerode, _ = self.groupdef[group]
+            gdict = self.groupdef[group]._asdict()
+            del gdict['focus']
             for f in focusStacks:
                 fgroup = '_'.join([group, str(f)])
-                self.addGroup(fgroup, lower=lower, upper=upper,
-                              nerode=nerode, budonly=budonly, focus=f)
-                self.targets.append(('_'.join([name, str(f)]), fgroup, prop))
-                self.groupprops[fgroup] = self.groupprops[group].union(
-                    {prop}, self.propdepends[prop])
+                self.addGroup(fgroup, focus=f, **gdict)
+                self.addTarget('_'.join([name, str(f)]),
+                               fgroup, prop, nerode=nerode,
+                               ndilate=ndilate, focusStacks=[])
         else:
-            self.targets.append((name, group, prop))
+            self.targets.append(PredTarget(name, group, prop, nerode, ndilate))
             self.groupprops[group] = self.groupprops[group].union(
                 {prop}, self.propdepends[prop])
 
     def names(self):
-        return tuple(name for name, _, _ in self.targets)
+        return tuple(t.name for t in self.targets)
 
     def getGroupTargets(self, group, propfilter=None):
         assert group in self.groupdef, \
             '"{}" group does not exist'.format(group)
         if type(propfilter) == list:
             # Return targets in order of properties provided
-            grouptargets = {p: n for n, g, p in self.targets if g == group}
+            grouptargets = {t.prop: t.name for t in self.targets if t.group == group}
             return [grouptargets.get(p) for p in propfilter]
         else:
             if propfilter is None:
-                propfilter = self.propdepends.keys()
+                propfilter = self.propdepends
 
             # Return filtered targets in order of addition
-            return [n for n, g, p in self.targets
-                    if g == group and p in propfilter]
+            return [t.name for t in self.targets
+                    if t.group == group and t.prop in propfilter]
 
     def getTargetDef(self, name):
-        target = [(p, g) for n, g, p in self.targets if n == name]
+        target = [t for t in self.targets if t.name == name]
         assert len(target) == 1 , \
             '"{}" target does not exist'.format(name)
 
-        prop, group = target[0]
-        lower, upper, budonly, nerode, focus = self.groupdef[group]
-        return {'prop': prop, 'lower': lower, 'upper': upper,
-                'budonly': budonly, 'nerode': nerode, 'focus': focus}
+        target = target[0]
+        tdef = self.groupdef[target.group]._asdict()
+        tdef.update(target._asdict())
+        return tdef
 
     def save(self, filename):
         with open(filename, 'wt') as f:
-            json.dump({
+            json.dump(jsonify({
                 'groupdef': self.groupdef,
                 'groupprops': self.groupprops,
                 'targets': self.targets
-            }, f, cls=ExtendedEncoder)
+            }), f)
 
     def load(self, filename):
         with open(filename, 'rt') as f:
             data = json.load(f, object_hook=as_python_object)
-        # Backwards-compatible loading for when focus was not a group prop
-        self.groupdef = {k: tuple(g) + (None,) if len(g) == 4 else tuple(g)
-                         for k, g in data.get('groupdef', {}).items()}
+
+        # Map any legacy versions of the group definitions to CellGroup
+        gdefs = data.get('groupdef', {})
+        self.groupdef = {k: g if isinstance(g, CellGroup)
+                         else CellGroup(*(g[:3] + g[4:5]))
+                         for k, g in gdefs.items()}
+        # Map any legacy versions of the target definitions to PredTarget
+        self.targets = [t if isinstance(t, PredTarget)
+                        else PredTarget(*(t[0:3] + gdefs[t[1]][3:4]))
+                        for t in data.get('targets', [])]
         self.groupprops = data.get('groupprops', {})
-        self.targets = data.get('targets', [])
 
     def __call__(self, filled_stack, info):
         filled_stack = filled_stack > 0
@@ -256,8 +330,8 @@ class SegmentationFlattening(object):
         focusAssignments[None] = np.ones(areas.shape, dtype='bool')
 
         # Process focus if any groups require it
-        focusNums = list({g[4] for g in self.groupdef.values()
-                          if g[4] is not None})
+        focusNums = list({g.focus for g in self.groupdef.values()
+                          if g.focus is not None})
         if len(focusNums) > 0:
             cellFocus = info.get('focusStack', [])
             if type(cellFocus) != list:
@@ -273,50 +347,67 @@ class SegmentationFlattening(object):
                                 for i, f in enumerate(focusNums)}
 
         groupinds = {
-            g: (np.flatnonzero((areas >= lt) & (areas < ut) & budonly[bo]
-                               & focusAssignments[f]), ne)
-            for g, (lt, ut, bo, ne, f) in self.groupdef.items()
+            k: np.flatnonzero((areas >= g.lower) & (areas < g.upper)
+                              & budonly[g.budonly] & focusAssignments[g.focus])
+            for k, g in self.groupdef.items()
         }
-        # print(groupinds)
 
-        groupims = {}
-        for g, (inds, nerode) in groupinds.items():
-            gprops = self.groupprops.get(g, set())
-            groupims[g] = {}
+        targetims = [filled_stack[..., []]]
+        for t in self.targets:
+            g = t.group
+            inds = groupinds[g].tolist()
 
-            if 'filled' in gprops:
-                groupims[g]['filled'] = filled_stack[:,:,inds].any(axis=2)
+            if t.prop in {'edge'}:
+                imstack = edge_stack[:, :, inds]
+            else:
+                imstack = filled_stack[:, :, inds]
 
-            if 'filledsum' in gprops:
-                groupims[g]['filledsum'] = filled_stack[:,:,inds].sum(axis=2)
+            # Apply specified dilations and/or erosions to each cell
+            # independently:
+            if t.ndilate > 0:
+                imstack = binary_dilation(
+                    imstack, dwsquareconn, iterations=t.ndilate)
+            if t.nerode > 0:
+                imstack = binary_erosion(
+                    imstack, dwsquareconn, iterations=t.nerode)
 
-            if 'edge' in gprops:
-                groupims[g]['edge'] = edge_stack[:,:,inds].any(axis=2)
-
-            if 'overlap' in gprops:
-                groupims[g]['overlap'] = filled_stack[:,:,inds].sum(axis=2) > 1
-
-            if 'interior' in gprops:
-                interiors = filled_stack[:,:,inds]
-                if nerode > 0:
-                    for c in range(interiors.shape[2]):
-                        interiors[:,:,c] = binary_erosion(
-                            interiors[:,:,c], iterations=nerode)
-                groupims[g]['interior'] = \
-                    interiors.any(axis=2) & ~groupims[g]['overlap']
-
-            if 'budneck' in gprops:
-                budneck = np.zeros(shape, dtype='bool')
+            # Apply property-specific flattening operations
+            if t.prop in {'filled', 'edge'}:
+                imflat = imstack.any(axis=2)
+            elif t.prop == 'filledsum':
+                imflat = imstack.sum(axis=2)
+            elif t.prop in {'overlap', 'interior'}:
+                # Overlaps between cells in this group
+                # NB: gets reused below in for 'interior' calculation
+                imflat = imstack.sum(axis=2) > 1
+                if t.ndilate_overlaps > 0:
+                    imflat = binary_dilation(
+                        imflat, iterations=t.ndilate_overlaps)
+            elif t.prop == 'budneck':
+                imflat = np.zeros(shape, dtype='bool')
                 for m, b in bmpairs:
+                    # Skip buds outside the specified group:
                     if b not in inds:
                         continue
-                    mim = filled_stack[..., m]
-                    bim = filled_stack[..., b]
-                    budneck |= binary_dilation(mim, iterations=2) & bim
-                groupims[g]['budneck'] = budneck
+                    # Get bud mask from imstack (with erosions/dilations)
+                    bim = imstack[..., inds.index(b)]
+                    # Get mother mask from complete stack and apply
+                    # mother-specific dilation:
+                    mim = binary_dilation(filled_stack[..., m],
+                                          iterations=t.ndilate_mother)
+                    imflat |= mim & bim
+            else:
+                raise UnrecognisedProp(
+                    'Unrecognised prop "{}"'.format(t.prop))
 
-        return np.dstack([filled_stack[...,[]]] + [
-            groupims[g][p] for _, g, p in self.targets])
+            if t.prop == 'interior':
+                # Like 'filled' except that overlaps are also excluded
+                # Overlaps are used as calculated and stored in `imflat`
+                imflat = imstack.any(axis=2) & (~imflat)
+
+            targetims.append(imflat)
+
+        return np.dstack(targetims)
 
 
 def flattener_norm_func(flattener):

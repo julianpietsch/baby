@@ -1,6 +1,7 @@
 import time
 import json
 from pathlib import Path
+from importlib import import_module
 import numpy as np
 
 
@@ -26,16 +27,38 @@ class PathEncoder(json.JSONEncoder):
             return json.JSONEncoder.default(self, o)
 
 
-class ExtendedEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, tuple):
-            return {'_python_tuple': list(obj)}
-        elif isinstance(obj, set):
-            return {'_python_set': list(obj)}
-        else:
-            return json.JSONEncoder.default(self, obj)
+def NamedTupleToJSON(self):
+    return {
+        '_python_NamedTuple': self._asdict(),
+        '__module__': self.__class__.__module__,
+        '__class__': self.__class__.__name__
+    }
+
+
+def EncodableNamedTuple(obj):
+    obj.toJSON = NamedTupleToJSON
+    return obj
+
+
+def jsonify(obj):
+    if hasattr(obj, 'toJSON'):
+        return obj.toJSON()
+    elif isinstance(obj, tuple):
+        return {'_python_tuple': list(obj)}
+    if isinstance(obj, set):
+        return {'_python_set': list(obj)}
+    elif isinstance(obj, dict):
+        return {k: jsonify(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [jsonify(v) for v in obj]
+    else:
+        return obj
+
 
 def as_python_object(obj):
+    if '_python_NamedTuple' in obj:
+        obj_class = getattr(import_module(obj['__module__']), obj['__class__'])
+        return obj_class(**obj['_python_NamedTuple'])
     if '_python_tuple' in obj:
         return tuple(obj['_python_tuple'])
     elif '_python_set' in obj:
