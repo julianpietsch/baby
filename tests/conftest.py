@@ -17,6 +17,10 @@ def pytest_addoption(parser):
         help="When running CNN tests, save the predictions to image dir"
     )
     parser.addoption(
+        "--save-segment-outlines", action="store_true", default=False,
+        help="When running segment tests, save the outlines to tmp dir"
+    )
+    parser.addoption(
         "--save-crawler-output", action="store_true", default=False,
         help="When running crawler tests, save the predictions to tmp dir"
     )
@@ -30,6 +34,11 @@ def save_cnn_predictions(request):
 @pytest.fixture(scope='session')
 def save_crawler_output(request):
     return request.config.getoption("--save-crawler-output")
+
+
+@pytest.fixture(scope='session')
+def save_segment_outlines(request):
+    return request.config.getoption("--save-segment-outlines")
 
 
 @pytest.fixture(scope='session')

@@ -5,108 +5,24 @@ from os.path import isfile
 import numpy as np
 from scipy.ndimage import binary_fill_holes
 from itertools import chain
+from collections import namedtuple
 
-from baby.io import load_paired_images
+from baby.io import load_paired_images, save_tiled_image
 from baby.errors import BadParam
-from baby.preprocessing import (
-    raw_norm, seg_norm, dwsquareconn, SegmentationFlattening
-)
+from baby.preprocessing import (raw_norm, seg_norm, dwsquareconn,
+                                SegmentationFlattening)
 from baby.brain import default_params
 from baby.morph_thresh_seg import MorphSegGrouped
 from baby.segmentation import morph_seg_grouped
-from baby.performance import (
-    calc_IoUs, best_IoU, calc_AP, flattener_seg_probs
-)
+from baby.performance import (calc_IoUs, best_IoU, calc_AP,
+                              flattener_seg_probs)
 
 from .conftest import MODEL_DIR, IMAGE_DIR
 
-
-@pytest.fixture(scope='module')
-def bbparams(modelsets):
-    mset = modelsets['evolve_brightfield_60x_5z']
-    params = default_params.copy()
-    params.update(mset.get('params', {}))
-    return params
-
-
-@pytest.fixture(scope='module')
-def bbparams_func(bbparams):
-    params = bbparams.copy()
-    del params['edge_sub_dilations']
-    params['ingroup_edge_segment'] = True
-    return params
-
-
-@pytest.fixture(scope='module')
-def flattener_evolve60(modelsets):
-    f = modelsets['evolve_brightfield_60x_5z']['flattener_file']
-    if not isfile(f):
-        f = MODEL_DIR / f
-    assert isfile(f)
-    return SegmentationFlattening(f)
-
-
-@pytest.fixture(scope='module')
-def segmenter_evolve60(bbparams, flattener_evolve60):
-    return MorphSegGrouped(flattener_evolve60, return_masks=True,
-                           return_coords=True, **bbparams)
-
-
-@pytest.fixture(scope='module')
-def impairs_evolve60():
-    impairs = load_paired_images(IMAGE_DIR.glob('evolve_*.png'), typeA='preds')
-    assert len(impairs) > 0
-    return impairs
-
-
-@pytest.fixture(scope='module')
-def preds_evolve60(impairs_evolve60):
-    return [raw_norm(*v['preds']).transpose((2, 0, 1))
-            for v in impairs_evolve60.values()]
-
-
-@pytest.fixture(scope='module')
-def truth_evolve60(impairs_evolve60):
-    return [seg_norm(*v['segoutlines'])[0].transpose((2, 0, 1))
-            for v in impairs_evolve60.values()]
-
-
-def test_match_targets_exceptions(flattener_evolve60):
-    ntargets = len(flattener_evolve60.names())
-    with pytest.raises(BadParam, match=r'.*does not match.*flattener'):
-        morph_seg_grouped(np.zeros((ntargets + 1, 81, 81)), flattener_evolve60)
-    segmenter = MorphSegGrouped(flattener_evolve60)
-    with pytest.raises(BadParam, match=r'.*does not match.*flattener'):
-        segmenter.segment(np.zeros((ntargets + 1, 81, 81)))
-
-
-def test_segfunc_dfltpar_empty(flattener_evolve60):
-    ntargets = len(flattener_evolve60.names())
-    out = morph_seg_grouped(np.zeros((ntargets, 81, 81)), flattener_evolve60,
-                            return_masks=True, return_coords=True)
-    assert tuple(len(o) for o in out) == (0, 0, 0)
-
-
-def test_segmenter_dfltpar_empty(flattener_evolve60):
-    ntargets = len(flattener_evolve60.names())
-    segmenter = MorphSegGrouped(flattener_evolve60, return_masks=True,
-                                return_coords=True)
-    out = segmenter.segment(np.zeros((ntargets, 81, 81)))
-    assert tuple(len(o) for o in out) == (0, 0, 0)
-
-
-def test_segfunc_bbparams_empty(bbparams_func, flattener_evolve60):
-    ntargets = len(flattener_evolve60.names())
-    out = morph_seg_grouped(np.zeros((ntargets, 81, 81)), flattener_evolve60,
-                            return_masks=True, return_coords=True,
-                            **bbparams_func)
-    assert tuple(len(o) for o in out) == (0, 0, 0)
-
-
-def test_segmenter_bbparams_empty(segmenter_evolve60, flattener_evolve60):
-    ntargets = len(flattener_evolve60.names())
-    out = segmenter_evolve60.segment(np.zeros((ntargets, 81, 81)))
-    assert tuple(len(o) for o in out) == (0, 0, 0)
+# Tuple for variables needed to test segmentation
+SegmentationEnv = namedtuple(
+    'SegmentationEnv',
+    ['flattener', 'cparams', 'fparams', 'cnn_out', 'truth', 'imnames'])
 
 
 def compare_edges_and_masks(edges, masks):
@@ -149,80 +65,211 @@ def run_performance_checks(seg_outputs, cnn_outputs, flattener, truth):
     return edge_mask_similarity, IoUs, APs, fracFN, fracFP
 
 
-def test_segfunc_dfltpar_preds(flattener_evolve60, preds_evolve60,
-                               truth_evolve60):
+@pytest.fixture(scope='module')
+def evolve60env(modelsets):
+    mset = modelsets['evolve_brightfield_60x_5z']
+
+    # Load flattener
+    ff = mset['flattener_file']
+    if not isfile(ff):
+        ff = MODEL_DIR / ff
+    assert isfile(ff)
+    flattener = SegmentationFlattening(ff)
+
+    # Load BabyBrain param defaults
+    cparams = default_params.copy()
+    cparams.update(mset.get('params', {}))
+
+    # Convert to params compatible with morph_seg_grouped
+    fparams = cparams.copy()
+    del fparams['edge_sub_dilations']
+    fparams['ingroup_edge_segment'] = True
+
+    # Load CNN outputs
+    impairs = load_paired_images(IMAGE_DIR.glob('evolve_*.png'),
+                                 typeA='preds')
+    assert len(impairs) > 0
+
+    cnn_out = [
+        raw_norm(*v['preds']).transpose((2, 0, 1)) for v in impairs.values()
+    ]
+
+    truth = [
+        seg_norm(*v['segoutlines'])[0].transpose((2, 0, 1))
+        for v in impairs.values()
+    ]
+
+    return SegmentationEnv(flattener, cparams, fparams, cnn_out, truth,
+                           impairs.keys())
+
+
+@pytest.fixture(scope='function')
+def save_segoutlines(tmp_path, save_segment_outlines):
+
+    def savefn(segoutputs, imnames):
+        for (edgemasks, _, _), l in zip(segoutputs, imnames):
+            if len(edgemasks) == 0:
+                continue
+            save_tiled_image(np.dstack(edgemasks).astype('uint8'),
+                             tmp_path / '{}_segoutlines.png'.format(l),
+                             layout=(1, None))
+
+    if save_segment_outlines:
+        return savefn
+    else:
+        return lambda segoutputs, imnames: None
+
+
+def test_match_targets_exceptions(evolve60env):
+    flattener = evolve60env.flattener
+    ntargets = len(flattener.names())
+    with pytest.raises(BadParam, match=r'.*does not match.*flattener'):
+        morph_seg_grouped(np.zeros((ntargets + 1, 81, 81)), flattener)
+    segmenter = MorphSegGrouped(flattener)
+    with pytest.raises(BadParam, match=r'.*does not match.*flattener'):
+        segmenter.segment(np.zeros((ntargets + 1, 81, 81)))
+
+
+def test_segfunc_dfltpar_empty(evolve60env):
+    flattener = evolve60env.flattener
+    ntargets = len(flattener.names())
+    out = morph_seg_grouped(np.zeros((ntargets, 81, 81)),
+                            flattener,
+                            return_masks=True,
+                            return_coords=True)
+    assert tuple(len(o) for o in out) == (0, 0, 0)
+
+
+def test_segmenter_dfltpar_empty(evolve60env):
+    flattener = evolve60env.flattener
+    ntargets = len(flattener.names())
+    segmenter = MorphSegGrouped(flattener,
+                                return_masks=True,
+                                return_coords=True)
+    out = segmenter.segment(np.zeros((ntargets, 81, 81)))
+    assert tuple(len(o) for o in out) == (0, 0, 0)
+
+
+def test_segfunc_bbparams_empty(evolve60env):
+    flattener = evolve60env.flattener
+    params = evolve60env.fparams
+    ntargets = len(flattener.names())
+    out = morph_seg_grouped(np.zeros((ntargets, 81, 81)),
+                            flattener,
+                            return_masks=True,
+                            return_coords=True,
+                            **params)
+    assert tuple(len(o) for o in out) == (0, 0, 0)
+
+
+def test_segmenter_bbparams_empty(evolve60env):
+    flattener = evolve60env.flattener
+    params = evolve60env.cparams
+    ntargets = len(flattener.names())
+    segmenter = MorphSegGrouped(flattener,
+                                return_masks=True,
+                                return_coords=True,
+                                **params)
+    out = segmenter.segment(np.zeros((ntargets, 81, 81)))
+    assert tuple(len(o) for o in out) == (0, 0, 0)
+
+
+def test_segfunc_dfltpar_preds(evolve60env, save_segoutlines):
+    flattener, _, _, cnn_out, truth, imnames = evolve60env
     params = {'return_masks': True, 'return_coords': True}
-    seg_outputs = [morph_seg_grouped(pred, flattener_evolve60, **params)
-                   for pred in preds_evolve60]
+    seg_outputs = [
+        morph_seg_grouped(pred, flattener, **params) for pred in cnn_out
+    ]
+    save_segoutlines(seg_outputs, imnames)
+
     edge_mask_sim, IoUs, APs, fracFN, fracFP = run_performance_checks(
-        seg_outputs, preds_evolve60, flattener_evolve60, truth_evolve60)
+        seg_outputs, cnn_out, flattener, truth)
 
     assert edge_mask_sim.min() > 0.999
     assert fracFN < 0.2 and fracFP < 0.4
     assert IoUs.mean() > 0.5 and APs.mean() >= 0.4
 
 
-def test_segmenter_dfltpar_preds(flattener_evolve60, preds_evolve60,
-                                 truth_evolve60):
-    segmenter = MorphSegGrouped(
-        flattener_evolve60, return_masks=True, return_coords=True)
-    seg_outputs = [segmenter.segment(pred) for pred in preds_evolve60]
+def test_segmenter_dfltpar_preds(evolve60env, save_segoutlines):
+    flattener, _, _, cnn_out, truth, imnames = evolve60env
+    segmenter = MorphSegGrouped(flattener,
+                                return_masks=True,
+                                return_coords=True)
+    seg_outputs = [segmenter.segment(pred) for pred in cnn_out]
+    save_segoutlines(seg_outputs, imnames)
 
     edge_mask_sim, IoUs, APs, fracFN, fracFP = run_performance_checks(
-        seg_outputs, preds_evolve60, flattener_evolve60, truth_evolve60)
+        seg_outputs, cnn_out, flattener, truth)
     assert edge_mask_sim.min() > 0.999
     assert fracFN < 0.2 and fracFP < 0.4
     assert IoUs.mean() > 0.5 and APs.mean() >= 0.4
 
 
-def test_segfunc_bbparams_preds(bbparams_func, flattener_evolve60,
-                                preds_evolve60, truth_evolve60):
-    params = bbparams_func.copy()
+def test_segfunc_bbparams_preds(evolve60env, save_segoutlines):
+    flattener, _, params, cnn_out, truth, imnames = evolve60env
+    params = params.copy()
     params.update({'return_masks': True, 'return_coords': True})
-    seg_outputs = [morph_seg_grouped(pred, flattener_evolve60, **params)
-                   for pred in preds_evolve60]
+    seg_outputs = [
+        morph_seg_grouped(pred, flattener, **params) for pred in cnn_out
+    ]
+    save_segoutlines(seg_outputs, imnames)
 
     edge_mask_sim, IoUs, APs, fracFN, fracFP = run_performance_checks(
-        seg_outputs, preds_evolve60, flattener_evolve60, truth_evolve60)
+        seg_outputs, cnn_out, flattener, truth)
     assert edge_mask_sim.min() > 0.999
     assert fracFN < 0.3 and fracFP < 0.3
     assert IoUs.mean() > 0.6 and APs.mean() >= 0.4
 
 
-def test_segmenter_bbparams_preds(segmenter_evolve60, flattener_evolve60,
-                                  preds_evolve60, truth_evolve60):
-    seg_outputs = [segmenter_evolve60.segment(pred)
-                   for pred in preds_evolve60]
+def test_segmenter_bbparams_preds(evolve60env, save_segoutlines):
+    flattener, params, _, cnn_out, truth, imnames = evolve60env
+    segmenter = MorphSegGrouped(flattener,
+                                return_masks=True,
+                                return_coords=True,
+                                **params)
+    seg_outputs = [segmenter.segment(pred) for pred in cnn_out]
+    save_segoutlines(seg_outputs, imnames)
 
     edge_mask_sim, IoUs, APs, fracFN, fracFP = run_performance_checks(
-        seg_outputs, preds_evolve60, flattener_evolve60, truth_evolve60)
+        seg_outputs, cnn_out, flattener, truth)
     assert edge_mask_sim.min() > 0.999
     assert fracFN < 0.3 and fracFP < 0.3
     assert IoUs.mean() > 0.6 and APs.mean() >= 0.4
 
 
-def test_segfunc_refined_preds(bbparams_func, flattener_evolve60,
-                               preds_evolve60, truth_evolve60):
-    params = bbparams_func.copy()
-    params.update({'return_masks': True, 'return_coords': True,
-                   'refine_outlines': True})
-    seg_outputs = [morph_seg_grouped(pred, flattener_evolve60, **params)
-                   for pred in preds_evolve60]
+def test_segfunc_refined_preds(evolve60env, save_segoutlines):
+    flattener, _, params, cnn_out, truth, imnames = evolve60env
+    params = params.copy()
+    params.update({
+        'return_masks': True,
+        'return_coords': True,
+        'refine_outlines': True
+    })
+    seg_outputs = [
+        morph_seg_grouped(pred, flattener, **params) for pred in cnn_out
+    ]
+    save_segoutlines(seg_outputs, imnames)
 
     edge_mask_sim, IoUs, APs, fracFN, fracFP = run_performance_checks(
-        seg_outputs, preds_evolve60, flattener_evolve60, truth_evolve60)
+        seg_outputs, cnn_out, flattener, truth)
     assert edge_mask_sim.min() > 0.999
     assert fracFN < 0.3 and fracFP < 0.3
     assert IoUs.mean() > 0.6 and APs.mean() >= 0.4
 
 
-def test_segmenter_refined_preds(segmenter_evolve60, flattener_evolve60,
-                                 preds_evolve60, truth_evolve60):
-    seg_outputs = [segmenter_evolve60.segment(pred, refine_outlines=True)
-                   for pred in preds_evolve60]
+def test_segmenter_refined_preds(evolve60env, save_segoutlines):
+    flattener, params, _, cnn_out, truth, imnames = evolve60env
+    segmenter = MorphSegGrouped(flattener,
+                                return_masks=True,
+                                return_coords=True,
+                                **params)
+    seg_outputs = [
+        segmenter.segment(pred, refine_outlines=True) for pred in cnn_out
+    ]
+    save_segoutlines(seg_outputs, imnames)
 
     edge_mask_sim, IoUs, APs, fracFN, fracFP = run_performance_checks(
-        seg_outputs, preds_evolve60, flattener_evolve60, truth_evolve60)
+        seg_outputs, cnn_out, flattener, truth)
     assert edge_mask_sim.min() > 0.999
     assert fracFN < 0.3 and fracFP < 0.3
     assert IoUs.mean() > 0.6 and APs.mean() >= 0.4
