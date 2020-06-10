@@ -26,5 +26,5 @@ def test_evolve_crawl(bb_evolve60, imgs_evolve60, tmp_path, save_crawler_output)
     output1 = crawler.step(imgstack, with_edgemasks=True, assign_mothers=True)
     for o1, o0 in zip(output1, output0):
         assert all([len(o1['centres']) == len(o1[k]) for k in eqlen_outkeys])
-        # assert np.all(np.array(o0['cell_label']) == np.array(o1['cell_label']))
+        assert np.all(np.array(o0['cell_label']) == np.array(o1['cell_label']))
 
