@@ -48,7 +48,7 @@ class Cell:
     @property
     def edge_score(self):
         if self._edge_score is None:
-            self._edge_score = get_edge_scores(self.edge,
+            self._edge_score = get_edge_scores((self.edge,),
                                                self.predicted_edge)[0]
         return self._edge_score
 
@@ -434,6 +434,10 @@ class MorphSegGrouped:
 
         for group in self.groups:
             group.segment(pred, border_rect, fit_radial=self.fit_radial)
+            # Remove cells that do not exceed the p_edge threshold
+            if self.pedge_thresh is not None:
+                group.cells = [cell for cell in group.cells
+                               if cell.edge_score > self.pedge_thresh]
 
         # Remove cells that are duplicated in several groups
         self.remove_duplicates()
