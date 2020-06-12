@@ -201,20 +201,18 @@ class Tracker:
         zero.
         '''
 
+        new_lbls = np.zeros(pred_matrix.shape[1], dtype=int)
+
         # We remove any possible conflict by taking the maximum vals
         if pred_matrix.any():
             clean_mat = np.zeros(pred_matrix.shape)
             for j, i in enumerate(pred_matrix.argmax(0)):
                 clean_mat[i, j] = pred_matrix[i, j]
 
-                # assign available hits
-                new_lbls = np.repeat(0, pred_matrix.shape[1])
-                for i, j in enumerate(clean_mat.argmax(1)):
-                    if pred_matrix[i, j] > self.ctrack_thresh:
-                        new_lbls[j] = prev_lbls[i]
-        else:
-            new_lbls = np.array([], dtype=int)
-                        
+            # assign available hits
+            for i, j in enumerate(clean_mat.argmax(1)):
+                if pred_matrix[i, j] > self.ctrack_thresh:
+                    new_lbls[j] = prev_lbls[i]
 
         return new_lbls
 

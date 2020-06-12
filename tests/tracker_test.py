@@ -1,6 +1,7 @@
 import pytest
 
 from os.path import isfile
+import pickle
 from collections import namedtuple, Counter
 import numpy as np
 
@@ -14,16 +15,19 @@ from .conftest import MODEL_DIR, IMAGE_DIR
 
 TrackerEnv = namedtuple('TrackerEnv', ['masks', 'p_budneck', 'p_bud'])
 
+def resolve_file(filename):
+    if not isfile(filename):
+        filename = MODEL_DIR / filename
+    assert isfile(filename)
+    return filename
+
 
 @pytest.fixture(scope='module')
 def evolve60env(modelsets):
     mset = modelsets['evolve_brightfield_60x_5z']
 
     # Load flattener
-    ff = mset['flattener_file']
-    if not isfile(ff):
-        ff = MODEL_DIR / ff
-    assert isfile(ff)
+    ff = resolve_file(mset['flattener_file'])
     flattener = SegmentationFlattening(ff)
 
     tnames = flattener.names()
@@ -50,9 +54,16 @@ def evolve60env(modelsets):
         _, masks = segmenter.segment(cnn_out, refine_outlines=True)
         trkin.append(TrackerEnv(masks, cnn_out[i_budneck], cnn_out[i_bud]))
 
+    # Load the celltrack and budassign models
+    ctm_file = resolve_file(mset['celltrack_model_file'])
+    with open(ctm_file, 'rb') as f:
+        ctm = pickle.load(f)
+    bam_file = resolve_file(mset['budassign_model_file'])
+    with open(bam_file, 'rb') as f:
+        bam = pickle.load(f)
+
     # Set up a tracker for this model set
-    tracker = Tracker(ctrack_model=mset['celltrack_model_file'],
-                      ba_model=mset['budassign_model_file'])
+    tracker = Tracker(ctrack_model=ctm, ba_model=bam)
 
     return tracker, trkin
 
@@ -84,6 +95,13 @@ def test_bad_track(evolve60env):
             new_max = len(features)
             new_lbls = [*range(1, new_max + 1)]
             assert len(new_lbls) == ncells
+
+        # Check get_new_lbls method
+        new_lbls, _, _ = tracker.get_new_lbls(None, prev_lbls, prev_feats,
+                state.get('max_lbl', 0), new_feats=features)
+        assert len(new_lbls) == ncells
+        assert type(new_lbls) == list
+        assert all([type(l) == int for l in new_lbls])
 
         tracking = tracker.step_trackers(masks, p_budneck, p_bud, state=state)
         assert len(tracking['cell_label']) == ncells
