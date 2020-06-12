@@ -30,7 +30,7 @@ default_params = {
     'connectivity': (2, 2, 1),
     'pedge_thresh': 0.001,
     'fit_radial': True,
-    'edge_sub_dilations': 0,
+    'edge_sub_dilations': 1,
     'use_group_thresh': True,
     'group_thresh_expansion': 0.1
 }
