@@ -5,25 +5,41 @@ from baby.crawler import BabyCrawler
 from baby.io import save_tiled_image
 
 
-def test_evolve_crawl(bb_evolve60, imgs_evolve60, tmp_path,
-                      save_crawler_output):
+@pytest.fixture(scope='function')
+def save_output(tmp_path, save_crawler_output):
+    info_keys = ('centres', 'angles', 'radii', 'cell_label')
+
+    def savefn(crawlerout, imnames, suffix=None):
+        for o, l in zip(crawlerout, imnames):
+            edges = o['edgemasks']
+            if len(edges) == 0:
+                continue
+            filename = '_'.join(([l, suffix] if suffix else [l]) +
+                                ['segoutlines.png'])
+            save_tiled_image(edges.transpose([1, 2, 0]).astype('uint8'),
+                             tmp_path / filename,
+                             {k: o[k] for k in info_keys},
+                             layout=(1, None))
+
+    if save_crawler_output:
+        return savefn
+    else:
+        return lambda crawlerout, imnames: None
+
+
+def test_evolve_crawl(bb_evolve60, imgs_evolve60, save_output):
     imgstack = np.stack([v['Brightfield'][0] for v in imgs_evolve60.values()])
     crawler = BabyCrawler(bb_evolve60)
     # eqlen_outkeys = {'angles', 'radii', 'cell_label', 'mother_assign',
     #                  'edgemasks'}
     eqlen_outkeys = {'angles', 'radii', 'cell_label', 'edgemasks'}
-    info_keys = ('centres', 'angles', 'radii', 'cell_label')
 
     output0 = crawler.step(imgstack, with_edgemasks=True, assign_mothers=True)
-    for o, l in zip(output0, imgs_evolve60.keys()):
+    for o in output0:
         assert all([len(o['centres']) == len(o[k]) for k in eqlen_outkeys])
-        edges = o['edgemasks']
-        assert edges.shape[1:3] == imgstack.shape[1:3]
-        if save_crawler_output and len(o['centres']) > 0:
-            save_tiled_image(edges.transpose([1, 2, 0]).astype('uint16'),
-                             tmp_path / '{}_t0_segoutlines.png'.format(l),
-                             {k: o[k] for k in info_keys},
-                             layout=(1, None))
+        assert o['edgemasks'].shape[1:3] == imgstack.shape[1:3]
+
+    save_output(output0, imgs_evolve60.keys())
 
     # Step once to the same image (cells should track exactly)
     output1 = crawler.step(imgstack, with_edgemasks=True, assign_mothers=True)
@@ -31,3 +47,16 @@ def test_evolve_crawl(bb_evolve60, imgs_evolve60, tmp_path,
         assert all([len(o1['centres']) == len(o1[k]) for k in eqlen_outkeys])
         assert np.all(
             np.array(o0['cell_label']) == np.array(o1['cell_label']))
+
+
+def test_evolve_crawl_step(bb_evolve60, imgs_evolve60, save_output):
+    eqlen_outkeys = ('angles', 'radii', 'cell_label', 'edgemasks')
+    tp3 = imgs_evolve60['evolve_testF_tp3']['Brightfield'][0][None, ...]
+    tp4 = imgs_evolve60['evolve_testF_tp4']['Brightfield'][0][None, ...]
+    crawler = BabyCrawler(bb_evolve60)
+    output3 = crawler.step(tp3, with_edgemasks=True)
+    for o in output3:
+        assert all([len(o['centres']) == len(o[k]) for k in eqlen_outkeys])
+    output4 = crawler.step(tp4, with_edgemasks=True)
+    for o in output4:
+        assert all([len(o['centres']) == len(o[k]) for k in eqlen_outkeys])

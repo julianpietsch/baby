@@ -1,6 +1,5 @@
 import pytest
 
-import json
 from os.path import isfile
 import numpy as np
 from scipy.ndimage import binary_fill_holes
