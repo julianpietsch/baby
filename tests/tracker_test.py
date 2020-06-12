@@ -15,6 +15,7 @@ from .conftest import MODEL_DIR, IMAGE_DIR
 
 TrackerEnv = namedtuple('TrackerEnv', ['masks', 'p_budneck', 'p_bud'])
 
+
 def resolve_file(filename):
     if not isfile(filename):
         filename = MODEL_DIR / filename
@@ -84,8 +85,8 @@ def test_bad_track(evolve60env):
         prev_lbls = state.get('cell_lbls', [])[-nstepsback:]
         prev_feats = state.get('prev_feats', [])[-nstepsback:]
         if features.any() and prev_feats:
-            counts = Counter([lbl for lbl_set in prev_lbls for lbl in
-                lbl_set])
+            counts = Counter(
+                [lbl for lbl_set in prev_lbls for lbl in lbl_set])
             print(counts)
             lbls_order = list(counts.keys())
             max_prob = np.zeros((len(lbls_order), len(features)), dtype=float)
@@ -97,8 +98,11 @@ def test_bad_track(evolve60env):
             assert len(new_lbls) == ncells
 
         # Check get_new_lbls method
-        new_lbls, _, _ = tracker.get_new_lbls(None, prev_lbls, prev_feats,
-                state.get('max_lbl', 0), new_feats=features)
+        new_lbls, _, _ = tracker.get_new_lbls(None,
+                                              prev_lbls,
+                                              prev_feats,
+                                              state.get('max_lbl', 0),
+                                              new_feats=features)
         assert len(new_lbls) == ncells
         assert type(new_lbls) == list
         assert all([type(l) == int for l in new_lbls])
