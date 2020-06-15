@@ -188,7 +188,8 @@ def crawl_expt(timing, seg_expt, bb, ntps=5, refine_outlines=True):
     return output
 
 
-def subtask_timings(timing, seg_expt, bb, ntps=5, refine_outlines=True):
+def subtask_timings(timing, seg_expt, bb, ntps=5, refine_outlines=True,
+                    return_volume=False):
     """Step through sub-tasks of the crawler
 
     :param timing: instance of TimingLogger
@@ -238,8 +239,9 @@ def subtask_timings(timing, seg_expt, bb, ntps=5, refine_outlines=True):
         timing.start('Segmenting time point {:d}...'.format(tp + 1))
         seg_masks = []
         for cnn_output in cnn_outputs[tp]:
-            _, masks, _ = bb.morph_segmenter.segment(
-                cnn_output, refine_outlines=refine_outlines)
+            _, masks, *other = bb.morph_segmenter.segment(
+                cnn_output, refine_outlines=refine_outlines,
+                return_volume=return_volume)
             seg_masks.append(masks)
         tp_seg_masks.append(seg_masks)
         timing.finish()
@@ -281,7 +283,8 @@ if __name__ == "__main__":
     parser.add_option("-b", "--basic-edges", action="store_false",
                       dest="refine_outlines", default=True,
                       help="Turn outline refinement off")
-
+    parser.add_option("-v", "--volume", dest="return_volume", default=False,
+                      action="store_true")
     (options, args) = parser.parse_args()
 
     if len(args) != 1:
@@ -304,7 +307,8 @@ if __name__ == "__main__":
         timing.separator()
 
         subtask_timings(timing, seg_expt, bb, ntps=options.ntps,
-                        refine_outlines=options.refine_outlines)
+                        refine_outlines=options.refine_outlines,
+                        return_volume=options.return_volume)
 
         timing.separator()
 
