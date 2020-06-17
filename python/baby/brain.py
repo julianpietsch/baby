@@ -10,7 +10,7 @@ import tensorflow as tf
 from tensorflow.keras import models, layers
 from tensorflow.keras import backend as K
 
-from .models import bce_dice_loss, dice_loss, dice_coeff
+from .losses import bce_dice_loss, dice_loss, dice_coeff
 from .segmentation import morph_seg_grouped
 from .tracker import Tracker
 from .preprocessing import robust_norm, SegmentationFlattening
