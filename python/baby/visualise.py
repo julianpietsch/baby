@@ -1,6 +1,7 @@
 import numpy as np
-from matplotlib.colors import Normalize
+from matplotlib.colors import Normalize, to_rgba
 from matplotlib import pyplot as plt
+from scipy.signal import savgol_filter
 
 
 def colour_seg(seg, rgb=(0.5, 0, 0.5), alpha=1):
@@ -50,3 +51,69 @@ def plot_IoU(target_seg, ref_segs, index):
     plt.grid(False)
     plt.xticks([])
     plt.yticks([])
+
+
+
+def plot_history(histories, key='loss', log=False, window=21, legend=False):
+    for name, history in histories:
+        epoch = history['epoch']
+        val = history['history']['val_'+key]
+        hndl = plt.plot(epoch, savgol_filter(val, window, 3),
+                        label=name.title()+' Val')
+        val = history['history'][key]
+        colour = to_rgba(hndl[0].get_color(), 0.7)
+        plt.plot(history['epoch'], savgol_filter(val, window, 3),
+                 ':', color=colour, label=name.title()+' Train')
+  
+    plt.xlabel('Epochs')
+    plt.ylabel(key.replace('_',' ').title())
+    if log:
+        plt.yscale('log')
+    plt.xlim([0,max(history['epoch'])])
+    if legend:
+        plt.legend()
+
+
+def plot_overlaps(model, inputim, target, output):
+    lblind = model.output_names.index(output)
+    target = target[lblind][...,0] > 0
+    pred = model.predict(inputim)[lblind]
+    pred_bin = np.squeeze(pred) > 0.5
+    correct = pred_bin & target
+    falsepos = pred_bin & ~target
+    falseneg = ~pred_bin & target
+
+    ncols = len(inputim)
+    plt.figure(figsize=(ncols * 4, 4))
+    for i in range(ncols):
+        plt.subplot(1, ncols, i + 1)
+        plt.imshow(np.squeeze(inputim[i,:,:,0]), cmap='gray')
+        plt.imshow(colour_seg(correct[i], rgb=(0,1,0), alpha=0.3))
+        plt.imshow(colour_seg(falsepos[i], rgb=(0,0,1), alpha=0.3))
+        plt.imshow(colour_seg(falseneg[i], rgb=(1,0,0), alpha=0.3))
+        plt.grid(False)
+        plt.xticks([])
+        plt.yticks([])
+    plt.show()
+    
+
+def plot_best_or_worst(outlist):
+    ncols = len(outlist)
+    plt.figure(figsize=(ncols * 4, 4))
+    for i in range(ncols):
+        iou, batch_ind, pred, target, inputim = outlist[i]
+        
+        correct = pred & target
+        falsepos = pred & ~target
+        falseneg = ~pred & target
+
+        plt.subplot(1, ncols, i + 1)
+        plt.imshow(np.squeeze(inputim[:,:,0]), cmap='gray')
+        plt.imshow(colour_seg(correct, rgb=(0,1,0), alpha=0.3))
+        plt.imshow(colour_seg(falsepos, rgb=(0,0,1), alpha=0.3))
+        plt.imshow(colour_seg(falseneg, rgb=(1,0,0), alpha=0.3))
+        plt.grid(False)
+        plt.xticks([])
+        plt.yticks([])
+        plt.title('IoU: {:.2f}; Batch: {}'.format(iou, batch_ind))
+    plt.show()
