@@ -27,9 +27,11 @@ class PathEncoder(json.JSONEncoder):
             return json.JSONEncoder.default(self, o)
 
 
-def named_obj(obj, name):
-    obj._baby_name = name
-    return obj
+def named_obj(name):
+    def wrap(obj):
+        obj._baby_name = name
+        return obj
+    return wrap
 
 
 def get_name(obj):

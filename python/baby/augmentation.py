@@ -6,6 +6,7 @@ probably will return errors if used on structured arrays. They all take exactly
 two arrays as input, and will perform identitcal transformations on both arrays.
 """
 from __future__ import absolute_import, division, print_function
+import json
 import numpy as np
 from scipy.ndimage import map_coordinates, gaussian_filter, shift
 from scipy.ndimage.morphology import binary_fill_holes

@@ -7,20 +7,24 @@ from .layers import msd_block, make_outputs
 from .losses import bce_dice_loss, dice_coeff
 
 
-def named_model_fn(f, name):
+def named_model_fn(name):
 
-    @named_obj(name)
-    def model_fn(generator, flattener, weights={}):
-        weights = {n: weights.get(n, 1) for n in flattener.names()}
-        inputs = Input(shape=generator.shape.input)
-        model = Model(inputs=[inputs],
-                      outputs=make_outputs(f(inputs), flattener.names()))
-        model.compile(optimizer=Adam(amsgrad=False),
-                      metrics=[dice_coeff],
-                      loss=bce_dice_loss,
-                      loss_weights=weights)
+    def wrap(f):
 
-    return model_fn
+        @named_obj(name)
+        def model_fn(generator, flattener, weights={}):
+            weights = {n: weights.get(n, 1) for n in flattener.names()}
+            inputs = Input(shape=generator.shape.input[1:])
+            model = Model(inputs=[inputs],
+                          outputs=make_outputs(f(inputs), flattener.names()))
+            model.compile(optimizer=Adam(amsgrad=False),
+                          metrics=[dice_coeff],
+                          loss=bce_dice_loss,
+                          loss_weights=weights)
+
+        return model_fn
+
+    return wrap
 
 
 @named_model_fn('MSD D80')

@@ -107,14 +107,14 @@ def msd_block(input_tensor, depth, width, dilations, rep=1, batchnorm=True, pren
 
 def make_outputs(nn_core, target_names):
     if type(target_names) == str:
-        return KL.Conv2D(1, (1, 1), activation='sigmoid', name=target_names)(nn_core)
+        return Conv2D(1, (1, 1), activation='sigmoid', name=target_names)(nn_core)
     else:
-        return [KL.Conv2D(1, (1, 1), activation='sigmoid', name=name)(nn_core)
+        return [Conv2D(1, (1, 1), activation='sigmoid', name=name)(nn_core)
                 for name in target_names]
 
 
 def bottleneck(nn, nlayers=8, prename='btl', batchnorm=True):
-    nn = KL.Conv2D(nlayers, (1, 1), padding='same', name=prename + '_conv')(nn)
+    nn = Conv2D(nlayers, (1, 1), padding='same', name=prename + '_conv')(nn)
     if batchnorm:
-        nn = KL.BatchNormalization(name=prename + '_bn')(nn)
-    return KL.Activation('relu', name=prename + '_act')(nn)
+        nn = BatchNormalization(name=prename + '_bn')(nn)
+    return Activation('relu', name=prename + '_act')(nn)

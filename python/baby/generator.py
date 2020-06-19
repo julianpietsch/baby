@@ -61,14 +61,12 @@ class ImageLabel(Sequence):
         # Initialise ordering
         self.on_epoch_end()
 
-        self._shape = None
-
     def __len__(self):
         return int(np.ceil(len(self.paths) / float(self.batch_size)))
 
     @property
     def shape(self):
-        if self._shape is not None:
+        if not hasattr(self, '_shape') or not self._shape:
             if len(self.paths) == 0:
                 return ImageLabelShape(tuple(), tuple())
 

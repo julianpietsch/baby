@@ -9,13 +9,15 @@ from tensorflow.python.keras.callbacks import (ModelCheckpoint, TensorBoard,
                                                LearningRateScheduler)
 from tensorflow.python.keras.models import load_model
 
-from .utils import get_name, EncodableNamedTuple, find_file, as_python_object
+from .utils import (get_name, EncodableNamedTuple, find_file,
+                    as_python_object, jsonify)
 from .errors import BadParam, BadFile, BadType, BadProcess
 from .io import TrainValPairs
 from .preprocessing import robust_norm, seg_norm, SegmentationFlattening
 from .augmentation import Augmenter, SmoothingSigmaModel, DownscalingAugmenter
 from .generator import ImageLabel
 from .losses import bce_dice_loss, dice_coeff
+from . import models
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
 
@@ -90,13 +92,6 @@ class BabyTrainer(object):
             if not savename.is_file():
                 shutil.copy(filename, savename)
 
-        # Register the flattener
-        if isinstance(flattener, str):
-            flattener_file = find_file(flattener, 'flattener')
-            flattener = SegmentationFlattening()
-            flattener.load(flattener_file)
-        self.flattener = flattener
-
     @property
     def parameters(self):
         if not hasattr(self, '_parameters') or not self._parameters:
@@ -116,7 +111,7 @@ class BabyTrainer(object):
         if isinstance(params, dict):
             p = {}
             if hasattr(self, '_parameters') and self._parameters:
-                p = self._parameters
+                p = self._parameters._asdict()
             p.update(params)
             params = BabyTrainerParameters(**p)
         elif not isinstance(params, BabyTrainerParameters):
@@ -253,6 +248,7 @@ class BabyTrainer(object):
                                         'hshift': 0.25
                                     })
 
+    @property
     def val_aug(self):
         # Validation data now must make use of DownscalingAugmenter, so need to update
         # the generator as well:
@@ -268,6 +264,21 @@ class BabyTrainer(object):
                                         'hshift': 0.25
                                     })
 
+    @property
+    def cnn_fn(self):
+        return getattr(models, self.parameters.model_fn)
+
+    @property
+    def cnn_name(self):
+        return get_name(self.cnn_fn)
+
+    @property
+    def cnn(self):
+        if not hasattr(self, '_cnn') or not self._cnn:
+            self.train_gen.aug = self.train_aug
+            self._cnn = self.cnn_fn(self.train_gen, self.flattener)
+        return self._cnn
+
     def fit_smoothing_model(self):
         pass
 
@@ -279,6 +290,10 @@ class BabyTrainer(object):
 
     def fit_seg_params(self):
         pass
+
+
+class Nursery(BabyTrainer):
+    pass
 
 
 def save_init(model, model_name):
