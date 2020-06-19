@@ -27,6 +27,15 @@ class PathEncoder(json.JSONEncoder):
             return json.JSONEncoder.default(self, o)
 
 
+def named_obj(obj, name):
+    obj._baby_name = name
+    return obj
+
+
+def get_name(obj):
+    return getattr(obj, '_baby_name', obj.__name__)
+
+
 def NamedTupleToJSON(self):
     return {
         '_python_NamedTuple': self._asdict(),
@@ -65,6 +74,18 @@ def as_python_object(obj):
         return set(obj['_python_set'])
     else:
         return obj
+
+
+def find_file(filename, default_dir, argname=None):
+    filepath = Path(filename)
+    if not filepath.is_file():
+        filepath = Path(default_dir) / filepath
+    if not filepath.is_file():
+        msg = 'Could not find file "{}"'.format(filename)
+        if argname:
+            msg += ' specified for "{}"'.format(argname)
+        raise BadParam(msg)
+    return filepath
 
 
 def batch_iterator(a, batch_size=8):

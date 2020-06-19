@@ -291,6 +291,31 @@ class Augmenter(object):
         return img, lbl
 
 
+class SmoothingSigmaModel(object):
+    def __init__(self, m=None, c=None):
+        self._m = m
+        self._c = c
+        self._formula = 'sigma = m*log(nedge) + c'
+
+    def save(self, filename):
+        with open(filename, 'wt') as f:
+            json.dump({'m': self._m, 'c': self._c}, f)
+
+    def load(self, filename):
+        with open(filename, 'rt') as f:
+            model = json.load(f)
+        if self._formula != model.get('formula'):
+            raise BadFile('Model formula does not match SmoothingSigmaModel')
+        self._m, self._c = (model[k] for k in ('m', 'c'))
+
+    def __repr__(self):
+        return 'SmoothingSigmaModel: {}; m = {:.2f}, c = {:.2f}'.format(
+                self._formula, self._m, self._c)
+
+    def __call__(self, s):
+        return self._m * np.log(np.sum(s)) + self._c
+
+
 class SmoothedLabelAugmenter(Augmenter):
     def __init__(self, sigmafunc, targetgenfunc=segoutline_flattening, **kwargs):
         super(SmoothedLabelAugmenter, self).__init__(**kwargs)
