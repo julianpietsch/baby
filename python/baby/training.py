@@ -19,9 +19,6 @@ from .generator import ImageLabel
 from .losses import bce_dice_loss, dice_coeff
 from . import models
 
-from imageio import imread
-import pandas as pd
-
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
 
 
