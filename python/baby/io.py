@@ -120,19 +120,31 @@ class TrainValPairs(object):
                 'training': self.training,
                 'validation': self.validation
             }
-            ntrainval = {}
-            for k, pairs in trainvalpairs.items():
-                ncells = 0
-                for _, l in pairs:
-                    info = json.loads(imread(l).meta.get('Description', '{}'))
-                    cellLabels = info.get('cellLabels', []) or []
-                    if type(cellLabels) is int:
-                        cellLabels = [cellLabels]
-                    ncells += len(cellLabels)
-                ntrainval[k] = ncells
+            self.set_metadata()
+            ntrainval = {key : [np.sum(chain(*self._metadata[key]['cellLabels']))
+                                             for key in trainvalpairs.keys()]}
             ncells_tuple = namedtuple('ncells', 'training, validation')
             self._ncells = ncells_tuple(**ntrainval)
         return self._ncells
+
+    def set_metadata(self):
+        if not hasattr(self, '_metadata') or not self._metadata:
+            trainvalpairs = {
+                'training': self.training,
+                'validation': self.validation
+            }
+            for k, pairs in trainvalpairs.items():
+                self._metadata[k] = self.aggregate_metadata(pairs)
+
+    def aggregate_metadata(self, pairs):
+        meta = []
+        for _, l in pairs:
+            info = json.loads(imread(l).meta.get('Description', '{}'))
+            self.meta.append({field : value for field, value in info.items()})
+            # cellLabels = info.get('cellLabels', []) or []
+            if type(meta[-1]['cellLabels']) is int:
+                meta[-1]['cellLabels'] = [meta[-1]['cellLabels']]
+        return meta
 
     def load(self, filename):
         with open(filename, 'rt') as f:
