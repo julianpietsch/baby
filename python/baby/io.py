@@ -13,6 +13,9 @@ from sklearn.model_selection import train_test_split
 from .utils import PathEncoder
 from .errors import LayoutError, UnpairedImagesError
 
+import pandas as pd
+from collections import Counter
+from itertools import chain
 
 def load_tiled_image(filename):
     tImg = imread(filename)
@@ -116,35 +119,31 @@ class TrainValPairs(object):
     @property
     def ncells(self):
         if not hasattr(self, '_ncells') or not self._ncells:
-            trainvalpairs = {
-                'training': self.training,
-                'validation': self.validation
-            }
-            self.set_metadata()
-            ntrainval = {key : [np.sum(chain(*self._metadata[key]['cellLabels']))
-                                             for key in trainvalpairs.keys()]}
+            ntrainval = Counter(self._metadata['train_val'])
             ncells_tuple = namedtuple('ncells', 'training, validation')
             self._ncells = ncells_tuple(**ntrainval)
         return self._ncells
 
-    def set_metadata(self):
-        if not hasattr(self, '_metadata') or not self._metadata:
+    @property
+    def metadata(self):
+        if not hasattr(self, '_metadata'):
             trainvalpairs = {
                 'training': self.training,
                 'validation': self.validation
             }
+            sub_metadata = []
             for k, pairs in trainvalpairs.items():
-                self._metadata[k] = self.aggregate_metadata(pairs)
+                meta = []
+                for _, l in pairs:
+                    info = json.loads(imread(l).meta.get('Description', '{}'))
+                    meta.append({field : value for field, value in info.items()})
+                    meta[-1]['cellLabels'] = aslist(meta[-1]['cellLabels'])
+                    meta[-1]['filename'] = l
+                    meta[-1]['train_val'] = k
 
-    def aggregate_metadata(self, pairs):
-        meta = []
-        for _, l in pairs:
-            info = json.loads(imread(l).meta.get('Description', '{}'))
-            self.meta.append({field : value for field, value in info.items()})
-            # cellLabels = info.get('cellLabels', []) or []
-            if type(meta[-1]['cellLabels']) is int:
-                meta[-1]['cellLabels'] = [meta[-1]['cellLabels']]
-        return meta
+                sub_metadata.append(pd.DataFrame(meta))
+                self._metadata = pd.concat(sub_metadata, axis=0, ignore_index=True)
+        return self._metadata
 
     def load(self, filename):
         with open(filename, 'rt') as f:
@@ -231,3 +230,16 @@ class TrainValPairs(object):
     def __repr__(self):
         return 'TrainValPairs: {:d} training and {:d} validation pairs'.format(
             len(self.training), len(self.validation))
+
+
+def aslist(val):
+    '''
+    Helper function useful to convert int cell_ids to lists
+    '''
+    # Convenience fn to convert x to a list if not one already
+    if type(val) is int:
+        val = [val]
+    elif val is None:
+        val = []
+
+    return val
