@@ -133,17 +133,41 @@ class TrainValPairs(object):
             }
             sub_metadata = []
             for k, pairs in trainvalpairs.items():
-                meta = []
+                pair_meta = []
                 for _, l in pairs:
                     info = json.loads(imread(l).meta.get('Description', '{}'))
-                    meta.append({field : value for field, value in info.items()})
-                    meta[-1]['cellLabels'] = aslist(meta[-1]['cellLabels'])
-                    meta[-1]['filename'] = l
-                    meta[-1]['train_val'] = k
+                    pair_meta.append({field : value for field, value in info.items()})
+                    pair_meta[-1]['cellLabels'] = aslist(pair_meta[-1]['cellLabels'])
+                    pair_meta[-1]['filename'] = l
+                    pair_meta[-1]['train_val'] = k
 
-                sub_metadata.append(pd.DataFrame(meta))
+                sub_metadata.append(pd.DataFrame(pair_meta))
                 self._metadata = pd.concat(sub_metadata, axis=0, ignore_index=True)
         return self._metadata
+
+    @property
+    def traps(self, chunk_size = 5, min_tp = 3, trap_together=True):
+        ''' Group the data in chunks to use for cell tracking random forest cross-validation'''
+        df = self._metadata
+        traps = pd.DataFrame(df.sort_values(['tp']).groupby(
+            ['experimentID', 'position', 'trap'])['tp'].apply(list))
+        # The next parts are disabled while we find out why there are repeated metadatas
+        # traps = traps.sample(frac=1, random_state=42) # shuffle dataframe
+        # traps = find_continuous_tps(traps, chunk_size)
+        #TODO ALAN: Add split operation
+
+        if not trap_together: # shuffle after splitting rn chunks?
+            traps = traps.sample(frac=1, random_state=24)
+
+        self._traps = traps
+        return self._traps
+        # traps = traps.loc[traps.applymap(len)>min_tp]
+        # return tp_chunks
+
+
+
+
+
 
     def load(self, filename):
         with open(filename, 'rt') as f:
@@ -231,6 +255,7 @@ class TrainValPairs(object):
         return 'TrainValPairs: {:d} training and {:d} validation pairs'.format(
             len(self.training), len(self.validation))
 
+# ---------------- HELPER FUNCTIONS -----------------------
 
 def aslist(val):
     '''
@@ -243,3 +268,25 @@ def aslist(val):
         val = []
 
     return val
+
+def find_continuous_tps(traps, chunk_size):
+        tp_distance = traps.applymap(lambda x: np.subtract(x[1:], x[:-1]))
+        tp_distance.applymap(lambda x: [0 if dif > 1  else dif for dif in x])
+        traps['valid_chunks']= tp_distance.applymap(
+            lambda x: find_contiguous_ones(array = x, chunk_size = chunk_size))
+        return traps
+
+def find_contiguous_ones(array, chunk_size):
+    '''Finds the location of continuous ones in a list of ones and zeros.
+    Returns another list, with the ones summed into one value and all other
+    values as individual zeros'''
+    chunks_list = []
+    if len(array) >= chunk_size:
+        cumsum=0
+        for i in range(len(array)):
+            if array[i]==0 or i==len(array):
+                chunks_list.append(cumsum)
+                cumsum=0
+            else:
+                cumsum+=1
+    return chunks_list
