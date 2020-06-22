@@ -15,7 +15,6 @@ from .errors import LayoutError, UnpairedImagesError
 
 import pandas as pd
 from collections import Counter
-from itertools import chain
 
 def load_tiled_image(filename):
     tImg = imread(filename)
@@ -141,8 +140,10 @@ class TrainValPairs(object):
                     pair_meta[-1]['filename'] = l
                     pair_meta[-1]['train_val'] = k
 
+
                 sub_metadata.append(pd.DataFrame(pair_meta))
-                self._metadata = pd.concat(sub_metadata, axis=0, ignore_index=True)
+                sub_metadata[-1]['list_index'] = sub_metadata[-1].index
+            self._metadata = pd.concat(sub_metadata, axis=0, ignore_index=True)
         return self._metadata
 
     @property
@@ -161,13 +162,8 @@ class TrainValPairs(object):
 
         self._traps = traps
         return self._traps
-        # traps = traps.loc[traps.applymap(len)>min_tp]
+        # traps = traps.loc[traps.applymap(len)>min_tp] #clean up
         # return tp_chunks
-
-
-
-
-
 
     def load(self, filename):
         with open(filename, 'rt') as f:
