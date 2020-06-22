@@ -335,7 +335,7 @@ class SmoothedLabelAugmenter(Augmenter):
         for s in np.dsplit(lbl, lbl.shape[2]):
             s = np.squeeze(s)
             # Only smooth label if it is non-empty (allows for empty traps)
-            if s.sum() > 0:
+            if s.sum() > 0 and self.sigmafunc(s) > 0:
                 s = gaussian(binary_fill_holes(s), self.sigmafunc(s))
             lbl_stack += [s[..., np.newaxis]]
         lbl = np.concatenate(lbl_stack, axis=2)

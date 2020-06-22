@@ -1,7 +1,8 @@
 from pathlib import Path
 import shutil
 import json
-from typing import NamedTuple, Union
+import pickle
+from typing import NamedTuple, Union, Tuple
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.keras import backend as K
@@ -10,7 +11,7 @@ from tensorflow.python.keras.callbacks import (ModelCheckpoint, TensorBoard,
 from tensorflow.python.keras.models import load_model
 
 from .utils import (get_name, EncodableNamedTuple, find_file,
-                    as_python_object, jsonify)
+                    as_python_object, jsonify, schedule_steps)
 from .errors import BadParam, BadFile, BadType, BadProcess
 from .io import TrainValPairs
 from .preprocessing import robust_norm, seg_norm, SegmentationFlattening
@@ -20,6 +21,12 @@ from .losses import bce_dice_loss, dice_coeff
 from . import models
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
+
+OPT_WEIGHTS_FILE = 'weights.h5'
+INIT_WEIGHTS_FILE = 'init_weights.h5'
+FINAL_WEIGHTS_FILE = 'final_weights.h5'
+HISTORY_FILE = 'history.pkl'
+LOG_DIR = 'logs'
 
 
 def fix_tf_rtx_gpu_bug():
@@ -53,7 +60,8 @@ class BabyTrainerParameters(NamedTuple):
     train_val_pairs_file: str = 'train_val_pairs.json'
     smoothing_sigma_model_file: str = 'smoothing_sigma_model.json'
     flattener_file: str = 'flattener.json'
-    model_fn: str = 'msd_d80'
+    cnn_set: Tuple[str, ...] = ('msd_d80',)
+    cnn_fn: Union[None, str] = None
     batch_size: int = 8
     in_memory: bool = True
     xy_out: int = 80
@@ -74,7 +82,7 @@ class BabyTrainer(object):
         `SegmentationFlattening` object.
     """
 
-    def __init__(self, save_dir, params=None):
+    def __init__(self, save_dir, params=None, max_cnns=3):
 
         # Register the save dir
         save_dir = Path(save_dir)
@@ -91,6 +99,8 @@ class BabyTrainer(object):
             savename = save_dir / self._parameters_file
             if not savename.is_file():
                 shutil.copy(filename, savename)
+
+        self._max_cnns = max_cnns
 
     @property
     def parameters(self):
@@ -266,7 +276,25 @@ class BabyTrainer(object):
 
     @property
     def cnn_fn(self):
-        return getattr(models, self.parameters.model_fn)
+        if not hasattr(self, '_active_cnn_fn') or not self._active_cnn_fn:
+            self.cnn_fn = self.parameters.cnn_set[0]
+        return getattr(models, self._active_cnn_fn)
+
+    @cnn_fn.setter
+    def cnn_fn(self, fn):
+        if fn not in self.parameters.cnn_set:
+            raise BadType('That model is not in "parameters.cnn_set"')
+        if not hasattr(models, fn):
+            raise BadType('That is not a recognised model')
+        self._active_cnn_fn = fn
+
+    @property
+    def cnn_dir(self):
+        self.cnn_fn  # ensure that _active_cnn_fn is initialised
+        d = self.save_dir / self._active_cnn_fn
+        if not d.is_dir():
+            d.mkdir()
+        return d
 
     @property
     def cnn_name(self):
@@ -274,10 +302,27 @@ class BabyTrainer(object):
 
     @property
     def cnn(self):
-        if not hasattr(self, '_cnn') or not self._cnn:
+        if not hasattr(self, '_cnns') or not self._cnns:
+            self._cnns = {}
+        self.cnn_fn  # ensure that _active_cnn_fn is initialised
+        cnn_id = self._active_cnn_fn
+        if cnn_id not in self._cnns:
+            if len(self._cnns) > self._max_cnns:
+                # To avoid over-consuming memory reset graph
+                # TODO: ensure TF1/TF2 compat and check RTX bug
+                tf.keras.backend.clear_session()
+                self._cnns = {}
             self.train_gen.aug = self.train_aug
-            self._cnn = self.cnn_fn(self.train_gen, self.flattener)
-        return self._cnn
+            print('Loading "{}" CNN...'.format(self.cnn_name))
+            model = self.cnn_fn(self.train_gen, self.flattener)
+            self._cnns[cnn_id] = model
+
+            # Save initial weights if they haven't already been saved
+            filename = self.cnn_dir / INIT_WEIGHTS_FILE
+            if not filename.exists():
+                print('Saving initial weights...')
+                model.save_weights(str(filename))
+        return self._cnns[cnn_id]
 
     def fit_smoothing_model(self):
         pass
@@ -285,8 +330,53 @@ class BabyTrainer(object):
     def fit_flattener(self):
         pass
 
-    def fit_cnn(self):
-        pass
+    def fit_cnn(self, epochs=400, schedule=None, replace=False, extend=False):
+        # First check output names match current flattener names
+        assert (all([
+            m == f
+            for m, f in zip(self.cnn.output_names, self.flattener.names())
+        ]))
+
+        if schedule is None:
+            schedule = [(1e-3, epochs)]
+
+        finalfile = self.cnn_dir / FINAL_WEIGHTS_FILE
+        if extend:
+            self.cnn.load_weights(str(finalfile))
+        else:
+            initfile = self.cnn_dir / INIT_WEIGHTS_FILE
+            self.cnn.load_weights(str(initfile))
+
+        optfile = self.cnn_dir / OPT_WEIGHTS_FILE
+        if not replace and optfile.is_file():
+            raise BadProcess('Optimised weights already exist')
+
+        logdir = self.cnn_dir / LOG_DIR
+        callbacks = [
+            ModelCheckpoint(filepath=str(optfile),
+                            monitor='val_loss',
+                            save_best_only=True,
+                            verbose=1),
+            TensorBoard(log_dir=str(logdir)),
+            LearningRateScheduler(
+                lambda epoch: schedule_steps(epoch, schedule))
+        ]
+        self.train_gen.aug = self.train_aug
+        self.val_gen.aug = self.val_aug
+        history = self.cnn.fit_generator(generator=self.train_gen,
+                                         validation_data=self.val_gen,
+                                         epochs=epochs,
+                                         callbacks=callbacks)
+
+        # Save history
+        with open(self.cnn_dir / HISTORY_FILE, 'wb') as f:
+            pickle.dump({
+                'history': history.history,
+                'epoch': history.epoch
+            }, f)
+
+        print('Saving final weights...')
+        self.cnn.save_weights(str(finalfile))
 
     def fit_seg_params(self):
         pass
@@ -294,66 +384,6 @@ class BabyTrainer(object):
 
 class Nursery(BabyTrainer):
     pass
-
-
-def save_init(model, model_name):
-    filename = log_dir / '{}_init_weights.h5'.format(model_name)
-    if filename.exists():
-        print('Initial weights already saved.')
-    else:
-        print('Saving initial weights...')
-        model.save_weights(str(filename))
-
-
-def make_callbacks(subdir, schedule=[(1e-3, 400)]):
-    outdir = log_dir / subdir
-    weights_file = outdir / 'weights.hdf5'
-    assert not weights_file.exists(
-    ), 'Trained weights already exist for this subdir'
-
-    return [
-        ModelCheckpoint(filepath=str(weights_file),
-                        monitor='val_loss',
-                        save_best_only=True,
-                        verbose=1),
-        TensorBoard(log_dir=str(outdir / 'logs')),
-        LearningRateScheduler(lambda epoch: schedule_steps(epoch, schedule))
-    ]
-
-
-def save_history(subdir, history):
-    with open(log_dir / subdir / 'history.pkl', 'wb') as f:
-        pickle.dump({'history': history.history, 'epoch': history.epoch}, f)
-
-
-def train_model(model,
-                subdir,
-                model_name=None,
-                epochs=400,
-                schedule=None,
-                check=False):
-    # First check output names match current flattener names
-    assert (all(
-        [m == f for m, f in zip(model.output_names, flattener.names())]))
-
-    if schedule is None:
-        schedule = [(1e-3, epochs)]
-    if model_name is None:
-        model_name = subdir
-    init_weights_file = log_dir / '{}_init_weights.h5'.format(model_name)
-    assert init_weights_file.exists(
-    ), 'Initial weights have not been saved for this model'
-
-    model.load_weights(str(init_weights_file))
-
-    if check:
-        return
-
-    history = model.fit_generator(generator=train_gen,
-                                  validation_data=val_gen,
-                                  epochs=400,
-                                  callbacks=make_callbacks(subdir))
-    save_history(subdir, history)
 
 
 def load_history(subdir):

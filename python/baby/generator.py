@@ -12,7 +12,7 @@ from .preprocessing import robust_norm as preprocess_brightfield
 from .preprocessing import segoutline_flattening as preprocess_segim
 
 
-ImageLabelShape = namedtuple('ImageLabelShape', ('input', 'output'))
+ImageLabelShapes = namedtuple('ImageLabelShapes', ('input', 'output'))
 
 
 class ImageLabel(Sequence):
@@ -65,16 +65,16 @@ class ImageLabel(Sequence):
         return int(np.ceil(len(self.paths) / float(self.batch_size)))
 
     @property
-    def shape(self):
-        if not hasattr(self, '_shape') or not self._shape:
+    def shapes(self):
+        if not hasattr(self, '_shapes') or not self._shapes:
             if len(self.paths) == 0:
-                return ImageLabelShape(tuple(), tuple())
+                return ImageLabelShapes(tuple(), tuple())
 
             img, lbl = self.get_by_index(0)
             Nbatch = (self.batch_size,)
-            self._shape = ImageLabelShape(Nbatch + img.shape,
+            self._shapes = ImageLabelShapes(Nbatch + img.shape,
                                           Nbatch + lbl.shape)
-        return self._shape
+        return self._shapes
 
     def on_epoch_end(self):
         # Shuffle samples for next epoch
