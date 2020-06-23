@@ -13,17 +13,14 @@ from tensorflow.python.keras.models import load_model
 from .utils import (get_name, EncodableNamedTuple, find_file,
                     as_python_object, jsonify, schedule_steps)
 from .errors import BadParam, BadFile, BadType, BadProcess
-from .io import TrainValPairs, load_tiled_image
+from .io import TrainValPairs
 from .preprocessing import robust_norm, seg_norm, SegmentationFlattening
 from .augmentation import Augmenter, SmoothingSigmaModel, DownscalingAugmenter
 from .generator import ImageLabel
 from .losses import bce_dice_loss, dice_coeff
 from . import models
+from .track_trainer import TrackTrainer
 
-#Alan imports
-from .tracker import Tracker
-from scipy.ndimage import binary_fill_holes
-from skimage.measure import regionprops_table
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
 
@@ -331,7 +328,9 @@ class BabyTrainer(object):
 
     @property
     def ctrack_trainer(self):
-        self._trackTrainer = TrackingTrainer(self.data._metadata, self.data)
+        if not hasattr(self, '_track_trainer'):
+            self._track_trainer = TrackingTrainer(self.data._metadata, self.data)
+            return self._track_trainer
 
     def fit_smoothing_model(self):
         pass
@@ -393,92 +392,6 @@ class BabyTrainer(object):
 
 class Nursery(BabyTrainer):
     pass
-
-class TrackingTrainer(Tracker):
-    def __init__(self, meta, data=None, masks=None):
-        super().__init__()
-        self.meta = meta
-        self.meta.set_index(['position', 'trap', 'tp'], inplace=True)
-        self.data = data
-        if masks is None:
-            self.masks= [load_tiled_image(mask)[0] for
-                         bf, mask  in self.data.training]
-        self.process_traps()
-        self.gen_train_data()
-
-    def get_img_feats(self, img_array):
-        props_df = pd.DataFrame([
-            regionprops_table(img, properties=self.feats2use, cache=True)
-            for img in img_array
-        ]).applymap(lambda x: x[0])
-
-        return props_df
-
-    def gen_train(self):
-        '''
-        Generates the data for training using all the loaded images.
-        '''
-
-        traps = *map(
-            tuple, np.unique([ind[:2] for ind in self.meta.index], axis=0)),
-
-        train = *map(self.gen_train_from_trap, traps),
-        self.train = np.concatenate(train)
-
-    def gen_train_from_pair(self, pair_loc):
-        subdf = self.meta[['list_index', 'cellLabels']].loc(axis=0)[pair_loc]
-
-        truemat = np.equal.outer(*subdf['cellLabels'].values).reshape(-1)
-        propsmat = self.df_calc_feat_matrix(pair_loc).reshape(-1, self.nfeats)
-
-        return [x for x in zip(truemat, propsmat)]
-
-    def process_traps(self):
-        '''
-        Process all traps (run for finished experiments), combine results with location df and drop
-        unused columns.
-
-        Generates a region_proprieties DataFrame
-        '''
-
-        print('entra')
-        nindex = []
-        props_list = []
-        for ind, (index,
-                  lbl) in zip(self.meta.index,
-                               self.meta[['list_index', 'cellLabels']].values):
-            trapfeats = [
-                regionprops_table(self.masks[index][..., i].astype('int'),
-                                  properties=self.feats2use)  #
-                for i in range(len(lbl)) #TODO Continue here once metadata issue is fixed <2020-06-22 Mon>
-            ]
-            for cell, feats in zip(lbl, trapfeats):
-                nindex.append(ind + (cell, ))
-                props_list.append(feats)
-
-        out_dict = {key: [] for key in props_list[0].keys()}
-        nindex = pd.MultiIndex.from_tuples(nindex, names=self.cindices)
-
-        for cells_props in props_list:
-            for key, val in cells_props.items():
-                out_dict[key].append(val[0])
-
-        self.rprops = pd.DataFrame(out_dict, index=nindex)
-        self.rprop_keys = self.rprops.columns
-
-    def gen_train_from_trap(self, trap_loc):
-        subdf = self.meta[['list_index', 'cellLabels'
-                             ]].loc(axis=0)[trap_loc].sort_values('tp')
-        pairs = [
-            trap_loc + tuple((pair, ))
-            for pair in zip(subdf.index[:-1], subdf.index[1:])
-        ]
-
-        res_tuples = [
-            tup for pair in pairs for tup in self.gen_train_from_pair(pair)
-        ]
-
-        return res_tuples
 
 def load_history(subdir):
     with open(log_dir / subdir / 'history.pkl', 'rb') as f:

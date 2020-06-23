@@ -147,22 +147,24 @@ class TrainValPairs(object):
         return self._metadata
 
     @property
-    def traps(self, chunk_size = 5, min_tp = 3, trap_together=True):
+    def traps(self, chunk_size = 4, min_tp = 2, trap_together=True):
         ''' Group the data in chunks to use for cell tracking random forest cross-validation'''
-        df = self._metadata
+        df = self._metadata[self._metadata['train_val']=='training'] #TODO Reconsider this filter
         traps = pd.DataFrame(df.sort_values(['tp']).groupby(
             ['experimentID', 'position', 'trap'])['tp'].apply(list))
-        # The next parts are disabled while we find out why there are repeated metadatas
+        # Some of the next parts are disabled while we find out why there are repeated metadatas
         # traps = traps.sample(frac=1, random_state=42) # shuffle dataframe
-        # traps = find_continuous_tps(traps, chunk_size)
+        traps['tp_uniq'] = traps['tp'].apply(np.unique) #TODO remove this when metadata issue is fixed
+        traps['cont'] = find_continuous_tps(traps['tp_uniq'], chunk_size)
         #TODO ALAN: Add split operation
 
         if not trap_together: # shuffle after splitting rn chunks?
             traps = traps.sample(frac=1, random_state=24)
 
+        # remove non-continuous values
+        traps = traps.loc[traps['cont'].apply(len)>min_tp] #clean up
         self._traps = traps
         return self._traps
-        # traps = traps.loc[traps.applymap(len)>min_tp] #clean up
         # return tp_chunks
 
     def load(self, filename):
@@ -266,9 +268,9 @@ def aslist(val):
     return val
 
 def find_continuous_tps(traps, chunk_size):
-        tp_distance = traps.applymap(lambda x: np.subtract(x[1:], x[:-1]))
-        tp_distance.applymap(lambda x: [0 if dif > 1  else dif for dif in x])
-        traps['valid_chunks']= tp_distance.applymap(
+        tp_distance = traps.apply(lambda x: np.subtract(x[1:], x[:-1]))
+        tp_distance.apply(lambda x: [0 if dif > 1  else dif for dif in x])
+        traps['valid_chunks']= tp_distance.apply(
             lambda x: find_contiguous_ones(array = x, chunk_size = chunk_size))
         return traps
 
