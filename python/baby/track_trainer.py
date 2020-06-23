@@ -184,4 +184,3 @@ class TrackTrainer(Tracker):
     def save_model(self, filename):
         f = open(filename, 'wb')
         pickle.dump(track_trainer.rf.best_estimator_)
-, f)
