@@ -15,8 +15,8 @@ from functools import reduce
 from operator import mul
 import numpy as np
 
-from python.baby.brain import BabyBrain
-from python.baby.crawler import BabyCrawler
+from baby.brain import BabyBrain
+from baby.crawler import BabyCrawler
 
 routes = web.RouteTableDef()
 
