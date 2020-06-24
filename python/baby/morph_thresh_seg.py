@@ -1,15 +1,15 @@
 import numpy as np
 import itertools
 
+from scipy import ndimage
 
-from scipy.ndimage import binary_fill_holes
-
-from typing import Union, Iterable, Any, Optional, List
+from typing import Union, Iterable, Any, Optional, List, NamedTuple
 
 from .errors import BadParam
 from .segmentation import mask_containment, iterative_erosion, thresh_seg, \
     binary_edge, single_region_prop, outline_to_radial, get_edge_scores, \
     refine_radial_grouped, iterative_dilation, draw_radial
+from .volume import volume
 
 
 # class ContainmentFunction:
@@ -58,9 +58,9 @@ class Cell:
             rprop = single_region_prop(self.mask)
             coords, edge = outline_to_radial(self.edge, rprop,
                                              return_outline=True)
-            self._mask = binary_fill_holes(self.edge)
+            self.mask = ndimage.binary_fill_holes(self.edge)
         else:
-            edge = e | (border_rect & m)
+            edge = self._edge | (self.border_rect & self.mask)
             coords = tuple()
         self._coords = coords
         self._edge = edge
@@ -76,6 +76,10 @@ class Cell:
         if self._coords is None:
             self._calculate_properties(fit_radial=self.fit_radial)
         return self._coords
+
+    def volume(self, method='conical'):
+        return volume(self.edge, method=method)
+
 
 class Target:
     def __init__(self, name, flattener, desired_targets=None):
@@ -121,9 +125,7 @@ class Target:
                     'filled']
             else:
                 raise ValueError('No interior or filled target specified in '
-                             f'available targets {self.available_targets}')
-
-
+                                 f'available targets {self.available_targets}')
 
     @property
     def definition(self):
@@ -208,7 +210,7 @@ class Group:
         if self.edge_sub_dilations is not None and max_n_erode == 0:
             return 1
         else:
-            return max_n_erode # Todo: add number of dilations?
+            return max_n_erode  # Todo: add number of dilations?
 
     @property
     def n_cells(self):
@@ -284,7 +286,7 @@ class MorphSegGrouped:
                  use_group_thresh=False, group_thresh_expansion=0.,
                  edge_sub_dilations=None,
                  containment_thresh=0.8, containment_func=mask_containment,
-                 return_masks=False, return_coords=False):
+                 return_masks=False, return_coords=False, return_volume=False):
         """
 
         :param flattener:
@@ -313,6 +315,7 @@ class MorphSegGrouped:
         self.containment_func = containment_func
         self.return_masks = return_masks
         self.return_coords = return_coords
+        self.return_volume = return_volume
 
         self.flattener = flattener
 
@@ -336,13 +339,13 @@ class MorphSegGrouped:
         for i, target_names in enumerate(cellgroups):
             targets = [Target(name, flattener) for name in target_names]
             self.groups.append(Group(targets, min_area=min_area[i],
-                                 use_thresh=use_group_thresh,
-                                 thresh_expansion=group_thresh_expansion,
-                                 interior_threshold=interior_threshold[i],
-                                 n_closing=n_closing[i],
-                                 n_opening=n_opening[i],
-                                 connectivity=connectivity[i],
-                                 edge_sub_dilations=edge_sub_dilations[i]))
+                                     use_thresh=use_group_thresh,
+                                     thresh_expansion=group_thresh_expansion,
+                                     interior_threshold=interior_threshold[i],
+                                     n_closing=n_closing[i],
+                                     n_opening=n_opening[i],
+                                     connectivity=connectivity[i],
+                                     edge_sub_dilations=edge_sub_dilations[i]))
         self.group_segs = None
 
     # Todo: This is ideally the form of the input argument
@@ -381,7 +384,7 @@ class MorphSegGrouped:
                     upper_group.cells.remove(upper)
 
     # Todo: rename
-    def extract_edges(self, pred, shape, refine_outlines):
+    def extract_edges(self, pred, shape, refine_outlines, return_volume):
         masks = [[]]
         if refine_outlines:
             # Refine outlines using edge predictions
@@ -399,19 +402,28 @@ class MorphSegGrouped:
             edges = [draw_radial(radii, angles, centre, shape)
                      for centre, radii, angles in coords]
             if self.return_masks:
-                masks = [binary_fill_holes(e) for e in edges]
+                masks = [ndimage.binary_fill_holes(e) for e in edges]
+            if return_volume:
+                volumes = [volume(edge, method='conical') for edge in edges]
+                return edges, masks, coords, volumes
+            return edges, masks, coords
         else:
             # Extract edges, masks and AC coordinates from initial segmentation
-            outputs = [(cell.edge, cell.mask, cell.coords)
-                       for group in self.groups
-                       for cell in group.cells]
-            if len(outputs) > 0:
-                edges, masks, coords = zip(*outputs)
+            if return_volume:
+                outputs = [(cell.edge, cell.mask, cell.coords, cell.volume)
+                           for group in self.groups
+                           for cell in group.cells]
             else:
-                edges, masks, coords = 3 * [[]]
-        return edges, masks, coords
+                outputs = [(cell.edge, cell.mask, cell.coords)
+                           for group in self.groups
+                           for cell in group.cells]
 
-    def segment(self, pred, refine_outlines=False):
+            if len(outputs) > 0:
+                return zip(*outputs)
+            else:
+                return 4 * [[]] if return_volume else 3 * [[]]
+
+    def segment(self, pred, refine_outlines=False, return_volume=False):
         """
         Take the output of the neural network and turn it into an instance
         segmentation output.
@@ -428,7 +440,7 @@ class MorphSegGrouped:
                 '"pred" arg does not match number of flattener targets')
         shape = np.squeeze(pred[0]).shape
         border_rect = np.pad(
-            np.zeros(tuple(x - 1 for x in shape), dtype='bool'),
+            np.zeros(tuple(x - 2 for x in shape), dtype='bool'),
             pad_width=1, mode='constant',
             constant_values=True)
 
@@ -441,13 +453,29 @@ class MorphSegGrouped:
 
         # Remove cells that are duplicated in several groups
         self.remove_duplicates()
-        edges, masks, coords = self.extract_edges(pred, shape,
-                                                  refine_outlines=refine_outlines)
+        # edges, masks, coords, volumes = \
+        result = self.extract_edges(pred, shape,
+                                    refine_outlines=refine_outlines,
+                                    return_volume=return_volume)
 
-        output = tuple(itertools.compress([edges, masks, coords],
-                                          [True, self.return_masks,
-                                           self.return_coords]))
-        if len(output) > 1:
-            return output
-        else:
-            return output[0]
+        # Todo: return_masks and return_coords seem useless as always set
+        #  necessary for brain.segment and tracker
+        output = SegmentationOutput(*result)
+                                                       # [True,
+                                                       #  self.return_masks,
+                                                       #  self.return_coords,
+                                                       #  self.return_volume]))
+
+        return output
+        # if len(output) > 1:
+        #     return output
+        # else:
+        #     return output[0]
+
+
+class SegmentationOutput(NamedTuple):
+    edges: list
+    masks: list = []
+    coords: list = []
+    volume: list = []
+

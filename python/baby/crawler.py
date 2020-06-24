@@ -20,7 +20,7 @@ class BabyCrawler(object):
 
     def step(self, bf_img_batch, with_edgemasks=False,
              assign_mothers=False, return_baprobs=False,
-             refine_outlines=False, **kwargs):
+             refine_outlines=False, return_volume=False):
         '''Process the next batch of input images
 
         :param bf_img_batch: a list of ndarray with shape (X, Y, Z), or
@@ -46,7 +46,8 @@ class BabyCrawler(object):
             tracker_states=self.tracker_states, yield_next=True,
             yield_edgemasks=with_edgemasks,
             assign_mothers=assign_mothers, return_baprobs=return_baprobs,
-            refine_outlines=refine_outlines
+            refine_outlines=refine_outlines,
+            return_volume=return_volume
         )
 
         for i, (seg, state) in enumerate(seg_trk_gen):
