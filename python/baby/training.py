@@ -6,6 +6,7 @@ from typing import NamedTuple, Union, Tuple
 import numpy as np
 from scipy.signal import savgol_filter
 from matplotlib.colors import to_rgba
+from matplotlib import pyplot as plt
 import tensorflow as tf
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras.callbacks import (ModelCheckpoint, TensorBoard,
@@ -22,7 +23,6 @@ from .generator import ImageLabel
 from .losses import bce_dice_loss, dice_coeff
 from . import models
 from .track_trainer import TrackTrainer
-
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
 
@@ -64,7 +64,7 @@ class BabyTrainerParameters(NamedTuple):
     train_val_pairs_file: str = 'train_val_pairs.json'
     smoothing_sigma_model_file: str = 'smoothing_sigma_model.json'
     flattener_file: str = 'flattener.json'
-    cnn_set: Tuple[str, ...] = ('msd_d80',)
+    cnn_set: Tuple[str, ...] = ('msd_d80', 'unet_4s')
     cnn_fn: Union[None, str] = None
     batch_size: int = 8
     in_memory: bool = True
@@ -315,7 +315,9 @@ class BabyTrainer(object):
                 # To avoid over-consuming memory reset graph
                 # TODO: ensure TF1/TF2 compat and check RTX bug
                 tf.keras.backend.clear_session()
+                # Reset any potentially loaded models
                 self._cnns = {}
+                self._opt_cnn = None
             self.train_gen.aug = self.train_aug
             print('Loading "{}" CNN...'.format(self.cnn_name))
             model = self.cnn_fn(self.train_gen, self.flattener)
@@ -329,9 +331,52 @@ class BabyTrainer(object):
         return self._cnns[cnn_id]
 
     @property
+    def histories(self):
+        # Always get the most up-to-date version from disk
+        hdict = {}
+        active_cnn_fn = getattr(self, '_active_cnn_fn', None)
+        try:
+            for cnn_id in self.parameters.cnn_set:
+                self.cnn_fn = cnn_id
+                history_file = self.cnn_dir / HISTORY_FILE
+                if not history_file.exists():
+                    continue
+                with open(history_file, 'rb') as f:
+                    history = pickle.load(f)
+                history['name'] = self.cnn_name
+                history['file'] = history_file
+                hdict[cnn_id] = history
+        finally:
+            self._active_cnn_fn = active_cnn_fn
+        return hdict
+
+    @property
+    def cnn_opt_dir(self):
+        history = min(self.histories.values(),
+                      default=None,
+                      key=lambda x: min(x['history']['val_loss']))
+        if not history:
+            raise BadProcess('No trained CNN models found')
+        return history['file'].parent
+
+    @property
+    def cnn_opt(self):
+        if not getattr(self, '_opt_cnn', None):
+            opt_dir = self.cnn_opt_dir
+            opt_file = opt_dir / OPT_WEIGHTS_FILE
+            if not opt_file.exists():
+                raise BadProcess(
+                    'Optimised model for {} model is missing'.format(
+                        opt_dir.name))
+            self._opt_cnn = load_model(str(opt_file),
+                                       custom_objects=custom_objects)
+        return self._opt_cnn
+
+    @property
     def ctrack_trainer(self):
         if not hasattr(self, '_track_trainer'):
-            self._track_trainer = TrackingTrainer(self.data._metadata, self.data)
+            self._track_trainer = TrackingTrainer(self.data._metadata,
+                                                  self.data)
             return self._track_trainer
 
     def fit_smoothing_model(self):
@@ -390,41 +435,32 @@ class BabyTrainer(object):
 
     def plot_histories(self,
                        key='loss',
-                       log=False,
+                       log=True,
                        window=21,
                        ax=None,
-                       legend=False):
+                       save=True,
+                       legend=True):
+        if save:
+            fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
         if ax is None:
-            from matplotlib import pyplot as plt
             ax = plt.gca()
 
         max_epoch = 1
-        active_cnn_fn = None
-        if hasattr(self, '_active_cnn_fn'):
-            active_cnn_fn = self._active_cnn_fn
-        try:
-            for cnn_name in self.parameters.cnn_set:
-                self.cnn_fn = cnn_name
-                history_file = self.cnn_dir / HISTORY_FILE
-                if not history_file.exists():
-                    continue
-                with open(history_file, 'rb') as f:
-                    history = pickle.load(f)
-                epoch = history['epoch']
-                max_epoch = max([max_epoch, max(epoch)])
-                val = history['history']['val_' + key]
-                hndl = ax.plot(epoch,
-                               savgol_filter(val, window, 3),
-                               label=self.cnn_name + ' Val')
-                val = history['history'][key]
-                colour = to_rgba(hndl[0].get_color(), 0.7)
-                ax.plot(epoch,
-                        savgol_filter(val, window, 3),
-                        ':',
-                        color=colour,
-                        label=self.cnn_name + ' Train')
-        finally:
-            self._active_cnn_fn = active_cnn_fn
+        hdict = self.histories
+        for history in hdict.values():
+            epoch = history['epoch']
+            max_epoch = max([max_epoch, max(epoch)])
+            val = history['history']['val_' + key]
+            hndl = ax.plot(epoch,
+                           savgol_filter(val, window, 3),
+                           label=history['name'] + ' Val')
+            val = history['history'][key]
+            colour = to_rgba(hndl[0].get_color(), 0.7)
+            ax.plot(epoch,
+                    savgol_filter(val, window, 3),
+                    ':',
+                    color=colour,
+                    label=history['name'] + ' Train')
 
         ax.set(xlabel='Epochs',
                ylabel=key.replace('_', ' ').title(),
@@ -434,17 +470,16 @@ class BabyTrainer(object):
         if legend:
             ax.legend()
 
+        if save:
+            fig.savefig(self.save_dir / 'histories_{}.png'.format(key))
+            plt.close(fig)
+
     def fit_seg_params(self):
         pass
 
 
 class Nursery(BabyTrainer):
     pass
-
-
-def load_history(subdir):
-    with open(log_dir / subdir / 'history.pkl', 'rb') as f:
-        return pickle.load(f)
 
 
 def get_best_and_worst(model, gen):

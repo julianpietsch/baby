@@ -3,7 +3,7 @@ from tensorflow.python.keras.optimizers import Adam
 from tensorflow.python.keras.layers import Input
 
 from .utils import named_obj
-from .layers import msd_block, make_outputs
+from .layers import msd_block, unet_block, make_outputs
 from .losses import bce_dice_loss, dice_coeff
 
 
@@ -31,3 +31,8 @@ def named_model_fn(name):
 @named_model_fn('MSD D80')
 def msd_d80(inputs):
     return msd_block(inputs, 80, 1, [1, 2, 4, 8])
+
+
+@named_model_fn('Unet 4s')
+def unet_4s(inputs):
+    return unet_block(inputs, [8, 16, 32, 64], batchnorm=True)
