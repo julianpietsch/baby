@@ -4,6 +4,8 @@ import json
 import pickle
 from typing import NamedTuple, Union, Tuple
 import numpy as np
+from scipy.signal import savgol_filter
+from matplotlib.colors import to_rgba
 import tensorflow as tf
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras.callbacks import (ModelCheckpoint, TensorBoard,
@@ -387,6 +389,52 @@ class BabyTrainer(object):
         print('Saving final weights...')
         self.cnn.save_weights(str(finalfile))
 
+    def plot_histories(self,
+                       key='loss',
+                       log=False,
+                       window=21,
+                       ax=None,
+                       legend=False):
+        if ax is None:
+            from matplotlib import pyplot as plt
+            ax = plt.gca()
+
+        max_epoch = 1
+        active_cnn_fn = None
+        if hasattr(self, '_active_cnn_fn'):
+            active_cnn_fn = self._active_cnn_fn
+        try:
+            for cnn_name in self.parameters.cnn_set:
+                self.cnn_fn = cnn_name
+                history_file = self.cnn_dir / HISTORY_FILE
+                if not history_file.exists():
+                    continue
+                with open(history_file, 'rb') as f:
+                    history = pickle.load(f)
+                epoch = history['epoch']
+                max_epoch = max([max_epoch, max(epoch)])
+                val = history['history']['val_' + key]
+                hndl = ax.plot(epoch,
+                               savgol_filter(val, window, 3),
+                               label=self.cnn_name + ' Val')
+                val = history['history'][key]
+                colour = to_rgba(hndl[0].get_color(), 0.7)
+                ax.plot(epoch,
+                        savgol_filter(val, window, 3),
+                        ':',
+                        color=colour,
+                        label=self.cnn_name + ' Train')
+        finally:
+            self._active_cnn_fn = active_cnn_fn
+
+        ax.set(xlabel='Epochs',
+               ylabel=key.replace('_', ' ').title(),
+               xlim=[0, max_epoch])
+        if log:
+            ax.set_yscale('log')
+        if legend:
+            ax.legend()
+
     def fit_seg_params(self):
         pass
 
@@ -394,15 +442,18 @@ class BabyTrainer(object):
 class Nursery(BabyTrainer):
     pass
 
+
 class TrackingTrainer(Tracker):
+
     def __init__(self, meta, data=None, masks=None):
         super().__init__()
         self.meta = meta
         self.meta.set_index(['position', 'trap', 'tp'], inplace=True)
         self.data = data
         if masks is None:
-            self.masks= [load_tiled_image(mask)[0] for
-                         bf, mask  in self.data.training]
+            self.masks = [
+                load_tiled_image(mask)[0] for bf, mask in self.data.training
+            ]
         self.process_traps()
         self.gen_train_data()
 
@@ -419,8 +470,8 @@ class TrackingTrainer(Tracker):
         Generates the data for training using all the loaded images.
         '''
 
-        traps = *map(
-            tuple, np.unique([ind[:2] for ind in self.meta.index], axis=0)),
+        traps = *map(tuple,
+                     np.unique([ind[:2] for ind in self.meta.index], axis=0)),
 
         train = *map(self.gen_train_from_trap, traps),
         self.train = np.concatenate(train)
@@ -446,14 +497,16 @@ class TrackingTrainer(Tracker):
         props_list = []
         for ind, (index,
                   lbl) in zip(self.meta.index,
-                               self.meta[['list_index', 'cellLabels']].values):
+                              self.meta[['list_index', 'cellLabels']].values):
             trapfeats = [
                 regionprops_table(self.masks[index][..., i].astype('int'),
                                   properties=self.feats2use)  #
-                for i in range(len(lbl)) #TODO Continue here once metadata issue is fixed <2020-06-22 Mon>
+                for i in range(
+                    len(lbl)
+                )  #TODO Continue here once metadata issue is fixed <2020-06-22 Mon>
             ]
             for cell, feats in zip(lbl, trapfeats):
-                nindex.append(ind + (cell, ))
+                nindex.append(ind + (cell,))
                 props_list.append(feats)
 
         out_dict = {key: [] for key in props_list[0].keys()}
@@ -468,9 +521,9 @@ class TrackingTrainer(Tracker):
 
     def gen_train_from_trap(self, trap_loc):
         subdf = self.meta[['list_index', 'cellLabels'
-                             ]].loc(axis=0)[trap_loc].sort_values('tp')
+                          ]].loc(axis=0)[trap_loc].sort_values('tp')
         pairs = [
-            trap_loc + tuple((pair, ))
+            trap_loc + tuple((pair,))
             for pair in zip(subdf.index[:-1], subdf.index[1:])
         ]
 
@@ -479,6 +532,7 @@ class TrackingTrainer(Tracker):
         ]
 
         return res_tuples
+
 
 def load_history(subdir):
     with open(log_dir / subdir / 'history.pkl', 'rb') as f:
