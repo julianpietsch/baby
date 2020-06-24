@@ -2,9 +2,8 @@ import numpy as np
 import itertools
 
 from scipy import ndimage
-from dataclasses import dataclass, field
 
-from typing import Union, Iterable, Any, Optional, List
+from typing import Union, Iterable, Any, Optional, List, NamedTuple
 
 from .errors import BadParam
 from .segmentation import mask_containment, iterative_erosion, thresh_seg, \
@@ -59,9 +58,9 @@ class Cell:
             rprop = single_region_prop(self.mask)
             coords, edge = outline_to_radial(self.edge, rprop,
                                              return_outline=True)
-            self._mask = ndimage.binary_fill_holes(self.edge)
+            self.mask = ndimage.binary_fill_holes(self.edge)
         else:
-            edge = e | (border_rect & m)
+            edge = self._edge | (self.border_rect & self.mask)
             coords = tuple()
         self._coords = coords
         self._edge = edge
@@ -441,7 +440,7 @@ class MorphSegGrouped:
                 '"pred" arg does not match number of flattener targets')
         shape = np.squeeze(pred[0]).shape
         border_rect = np.pad(
-            np.zeros(tuple(x - 1 for x in shape), dtype='bool'),
+            np.zeros(tuple(x - 2 for x in shape), dtype='bool'),
             pad_width=1, mode='constant',
             constant_values=True)
 
@@ -474,9 +473,9 @@ class MorphSegGrouped:
         #     return output[0]
 
 
-@dataclass
-class SegmentationOutput:
+class SegmentationOutput(NamedTuple):
     edges: list
-    masks: list = field(default_factory=list)
-    coords: list = field(default_factory=list)
-    volume: list = field(default_factory=list)
+    masks: list = []
+    coords: list = []
+    volume: list = []
+
