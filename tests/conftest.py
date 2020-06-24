@@ -1,13 +1,10 @@
-import pytest
-
 from pathlib import Path
-import json
 
-from baby.io import load_paired_images
+import baby
+import pytest
 from baby.brain import BabyBrain
+from baby.io import load_paired_images
 
-BASE_DIR = Path(__file__).parents[1]
-MODEL_DIR = BASE_DIR / 'models'
 IMAGE_DIR = Path(__file__).parent / 'images'
 
 
@@ -25,6 +22,13 @@ def pytest_addoption(parser):
         help="When running crawler tests, save the predictions to tmp dir"
     )
 
+@pytest.fixture(scope='session')
+def model_dir():
+    return baby.model_path()
+
+@pytest.fixture(scope='session')
+def image_dir():
+    return IMAGE_DIR
 
 @pytest.fixture(scope='session')
 def save_cnn_predictions(request):
@@ -48,10 +52,7 @@ def imgs_evolve60():
 
 @pytest.fixture(scope='session')
 def modelsets():
-    with open(BASE_DIR / 'modelsets.json') as f:
-        msets = json.load(f)
-    return msets
-
+    return baby.modelsets()
 
 @pytest.fixture(scope='session')
 def tf_session_graph():

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 
 import sys
-from os.path import join
-from time import perf_counter
 from contextlib import closing
 from itertools import chain, repeat
-import json
+from time import perf_counter
+
 import numpy as np
 
+import baby
 
 class Tee(object):
     def __init__(self, file=None):
@@ -91,7 +91,6 @@ def get_traps_timepoint(img, trap_locs, tile_size=81):
 def load_brain(timing, model='evolve_brightfield_60x_5z'):
     import tensorflow as tf
     from baby.brain import BabyBrain
-    from baby import brain
 
     # Compensate for bug in tensorflow + RTX series NVidia GPUs
     tf_version = tuple(int(v) for v in tf.version.VERSION.split('.'))
@@ -118,9 +117,7 @@ def load_brain(timing, model='evolve_brightfield_60x_5z'):
 
     timing.start('Loading BabyBrain with "{}" models...'.format(model),
                  hold_output=True)
-    models_path = brain.models_path
-    with open(join(models_path, '..', 'modelsets.json'), 'r') as f:
-        modelsets = json.load(f)
+    modelsets = baby.modelsets()
     bb = BabyBrain(session=tf_session, graph=tf_graph, **modelsets[model])
 
     timing.separator()
@@ -149,7 +146,8 @@ def load_seg_expt(timing, source_dir, pos=None):
     return seg_expt
 
 
-def crawl_expt(timing, seg_expt, bb, ntps=5, refine_outlines=True):
+def crawl_expt(timing, seg_expt, bb, ntps=5, refine_outlines=True,
+               return_volume=False):
     """Crawl through time points
 
     :param timing: instance of TimingLogger
@@ -181,7 +179,8 @@ def crawl_expt(timing, seg_expt, bb, ntps=5, refine_outlines=True):
         timing.start('Stepping crawler for {:d} traps...'.format(len(tp_traps)))
         output.append(crawler.step(
             tp_traps, with_edgemasks=True,
-            assignbuds=True, refine_outlines=refine_outlines
+            assign_mothers=True, refine_outlines=refine_outlines,
+            return_volume=return_volume
         ))
         timing.finish()
     outer_timing.finish()
@@ -197,9 +196,8 @@ def subtask_timings(timing, seg_expt, bb, ntps=5, refine_outlines=True,
     :param bb: instance of BabyBrain
     :param ntps: maximum number of time points to crawl through if available
     """
-    from baby.utils import batch_iterator, split_batch_pred
-    from baby.segmentation import morph_seg_grouped
     from baby.preprocessing import robust_norm
+    from baby.utils import split_batch_pred, batch_iterator
 
     expt = seg_expt.raw_expt
     ntps = min(ntps, expt.shape[1])
@@ -227,6 +225,7 @@ def subtask_timings(timing, seg_expt, bb, ntps=5, refine_outlines=True,
     cnn_outputs = []
     for tp in range(ntps):
         timing.start('Running CNN on time point {:d}...'.format(tp + 1))
+
         cnn_outputs.append(list(chain(*[
             split_batch_pred(bb.morph_predict(batch))
             for batch in batch_iterator(tps_traps[tp])
@@ -239,10 +238,11 @@ def subtask_timings(timing, seg_expt, bb, ntps=5, refine_outlines=True,
         timing.start('Segmenting time point {:d}...'.format(tp + 1))
         seg_masks = []
         for cnn_output in cnn_outputs[tp]:
-            _, masks, *other = bb.morph_segmenter.segment(
+            seg_result = bb.morph_segmenter.segment(
                 cnn_output, refine_outlines=refine_outlines,
                 return_volume=return_volume)
-            seg_masks.append(masks)
+            if seg_result.masks is not None: #Todo: shouldn't be necessary
+                seg_masks.append(seg_result.masks)
         tp_seg_masks.append(seg_masks)
         timing.finish()
 
@@ -313,6 +313,7 @@ if __name__ == "__main__":
         timing.separator()
 
         output = crawl_expt(timing, seg_expt, bb, ntps=options.ntps,
-                            refine_outlines=options.refine_outlines)
+                            refine_outlines=options.refine_outlines,
+                            return_volume=options.return_volume)
 
         timing.separator()

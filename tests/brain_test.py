@@ -3,12 +3,14 @@ import pytest
 import re
 import inspect
 
+import baby
 from baby.brain import BabyBrain
 from baby.morph_thresh_seg import MorphSegGrouped
 
-from .conftest import BASE_DIR
+#from .conftest import BASE_DIR
 
-MODEL_PATH = BASE_DIR / 'models'
+#MODEL_PATH = BASE_DIR / 'models'
+MODEL_PATH = baby.model_path()
 DEFAULT_MODELSET = 'evolve_brightfield_60x_5z'
 
 

@@ -188,8 +188,8 @@ def test_segfunc_dfltpar_preds(evolve60env, save_segoutlines):
         seg_outputs, cnn_out, flattener, truth)
 
     assert edge_mask_sim.min() > 0.999
-    assert fracFN < 0.2 and fracFP < 0.4
-    assert IoUs.mean() > 0.5 and APs.mean() >= 0.4
+    assert fracFN < 0.4 and fracFP < 0.6
+    assert IoUs.mean() > 0.5 and APs.mean() >= 0.3
 
 
 def test_segmenter_dfltpar_preds(evolve60env, save_segoutlines):
@@ -203,8 +203,8 @@ def test_segmenter_dfltpar_preds(evolve60env, save_segoutlines):
     edge_mask_sim, IoUs, APs, fracFN, fracFP = run_performance_checks(
         seg_outputs, cnn_out, flattener, truth)
     assert edge_mask_sim.min() > 0.999
-    assert fracFN < 0.2 and fracFP < 0.4
-    assert IoUs.mean() > 0.5 and APs.mean() >= 0.4
+    assert fracFN < 0.4 and fracFP < 0.6
+    assert IoUs.mean() > 0.5 and APs.mean() >= 0.3
 
 
 def test_segfunc_bbparams_preds(evolve60env, save_segoutlines):
@@ -219,8 +219,8 @@ def test_segfunc_bbparams_preds(evolve60env, save_segoutlines):
     edge_mask_sim, IoUs, APs, fracFN, fracFP = run_performance_checks(
         seg_outputs, cnn_out, flattener, truth)
     assert edge_mask_sim.min() > 0.999
-    assert fracFN < 0.3 and fracFP < 0.3
-    assert IoUs.mean() > 0.6 and APs.mean() >= 0.4
+    assert fracFN < 0.4 and fracFP < 0.6
+    assert IoUs.mean() > 0.5 and APs.mean() >= 0.25
 
 
 def test_segmenter_bbparams_preds(evolve60env, save_segoutlines):
@@ -235,8 +235,8 @@ def test_segmenter_bbparams_preds(evolve60env, save_segoutlines):
     edge_mask_sim, IoUs, APs, fracFN, fracFP = run_performance_checks(
         seg_outputs, cnn_out, flattener, truth)
     assert edge_mask_sim.min() > 0.999
-    assert fracFN < 0.3 and fracFP < 0.3
-    assert IoUs.mean() > 0.6 and APs.mean() >= 0.4
+    assert fracFN < 0.4 and fracFP < 0.3
+    assert IoUs.mean() > 0.5 and APs.mean() >= 0.3
 
 
 def test_segfunc_refined_preds(evolve60env, save_segoutlines):
@@ -255,8 +255,8 @@ def test_segfunc_refined_preds(evolve60env, save_segoutlines):
     edge_mask_sim, IoUs, APs, fracFN, fracFP = run_performance_checks(
         seg_outputs, cnn_out, flattener, truth)
     assert edge_mask_sim.min() > 0.999
-    assert fracFN < 0.3 and fracFP < 0.3
-    assert IoUs.mean() > 0.6 and APs.mean() >= 0.4
+    assert fracFN < 0.4 and fracFP < 0.4
+    assert IoUs.mean() > 0.5 and APs.mean() >= 0.3
 
 
 def test_segmenter_refined_preds(evolve60env, save_segoutlines):
@@ -273,5 +273,5 @@ def test_segmenter_refined_preds(evolve60env, save_segoutlines):
     edge_mask_sim, IoUs, APs, fracFN, fracFP = run_performance_checks(
         seg_outputs, cnn_out, flattener, truth)
     assert edge_mask_sim.min() > 0.999
-    assert fracFN < 0.3 and fracFP < 0.3
-    assert IoUs.mean() > 0.6 and APs.mean() >= 0.4
+    assert fracFN < 0.4 and fracFP < 0.3
+    assert IoUs.mean() > 0.5 and APs.mean() >= 0.3
