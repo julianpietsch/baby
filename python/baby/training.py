@@ -327,9 +327,9 @@ class BabyTrainer(object):
         return self._cnns[cnn_id]
 
     @property
-    def ctrack_trainer(self):
+    def track_trainer(self):
         if not hasattr(self, '_track_trainer'):
-            self._track_trainer = TrackingTrainer(self.data._metadata, self.data)
+            self._track_trainer = TrackTrainer(self.data._metadata, self.data)
             return self._track_trainer
 
     def fit_smoothing_model(self):
