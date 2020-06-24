@@ -22,7 +22,7 @@ from .augmentation import Augmenter, SmoothingSigmaModel, DownscalingAugmenter
 from .generator import ImageLabel
 from .losses import bce_dice_loss, dice_coeff
 from . import models
-from .track_trainer import TrackTrainer
+from .track_trainer import TrackTrainer, BudTrainer
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
 
@@ -372,12 +372,16 @@ class BabyTrainer(object):
                                        custom_objects=custom_objects)
         return self._opt_cnn
 
-    @property
-    def ctrack_trainer(self):
+    def track_trainer(self):
         if not hasattr(self, '_track_trainer'):
-            self._track_trainer = TrackingTrainer(self.data._metadata,
-                                                  self.data)
+            self._track_trainer = TrackTrainer(self.data._metadata, self.data)
             return self._track_trainer
+
+    @property
+    def bud_trainer(self):
+        if not hasattr(self, '_track_trainer'):
+            self._bud_trainer = BudTrainer(self.data._metadata, self.data)
+            return self._bud_trainer
 
     def fit_smoothing_model(self):
         pass
