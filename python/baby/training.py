@@ -23,6 +23,7 @@ from .generator import ImageLabel
 from .losses import bce_dice_loss, dice_coeff
 from . import models
 from .track_trainer import TrackTrainer, BudTrainer
+from bud_test import BudTrainer
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import numpy as np
 import pandas as pd
+import pickle
 
 from .tracker import Tracker
 from .io import load_tiled_image
