@@ -1,14 +1,17 @@
-from pathlib import Path
-import shutil
 import json
 import pickle
+import shutil
+from pathlib import Path
 from typing import NamedTuple, Union, Tuple
+
 import numpy as np
 import tensorflow as tf
-from tensorflow.python.keras import backend as K
+
+if tf.__version__.startswith('2'):
+    tf.compat.v1.disable_eager_execution()
+
 from tensorflow.python.keras.callbacks import (ModelCheckpoint, TensorBoard,
                                                LearningRateScheduler)
-from tensorflow.python.keras.models import load_model
 
 from .utils import (get_name, EncodableNamedTuple, find_file,
                     as_python_object, jsonify, schedule_steps)
@@ -84,10 +87,20 @@ class BabyTrainer(object):
         `SegmentationFlattening` object.
     """
 
-    def __init__(self, save_dir, params=None, max_cnns=3):
+    def __init__(self, save_dir, base_dir=None, params=None, max_cnns=3):
 
         # Register the save dir
+        if base_dir is not None:
+            base_dir = Path(base_dir)
+            if not base_dir.is_dir():
+                raise BadParam('"base_dir" must be a valid directory or None')
+        else:
+            base_dir = Path.cwd()
+        self.base_dir = base_dir
+        # All other directories are relative to the base dir
         save_dir = Path(save_dir)
+        if not save_dir.is_absolute():
+            save_dir = base_dir / save_dir
         if not save_dir.is_dir():
             raise BadParam('"save_dir" must be a valid directory')
         self.save_dir = save_dir
@@ -138,7 +151,7 @@ class BabyTrainer(object):
             self._impairs = TrainValPairs()
             pairs_file = self.save_dir / self.parameters.train_val_pairs_file
             if pairs_file.is_file():
-                self._impairs.load(pairs_file)
+                self._impairs.load(pairs_file, self.base_dir)
         return self._impairs
 
     @data.setter
@@ -146,7 +159,7 @@ class BabyTrainer(object):
         if isinstance(train_val_pairs, str):
             pairs_file = find_file(train_val_pairs, self.save_dir, 'data')
             train_val_pairs = TrainValPairs()
-            train_val_pairs.load(pairs_file)
+            train_val_pairs.load(pairs_file, self.base_dir)
         if not isinstance(train_val_pairs, TrainValPairs):
             raise BadType('"data" must be of type "baby.io.TrainValPairs"')
         self._impairs = train_val_pairs
@@ -165,7 +178,8 @@ class BabyTrainer(object):
                 raise BadProcess('No training images have been added')
             if len(self.data.validation) == 0:
                 raise BadProcess('No validation images have been added')
-            self.data.save(self.save_dir / p.train_val_pairs_file)
+            # Todo restore save after debug
+            #self.data.save(self.save_dir / p.train_val_pairs_file)
 
             # Initialise generators for the training and validation images
             # NB: these also check to make sure all the specified images exist

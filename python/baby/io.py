@@ -1,20 +1,20 @@
 import json
 import re
-from pathlib import Path
-from fnmatch import translate as glob_to_re
-from os import walk
+from collections import Counter
+from collections import namedtuple
 from itertools import groupby
-from functools import namedtuple
+from pathlib import Path
+from typing import Union
+
 import numpy as np
-from imageio import imread, imwrite
+import pandas as pd
 from PIL.PngImagePlugin import PngInfo
+from imageio import imread, imwrite
 from sklearn.model_selection import train_test_split
 
-from .utils import PathEncoder
 from .errors import LayoutError, UnpairedImagesError
+from .utils import PathEncoder
 
-import pandas as pd
-from collections import Counter
 
 def load_tiled_image(filename):
     tImg = imread(filename)
@@ -118,7 +118,7 @@ class TrainValPairs(object):
     @property
     def ncells(self):
         if not hasattr(self, '_ncells') or not self._ncells:
-            ntrainval = Counter(self._metadata['train_val'])
+            ntrainval = Counter(self.metadata['train_val'])
             ncells_tuple = namedtuple('ncells', 'training, validation')
             self._ncells = ncells_tuple(**ntrainval)
         return self._ncells
@@ -134,8 +134,9 @@ class TrainValPairs(object):
             for k, pairs in trainvalpairs.items():
                 pair_meta = []
                 for _, l in pairs:
-                    info = json.loads(imread(l).meta.get('Description', '{}'))
-                    pair_meta.append({field : value for field, value in info.items()})
+                    info = json.loads(imread(l).meta.get(
+                        'Description', '{}'))
+                    pair_meta.append({field: value for field, value in info.items()})
                     pair_meta[-1]['cellLabels'] = aslist(pair_meta[-1]['cellLabels'])
                     pair_meta[-1]['filename'] = l
                     pair_meta[-1]['train_val'] = k
@@ -167,7 +168,9 @@ class TrainValPairs(object):
         return self._traps
         # return tp_chunks
 
-    def load(self, filename):
+    def load(self, filename, base_dir: Union[Path, str] = './'):
+        if isinstance(base_dir, str):
+            base_dir = Path(base_dir)
         with open(filename, 'rt') as f:
             trainval = json.load(f)
         if 'train_data' in trainval and 'val_data' in trainval:
@@ -176,17 +179,23 @@ class TrainValPairs(object):
         else:
             train_pairs = trainval.get('training', [])
             val_pairs = trainval.get('validation', [])
-        train_pairs = [(Path(img), Path(lbl)) for img, lbl in train_pairs]
-        val_pairs = [(Path(img), Path(lbl)) for img, lbl in val_pairs]
+        train_pairs = [(base_dir/img, base_dir/lbl)
+                       for img, lbl in train_pairs]
+        val_pairs = [(base_dir/img, base_dir/lbl)
+                     for img, lbl in val_pairs]
         self.training = train_pairs
         self.validation = val_pairs
 
-    def save(self, filename):
+    def save(self, filename, base_dir: Union[Path, str] = './'):
+        if isinstance(base_dir, str):
+            base_dir = Path(base_dir)
         with open(filename, 'wt') as f:
             json.dump(
                 {
-                    'training': self.training,
-                    'validation': self.validation
+                    'training': [p.relative_to(base_dir)
+                                 for p in self.training],
+                    'validation': [p.relative_to(base_dir)
+                                   for p in self.validation]
                 },
                 f,
                 cls=PathEncoder)

@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from importlib import import_module
 import numpy as np
+from baby.errors import BadParam
 
 
 class Timer(object):
