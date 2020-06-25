@@ -200,7 +200,6 @@ class BudTrainer:
         self.outfeats = list(
             regionprops_table(np.diag((1, 0)),
                               properties=self.feats2use).keys())
-        print(self.outfeats)
         self.rf_input = ['centroid_distance', 'area_ratio', 'shared_area',
                          'overlap_rel_loc', 'overlap_major_ax', 'overlap_minor_ax']
         if masks is None:
@@ -289,7 +288,6 @@ class BudTrainer:
 
         output = (centroid_dist, area_ratio, overlap_area,
                overlap_rel_loc, overlap_major_ax, overlap_minor_ax)
-        print(output)
         return output
 
         #TODO implement rectangle calculation
