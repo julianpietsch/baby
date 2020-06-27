@@ -30,12 +30,13 @@ from .preprocessing import (robust_norm, seg_norm, SegmentationFlattening,
 from .augmentation import (Augmenter, SmoothingSigmaModel, ScalingAugmenter,
                            _filled_canny, _apply_crop)
 from .generator import ImageLabel
+from .visualise import colour_segstack
 from .losses import bce_dice_loss, dice_coeff
 from . import models
 from .segmentation import (binary_edge, mask_iou, squareconn,
                            morph_radial_thresh_fit, draw_radial)
 from .track_trainer import TrackTrainer, BudTrainer
-from .visualise import colour_segstack
+from bud_test import BudTrainer
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
 
