@@ -2,9 +2,17 @@ from pathlib import Path
 import shutil
 import json
 import pickle
-from typing import NamedTuple, Union, Tuple
+from typing import NamedTuple, Union, Tuple, Any
 import numpy as np
+from numpy.polynomial import Polynomial
+from scipy.optimize import curve_fit
+import pandas as pd
+from tqdm import trange
+from skimage import filters
+from skimage import transform
+from skimage.measure import regionprops
 from scipy.signal import savgol_filter
+from scipy.ndimage.morphology import binary_fill_holes
 from matplotlib.colors import to_rgba
 from matplotlib import pyplot as plt
 import tensorflow as tf
@@ -17,12 +25,17 @@ from .utils import (get_name, EncodableNamedTuple, find_file,
                     as_python_object, jsonify, schedule_steps)
 from .errors import BadParam, BadFile, BadType, BadProcess
 from .io import TrainValPairs
-from .preprocessing import robust_norm, seg_norm, SegmentationFlattening
-from .augmentation import Augmenter, SmoothingSigmaModel, DownscalingAugmenter
+from .preprocessing import (robust_norm, seg_norm, SegmentationFlattening,
+                            dwsquareconn)
+from .augmentation import (Augmenter, SmoothingSigmaModel, ScalingAugmenter,
+                           _filled_canny, _apply_crop)
 from .generator import ImageLabel
 from .losses import bce_dice_loss, dice_coeff
 from . import models
+from .segmentation import (binary_edge, mask_iou, squareconn,
+                           morph_radial_thresh_fit, draw_radial)
 from .track_trainer import TrackTrainer, BudTrainer
+from .visualise import colour_segstack
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
 
@@ -57,11 +70,17 @@ def fix_tf_rtx_gpu_bug():
                     tf.version.VERSION))
 
 
+class TrainValProperty(NamedTuple):
+    train: Any
+    val: Any
+
+
 @EncodableNamedTuple
 class BabyTrainerParameters(NamedTuple):
     """Global parameters for training BABY models
     """
     train_val_pairs_file: str = 'train_val_pairs.json'
+    smoothing_sigma_stats_file: str = 'smoothing_sigma_stats.json'
     smoothing_sigma_model_file: str = 'smoothing_sigma_model.json'
     flattener_file: str = 'flattener.json'
     cnn_set: Tuple[str, ...] = ('msd_d80', 'unet_4s')
@@ -69,6 +88,8 @@ class BabyTrainerParameters(NamedTuple):
     batch_size: int = 8
     in_memory: bool = True
     xy_out: int = 80
+    target_pixel_size: float = 0.263
+    substacks: Union[None, int] = None
 
 
 class BabyTrainer(object):
@@ -135,12 +156,31 @@ class BabyTrainer(object):
             json.dump(jsonify(self._parameters), f)
 
     @property
+    def in_memory(self):
+        return self.parameters.in_memory
+
+    @in_memory.setter
+    def in_memory(self, x):
+        self.parameters = dict(in_memory=x)
+
+    def _check_for_data_update(self):
+        if getattr(self, '_ncells', None) != self._impairs.ncells:
+            # Reset generators
+            self._gen_train = None
+            self._gen_val = None
+            # Trigger save of the data
+            datafile = self.save_dir / self.parameters.train_val_pairs_file
+            self._impairs.save(datafile)
+            self._ncells = self._impairs.ncells
+
+    @property
     def data(self):
         if not hasattr(self, '_impairs') or not self._impairs:
             self._impairs = TrainValPairs()
             pairs_file = self.save_dir / self.parameters.train_val_pairs_file
             if pairs_file.is_file():
                 self._impairs.load(pairs_file)
+        self._check_for_data_update()
         return self._impairs
 
     @data.setter
@@ -152,46 +192,92 @@ class BabyTrainer(object):
         if not isinstance(train_val_pairs, TrainValPairs):
             raise BadType('"data" must be of type "baby.io.TrainValPairs"')
         self._impairs = train_val_pairs
-        self._train_gen = None
-        self._val_gen = None
+        self._check_for_data_update()
 
-    def _ensure_generators(self):
-        has_train = hasattr(self, '_train_gen') and self._train_gen
-        has_val = hasattr(self, '_val_gen') and self._val_gen
-        if not has_train or not has_val:
-            p = self.parameters
-
-            # Before updating the generators, ensure that the current set of
-            # training/validation data has been saved:
+    @property
+    def gen(self):
+        # NB: generator init ensures all specified images exist
+        # NB: only dummy augmenters are assigned to begin with
+        p = self.parameters
+        if not getattr(self, '_gen_train', None):
             if len(self.data.training) == 0:
                 raise BadProcess('No training images have been added')
-            if len(self.data.validation) == 0:
-                raise BadProcess('No validation images have been added')
-            self.data.save(self.save_dir / p.train_val_pairs_file)
-
-            # Initialise generators for the training and validation images
-            # NB: these also check to make sure all the specified images exist
-            # NB: only dummy augmenters are assigned
-            self._train_gen = ImageLabel(self.data.training,
+            # Initialise generator for training images
+            self._gen_train = ImageLabel(self.data.training,
                                          batch_size=p.batch_size,
                                          aug=Augmenter(),
                                          preprocess=(robust_norm, seg_norm),
                                          in_memory=p.in_memory)
-            self._val_gen = ImageLabel(self.data.validation,
+
+        if not getattr(self, '_gen_val', None):
+            if len(self.data.validation) == 0:
+                raise BadProcess('No validation images have been added')
+            # Initialise generator for validation images
+            self._gen_val = ImageLabel(self.data.validation,
                                        batch_size=p.batch_size,
                                        aug=Augmenter(),
                                        preprocess=(robust_norm, seg_norm),
                                        in_memory=p.in_memory)
 
-    @property
-    def train_gen(self):
-        self._ensure_generators()
-        return self._train_gen
+        return TrainValProperty(self._gen_train, self._gen_val)
+
+    def plot_gen_sample(self, validation=False):
+        g = self.gen.val if validation else self.gen.train
+        g.aug = self.aug.val if validation else self.aug.train
+        img_batch, lbl_batch = g[0]
+        lbl_batch = np.concatenate(lbl_batch, axis=3)
+
+        f = self.flattener
+        target_names = f.names()
+        edge_inds = np.flatnonzero([t.prop == 'edge' for t in f.targets])
+
+        ncol = len(img_batch)
+        nrow = len(target_names) + 1
+        fig = plt.figure(figsize=(3*ncol, 3*nrow))
+        for b, (bf, seg) in enumerate(zip(img_batch, lbl_batch)):
+            plt.subplot(nrow, ncol, b+0*ncol+1)
+            plt.imshow(bf[:,:,0], cmap='gray')
+            plt.imshow(colour_segstack(seg[:,:,edge_inds]))
+
+            for i, name in enumerate(target_names):
+                plt.subplot(nrow, ncol, b+(i+1)*ncol+1)
+                plt.imshow(seg[:,:,i], cmap='gray')
+                plt.title(name)
+
+        fig.savefig(self.save_dir / '{}_generator_sample.png'.format(
+            'validation' if validation else 'training'))
+
+    def generate_smoothing_sigma_stats(self):
+        gt = self.gen.train
+        a = gt.aug
+        gt.aug = lambda x, y: (x, y)
+        sss_train = _generate_smoothing_sigma_stats(gt)
+        gt.aug = a
+
+        gv = self.gen.val
+        a = gv.aug
+        gv.aug = lambda x, y: (x, y)
+        sss_val = _generate_smoothing_sigma_stats(gv)
+        gv.aug = a
+
+        sss_train['validation'] = False
+        sss_val['validation'] = True
+        sss = pd.concat((sss_train, sss_val))
+        sss_file = self.parameters.smoothing_sigma_stats_file
+        sss_file = self.save_dir / sss_file
+        sss.to_csv(sss_file)
 
     @property
-    def val_gen(self):
-        self._ensure_generators()
-        return self._val_gen
+    def smoothing_sigma_stats(self):
+        if getattr(self, '_sss', None) is None:
+            sss_file = self.parameters.smoothing_sigma_stats_file
+            sss_file = self.save_dir / sss_file
+            if not sss_file.exists():
+                raise BadProcess(
+                    'smoothing sigma stats have not been generated')
+            self._sss = pd.read_csv(sss_file)
+        return TrainValProperty(self._sss[~self._sss['validation']],
+                                self._sss[self._sss['validation']])
 
     @property
     def smoothing_sigma_model(self):
@@ -248,35 +334,29 @@ class BabyTrainer(object):
         self._flattener = f
 
     @property
-    def train_aug(self):
-        # Both training and validation make use of the DownscalingAugmenter
+    def aug(self):
         p = self.parameters
-        return DownscalingAugmenter(self.smoothing_sigma_model,
-                                    self.flattener,
-                                    xy_out=p.xy_out,
-                                    xy_scaled=81,
-                                    pixdev=4,
-                                    probs={
-                                        'rotate': 0.2,
-                                        'vshift': 0.25,
-                                        'hshift': 0.25
-                                    })
-
-    @property
-    def val_aug(self):
-        # Validation data now must make use of DownscalingAugmenter, so need to update
-        # the generator as well:
-        p = self.parameters
-        return DownscalingAugmenter(self.smoothing_sigma_model,
-                                    self.flattener,
-                                    xy_out=p.xy_out,
-                                    xy_scaled=81,
-                                    pixdev=0,
-                                    p_noop=1,
-                                    probs={
-                                        'vshift': 0.25,
-                                        'hshift': 0.25
-                                    })
+        t = ScalingAugmenter(self.smoothing_sigma_model,
+                             self.flattener,
+                             xy_out=p.xy_out,
+                             target_pixel_size=p.target_pixel_size,
+                             substacks=p.substacks,
+                             probs={
+                                 'rotate': 0.2,
+                                 'vshift': 0.25,
+                                 'hshift': 0.25
+                             })
+        v = ScalingAugmenter(self.smoothing_sigma_model,
+                             self.flattener,
+                             xy_out=p.xy_out,
+                             target_pixel_size=p.target_pixel_size,
+                             substacks=p.substacks,
+                             p_noop=1,
+                             probs={
+                                 'vshift': 0.25,
+                                 'hshift': 0.25
+                             })
+        return TrainValProperty(t, v)
 
     @property
     def cnn_fn(self):
@@ -318,9 +398,9 @@ class BabyTrainer(object):
                 # Reset any potentially loaded models
                 self._cnns = {}
                 self._opt_cnn = None
-            self.train_gen.aug = self.train_aug
+            self.gen.train.aug = self.aug.train
             print('Loading "{}" CNN...'.format(self.cnn_name))
-            model = self.cnn_fn(self.train_gen, self.flattener)
+            model = self.cnn_fn(self.gen.train, self.flattener)
             self._cnns[cnn_id] = model
 
             # Save initial weights if they haven't already been saved
@@ -383,8 +463,78 @@ class BabyTrainer(object):
             self._bud_trainer = BudTrainer(self.data._metadata, self.data)
             return self._bud_trainer
 
-    def fit_smoothing_model(self):
-        pass
+    def _get_grouped_sss(self):
+        group_best_iou = lambda x: x.loc[x['iou'].idxmax(), :]
+        idcols = ['ind', 'cell', 'scaling', 'rotation']
+        stats = self.smoothing_sigma_stats.train
+        stats = stats.groupby(idcols).apply(group_best_iou)
+        filts = {
+            'identity': (stats.scaling == 1) & (stats.rotation == 0),
+            'scaling': stats.scaling != 1,
+            'rotation': stats.rotation != 0
+        }
+        return stats, filts
+
+    def fit_smoothing_model(self, filt='identity'):
+        stats, filts = self._get_grouped_sss()
+
+        if filt:
+            stats = stats[filts[filt]]
+
+        # Get initial parameters from linear fit of log transformed nedge
+        b = 10  # initial guess for offset term in final model
+        # Fit s = c + m * log(n - b); want n = b + exp((s - c)/m)
+        pinv = Polynomial.fit(np.log(np.clip(stats.nedge - b, 1, None)),
+                              stats.sigma,
+                              deg=1)
+        c = pinv(0)
+        m = pinv(1) - c
+
+        # Fit n = b + a * exp(p * s); inverse: s = log(n - c) / p - log(a) / p
+        model = lambda s, a, p, b: b + a * np.exp(p * s)
+        p0 = (np.exp(-c / m), 1 / m, b)
+        params, _ = curve_fit(model, stats.sigma, stats.nedge, p0=p0)
+
+        self.smoothing_sigma_model = SmoothingSigmaModel(*params)
+
+    def plot_fitted_smoothing_sigma_model(self):
+        stats, filts = self._get_grouped_sss()
+        ssm = self.smoothing_sigma_model
+        model = lambda s, a, p, b: b + a * np.exp(p * s)
+        params = (ssm._a, ssm._b, ssm._c)
+
+        fig, axs = plt.subplots(2,
+                                len(filts),
+                                figsize=(12, 12 * 2 / len(filts)))
+        sigma_max = stats.sigma.max()
+        nedge_max = stats.nedge.max()
+        sigma = np.linspace(0, sigma_max, 100)
+        for ax, (k, f) in zip(axs[0], filts.items()):
+            ax.scatter(stats[f].sigma,
+                       stats[f].nedge,
+                       16,
+                       alpha=0.05,
+                       edgecolors='none')
+            ax.plot(sigma, model(sigma, *params), 'r')
+            ax.set(title=k.title(),
+                   xlabel='sigma',
+                   ylabel='nedge',
+                   ylim=[0, nedge_max])
+
+        nedge = np.linspace(1, nedge_max, 100)
+        for ax, (k, f) in zip(axs[1], filts.items()):
+            ax.scatter(stats[f].nedge,
+                       stats[f].sigma,
+                       16,
+                       alpha=0.05,
+                       edgecolors='none')
+            ax.plot(nedge, [ssm(n) for n in nedge], 'r')
+            ax.set(title=k.title(),
+                   xlabel='nedge',
+                   ylabel='sigma',
+                   ylim=[0, sigma_max])
+
+        fig.savefig(self.save_dir / 'fitted_smoothing_sigma_model.png')
 
     def fit_flattener(self):
         pass
@@ -420,10 +570,10 @@ class BabyTrainer(object):
             LearningRateScheduler(
                 lambda epoch: schedule_steps(epoch, schedule))
         ]
-        self.train_gen.aug = self.train_aug
-        self.val_gen.aug = self.val_aug
-        history = self.cnn.fit_generator(generator=self.train_gen,
-                                         validation_data=self.val_gen,
+        self.gen.train.aug = self.aug.train
+        self.gen.val.aug = self.aug.val
+        history = self.cnn.fit_generator(generator=self.gen.train,
+                                         validation_data=self.gen.val,
                                          epochs=epochs,
                                          callbacks=callbacks)
 
@@ -520,3 +670,95 @@ def get_best_and_worst(model, gen):
                         worst[output][worst_maxind] = out
 
     return best, worst
+
+
+def _generate_smoothing_sigma_stats(gen):
+    sigmas = np.arange(0.4, 5.0, 0.20)
+    rotations = np.arange(7, 45, 7)
+    scaling = np.linspace(0.5, 1.5, 6)
+
+    square_edge = lambda m: binary_edge(m, squareconn)
+    smoothing_stats = []
+    for t in trange(len(gen.paths)):
+        _, (segs, _) = gen.get_by_index(t)
+
+        if segs.shape[2] == 1 and segs.sum() == 0:
+            continue
+
+        ncell = segs.shape[2]
+        segs_fill = binary_fill_holes(segs, dwsquareconn)
+        segs_edge = binary_edge(segs, dwsquareconn)
+        for c in range(ncell):
+            sfill = segs_fill[..., c]
+            sedge = segs_edge[..., c]
+            nedge = segs[..., c].sum()
+
+            # fit radial spline to generate accurate reference edges for
+            # resize transformation
+            rprops = regionprops(sfill.astype('int'))[0]
+            centre = np.array(rprops.centroid)
+            radii, angles = morph_radial_thresh_fit(sedge, sfill, rprops)
+            genedge = draw_radial(radii, angles, centre, sedge.shape)
+            genfill = binary_fill_holes(genedge, squareconn)
+
+            # Limit the number of rotation and scaling operations by
+            # randomly choosing one per cell:
+            r = np.random.choice(rotations)
+            z = np.random.choice(scaling)
+            for s in sigmas:
+                # Use gaussian blurred filled image for augmentations
+                sblur = filters.gaussian(sfill, s)
+                genblur = filters.gaussian(genfill, s)
+
+                spf = _filled_canny(sblur)
+                smoothing_stats += [{
+                    'ind': t,
+                    'cell': c,
+                    'sigma': s,
+                    'rotation': 0,
+                    'scaling': 1,
+                    'nedge': nedge,
+                    'iou': mask_iou(spf, sfill),
+                    'edge_iou': mask_iou(square_edge(spf), sedge)
+                }]
+
+                sr = transform.rotate(sblur,
+                                      angle=r,
+                                      mode='reflect',
+                                      resize=True)
+                sr = transform.rotate(sr,
+                                      angle=-r,
+                                      mode='reflect',
+                                      resize=False)
+                srf = _filled_canny(_apply_crop(sr, spf.shape))
+                smoothing_stats += [{
+                    'ind': t,
+                    'cell': c,
+                    'sigma': s,
+                    'rotation': r,
+                    'scaling': 1,
+                    'nedge': nedge,
+                    'iou': mask_iou(srf, sfill),
+                    'edge_iou': mask_iou(square_edge(srf), sedge)
+                }]
+
+                insize = np.array(spf.shape)
+                outsize = np.round(insize * z).astype('int')
+                centre_sc = outsize / 2 + z * (centre - insize / 2)
+                genedge_sc = draw_radial(z * radii, angles, centre_sc,
+                                         outsize)
+                genfill_sc = binary_fill_holes(genedge_sc, squareconn)
+                sd = transform.resize(genblur, outsize, anti_aliasing=False)
+                sdf = _filled_canny(sd)
+                smoothing_stats += [{
+                    'ind': t,
+                    'cell': c,
+                    'sigma': s,
+                    'rotation': 0,
+                    'scaling': z,
+                    'nedge': nedge,
+                    'iou': mask_iou(sdf, genfill_sc),
+                    'edge_iou': mask_iou(square_edge(sdf), genedge_sc)
+                }]
+
+    return pd.DataFrame(smoothing_stats)
