@@ -1,6 +1,8 @@
 from pathlib import Path
 import numpy as np
+from functools import namedtuple
 from tensorflow.python.keras.utils.data_utils import Sequence
+
 from .io import load_tiled_image
 from .augmentation import Augmenter
 from .preprocessing import standard_norm
@@ -8,6 +10,9 @@ from .preprocessing import standard_norm
 # Following are used by ImgLblInMem and should be deprecated
 from .preprocessing import robust_norm as preprocess_brightfield
 from .preprocessing import segoutline_flattening as preprocess_segim
+
+
+ImageLabelShapes = namedtuple('ImageLabelShapes', ('input', 'output'))
 
 
 class ImageLabel(Sequence):
@@ -59,10 +64,31 @@ class ImageLabel(Sequence):
     def __len__(self):
         return int(np.ceil(len(self.paths) / float(self.batch_size)))
 
+    @property
+    def shapes(self):
+        if not hasattr(self, '_shapes') or not self._shapes:
+            if len(self.paths) == 0:
+                return ImageLabelShapes(tuple(), tuple())
+
+            img, lbl = self.get_by_index(0)
+            Nbatch = (self.batch_size,)
+            self._shapes = ImageLabelShapes(Nbatch + img.shape,
+                                          Nbatch + lbl.shape)
+        return self._shapes
+
     def on_epoch_end(self):
         # Shuffle samples for next epoch
         Nsamples = len(self.paths)
         self.ordering = np.random.choice(Nsamples, Nsamples, replace=False)
+
+    def get_by_index(self, i):
+        if self.in_memory:
+            img, lbl = self.images[i]
+        else:
+            img, lbl = [ppf(*load_tiled_image(im)) for ppf, im
+                        in zip(self.preprocess, self.paths[i])]
+
+        return self.aug(img, lbl)
 
     def __getitem__(self, idx):
         Nbatch = self.batch_size
@@ -72,13 +98,7 @@ class ImageLabel(Sequence):
         lbl_batch = []
 
         for i in current_batch:
-            if self.in_memory:
-                img, lbl = self.images[i]
-            else:
-                img, lbl = [ppf(*load_tiled_image(im)) for ppf, im
-                            in zip(self.preprocess, self.paths[i])]
-
-            img, lbl = self.aug(img, lbl)
+            img, lbl = self.get_by_index(i)
             lbl = np.dsplit(lbl, lbl.shape[2])
 
             img_batch.append(img)

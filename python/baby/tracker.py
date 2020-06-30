@@ -24,19 +24,10 @@ class Tracker:
     def __init__(self,
                  ctrack_model=None,
                  ba_model=None,
-                 nstepsback=None,
-                 ctrack_thresh=None):
-        self.feats2use = ('centroid', 'area', 'minor_axis_length',
-                          'major_axis_length', 'convex_area')
-        self.mb_feats = ('centroid', 'area', 'minor_axis_length')
-
-        self.outfeats = list(
-            regionprops_table(np.diag((1, 0)),
-                              properties=self.feats2use).keys())
-        self.a_ind = self.outfeats.index('area')
-        self.ma_ind = self.outfeats.index('minor_axis_length')
-
-        self.xtrafeats = ('distance', )
+                 feats2use=None,
+                 ba_feats=None,
+                 ctrack_thresh=None,
+                 nstepsback=None):
 
         if ba_model is None:
             ba_model_file = os.path.join(models_path, 'baby_randomforest_20190906.pkl')
@@ -50,6 +41,23 @@ class Tracker:
             with open(ctrack_model_file, 'rb') as file_to_load:
                 ctrack_model = pickle.load(file_to_load)
         self.ctrack_model = ctrack_model
+
+        if feats2use is None:
+            feats2use = ('centroid', 'area', 'minor_axis_length',
+                          'major_axis_length', 'convex_area')
+        self.feats2use = feats2use
+
+        if ba_feats is None:
+            ba_feats = ('centroid', 'area', 'minor_axis_length')
+        self.ba_feats = ba_feats
+
+        self.outfeats = list(
+            regionprops_table(np.diag((1, 0)),
+                              properties=self.feats2use).keys())
+        self.a_ind = self.outfeats.index('area')
+        self.ma_ind = self.outfeats.index('minor_axis_length')
+
+        self.xtrafeats = ('distance', )
 
         if nstepsback is None:
             self.nstepsback = 2
@@ -234,7 +242,7 @@ class Tracker:
         '''
 
         if feats is None:
-            feats = self.calc_feats_from_masks(masks, feats2use=self.mb_feats)
+            feats = self.calc_feats_from_masks(masks, feats2use=self.ba_feats)
         elif len(feats) != len(masks):
             raise Exception('number of features must match number of masks')
 

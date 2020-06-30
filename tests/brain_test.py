@@ -2,6 +2,7 @@ import pytest
 
 import re
 import inspect
+import numpy as np
 
 from baby.brain import BabyBrain
 from baby.morph_thresh_seg import MorphSegGrouped
@@ -32,8 +33,13 @@ def test_modelsets(modelsets):
     assert DEFAULT_MODELSET in modelsets
 
 
-def test_init(modelsets, tf_session_graph):
+def test_init(modelsets, tf_session_graph, imgs_evolve60):
     # Attempt to load default evolve model
     tf_session, tf_graph = tf_session_graph
-    BabyBrain(session=tf_session, graph=tf_graph,
-              **modelsets[DEFAULT_MODELSET])
+    bb = BabyBrain(session=tf_session,
+                   graph=tf_graph,
+                   **modelsets[DEFAULT_MODELSET])
+
+    # And ensure that the model can segment
+    imgstack = np.stack([v['Brightfield'] for v in imgs_evolve60.values()])
+    bb.segment(imgstack)

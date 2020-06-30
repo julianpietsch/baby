@@ -10,7 +10,7 @@ import tensorflow as tf
 from tensorflow.keras import models, layers
 from tensorflow.keras import backend as K
 
-from .models import bce_dice_loss, dice_loss, dice_coeff
+from .losses import bce_dice_loss, dice_loss, dice_coeff
 from .segmentation import morph_seg_grouped
 from .tracker import Tracker
 from .preprocessing import robust_norm, SegmentationFlattening
@@ -83,7 +83,7 @@ class BabyBrain(object):
 
         if celltrack_model_file is None:
             celltrack_model_file = join(models_path,
-                                        'ctrack_randomforest_20200325.pkl')
+                                        'ctrack_randomforest_20200513.pkl')
         elif not isfile(celltrack_model_file):
             celltrack_model_file = join(models_path, celltrack_model_file)
 
@@ -256,7 +256,8 @@ class BabyBrain(object):
 
         tnames = self.flattener.names()
         i_budneck = tnames.index('bud_neck')
-        i_bud = tnames.index('sml_fill')
+        bud_target = 'sml_fill' if 'sml_fill' in tnames else 'sml_inte'
+        i_bud = tnames.index(bud_target)
 
         for seg_output in self.segment(bf_img_batch,
                                        yield_masks=True,
@@ -322,7 +323,8 @@ class BabyBrain(object):
 
         tnames = self.flattener.names()
         i_budneck = tnames.index('bud_neck')
-        i_bud = tnames.index('sml_fill')
+        bud_target = 'sml_fill' if 'sml_fill' in tnames else 'sml_inte'
+        i_bud = tnames.index(bud_target)
 
         segment_gen = self.segment(bf_img_batch,
                                    yield_masks=True,
