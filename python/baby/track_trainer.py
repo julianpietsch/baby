@@ -17,7 +17,7 @@ class TrackTrainer(Tracker):
     :traps: Dataframe with cleaned trap locations and their continuous tps
     '''
 
-    def __init__(self, meta, data=None, masks=None):
+    def __init__(self, meta, data=None, masks=None, val_masks = None):
         super().__init__()
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
@@ -27,16 +27,12 @@ class TrackTrainer(Tracker):
         if masks is None:
             self.masks= [load_tiled_image(mask)[0] for
                          bf, mask  in self.data.training]
+        if val_masks is None:
+            self.val_masks = [load_tiled_image(mask)[0] for
+                              bf, mask  in self.data.validation]
         self.process_traps()
         self.gen_train()
 
-    # def get_img_feats(self, img_array):
-    #     props_df = pd.DataFrame([
-    #         regionprops_table(img, properties=self.feats2use, cache=True)
-    #         for img in img_array
-    #     ]).applymap(lambda x: x[0])
-
-    #     return props_df
 
     def gen_train(self):
         '''
