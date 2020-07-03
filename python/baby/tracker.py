@@ -64,16 +64,28 @@ class Tracker:
         if ctrack_thresh is None:
             self.ctrack_thresh = 0.75
 
-    def calc_feats_from_masks(self, masks):
+    def calc_feats_from_masks(self, masks, feats2use=None):
         '''
         Calculate feature ndarray from ndarray of cell masks
         ---
         input
-        :masks: ndarray (ncells, x_size, y_size), typically dtype bool
+        :masks: ndarray (x_size, y_size, ncells), typically dtype bool
 
         output
         :n2darray: ndarray (ncells, nfeats)
         '''
+        feats=[]
+        for mask in masks:
+            if mask.sum():
+                cell_feats = []
+                for feat in regionprops_table(
+                        mask.astype('int'),
+                        properties=feats2use or self.feats2use).values():
+                    cell_feats.append(feat[0])
+                feats.append(cell_feats)
+
+        return feats
+
         return np.array([[
                 feat[0] for feat in regionprops_table(
                     mask.astype('int'),

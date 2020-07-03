@@ -151,20 +151,26 @@ class TrainValPairs(object):
                 sub_metadata[-1]['list_index'] = sub_metadata[-1].index
             self._metadata = pd.concat(sub_metadata, axis=0, ignore_index=True)
             self._metadata = self.metadata.loc[np.array([x[0] for x in self.metadata['tilesize']])==81] #TODO Remove this fix when tilesize is consistent or normalised
+            self._metadata.sort_values(['experimentID', 'position', 'trap', 'tp'], inplace=True)
+            self._metadata.set_index(['experimentID', 'position', 'trap'], inplace=True)
+            self._metadata_tp = self._metadata.set_index('tp', append=True)
+            # TODO: assert that all index has the same  trainval field
 
         return self._metadata
 
     @property
     def traps(self, chunk_size = 4, min_tp = 2, trap_together=True):
         ''' Group the data in chunks to use for cell tracking random forest cross-validation'''
-        df = self._metadata[self._metadata['train_val']=='training'] #TODO Reconsider this filter
-        traps = pd.DataFrame(df.sort_values(['tp']).groupby(
+        # df = self._metadata[self._metadata['train_val']=='training'] #TODO Reconsider this filter
+        traps = pd.DataFrame(self._metadata.sort_values(['tp']).groupby(
             ['experimentID', 'position', 'trap'])['tp'].apply(list))
         # Some of the next parts are disabled while we find out why there are repeated metadatas
         # traps = traps.sample(frac=1, random_state=42) # shuffle dataframe
         traps['tp_uniq'] = traps['tp'].apply(np.unique) #TODO remove this when metadata issue is fixed
-        traps['cont'] = find_continuous_tps(traps['tp_uniq'], chunk_size)
+        traps['indices'] = find_continuous_tps(traps['tp_uniq'], chunk_size)
+        traps['cont'] = [l[inds] for i, (l, inds) in enumerate(traps[['tp_uniq', 'indices']].values)]
         #TODO ALAN: Add split operation
+        
 
         if not trap_together: # shuffle after splitting rn chunks?
             traps = traps.sample(frac=1, random_state=24)
@@ -273,24 +279,28 @@ def aslist(val):
 
     return val
 
-def find_continuous_tps(traps, chunk_size):
-    tp_distance = traps.apply(lambda x: np.subtract(x[1:], x[:-1]))
+def find_continuous_tps(uniq_traps, chunk_size):
+    tp_distance = uniq_traps.apply(lambda x: np.subtract(x[1:], x[:-1]))
     tp_distance.apply(lambda x: [0 if dif > 1  else dif for dif in x])
-    traps['valid_chunks']= tp_distance.apply(
-        lambda x: find_contiguous_ones(array = x, chunk_size = chunk_size))
-    return traps
+    indices_groups = tp_distance.apply(
+        lambda x: [(label, sum(1 for _ in group)) for label, group in groupby(x)])
+    # traps['valid_indices'] = traps['valid_chunks'].apply(lambda x: find_indices(x, chunk_size))
 
-def find_contiguous_ones(array, chunk_size):
-    '''Finds the location of continuous ones in a list of ones and zeros.
-    Returns another list, with the ones summed into one value and all other
-    values as individual zeros'''
-    chunks_list = []
-    if len(array) >= chunk_size:
-        cumsum=0
-        for i in range(len(array)):
-            if array[i]==0 or i==len(array):
-                chunks_list.append(cumsum)
-                cumsum=0
-            else:
-                cumsum+=1
-    return chunks_list
+    indices = indices_groups.apply(lambda x: find_indices(x, chunk_size))
+    return indices
+
+def find_indices(groups, chunk_size, return_max=True):
+    '''Receives the output of contiguous ones and returns a list with the
+    indices of contiguous timepoints'''
+    indices = []
+    curind = 0
+    for dif, n in groups:
+        if dif == 1 and n>=chunk_size:
+            indices.append([curind+i for i in range(n)])
+        curind += n
+    if return_max and indices:
+        sizes = [len(i) for i in indices]
+        maxind = sizes.index(np.max(sizes))
+        indices = indices[maxind]
+    return indices
+            

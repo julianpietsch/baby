@@ -21,18 +21,45 @@ class TrackTrainer(Tracker):
         super().__init__()
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
-        self.meta = meta.set_index(self.indices)
         self.data = data
         self.traps = data.traps
+        # if val_masks is None:
+        #     self.val_masks = [load_tiled_image(mask)[0] for
+        #                       bf, mask  in self.data.validation]
+        self.meta = data._metadata_tp
+        self.process_metadata()
         if masks is None:
-            self.masks= [load_tiled_image(mask)[0] for
-                         bf, mask  in self.data.training]
-        if val_masks is None:
-            self.val_masks = [load_tiled_image(mask)[0] for
-                              bf, mask  in self.data.validation]
+            self.masks= [load_tiled_image(fname)[0] for
+                         fname  in self.meta['filename']]
         self.process_traps()
-        self.gen_train()
+        # self.gen_train()
 
+    def verify_mask_df_integrity(masks, df):
+        nlayers=[mask.shape[2] for mask in masks]
+        ncells = [len(x) for x in df['cellLabels'].values]
+
+        for x,(i,j) in enumerate(zip(nlayers, ncells)):
+            if i!=j:
+                print(x)
+
+
+    def process_metadata(self):
+        '''
+        Process all traps (run for finished experiments), combine results with location df and drop
+        unused columns.
+        '''
+        
+        self.meta = self.meta[~self.meta.index.duplicated(keep='first')]
+        self.traps = self.traps.explode('cont')
+        self.traps['tp'] = self.traps['cont']
+        self.traps.set_index('tp', inplace=True, append=True)
+        self.clean_indices = self.traps.index
+
+        #TODO check cellLabels not being different between timepoints
+        self.meta = self.meta.loc(axis=0)[self.clean_indices]
+        # self.meta.set_index('tp', inplace=True, append=True)
+        self.meta['ncells'] = [len(i) for i in self.meta['cellLabels'].values]
+        # self.meta = self.meta.loc[self.meta['ncells']>0]
 
     def gen_train(self):
         '''
@@ -57,30 +84,19 @@ class TrackTrainer(Tracker):
 
     def process_traps(self):
         '''
-        Process all traps (run for finished experiments), combine results with location df and drop
-        unused columns.
-
         Generates a region_proprieties DataFrame
         '''
 
         nindex = []
         props_list = []
-
-        # Clean up duplicates and non-continuous timepoints
-        self.meta = self.meta[~self.meta.index.duplicated(keep='first')]
-        self.traps = self.traps.explode('cont')
-        self.traps['tp'] = self.traps['cont']
-        self.traps.set_index('tp', inplace=True, append=True)
-        clean_indices = self.traps.index
-
+        i=0
         for ind, (index,
-                  lbl) in zip(clean_indices,
-                               self.meta.loc[clean_indices][['list_index', 'cellLabels']].values):
+                  lbl) in zip(self.meta.index, enumerate(
+                               self.meta['cellLabels'].values)):
             try:
                 assert (len(lbl)==self.masks[index].shape[2]) | (len(lbl)==0) #check nlabels and ncells agree
             except AssertionError:
-                print('nlabels and img mismatch in row:')
-                print(self.meta.iloc[index])
+                print('nlabels and img mismatch in row: ')
 
             trapfeats = [
                 regionprops_table(self.masks[index][..., i].astype('int'),
@@ -90,8 +106,10 @@ class TrackTrainer(Tracker):
             for cell, feats in zip(lbl, trapfeats):
                 nindex.append(ind + (cell, ))
                 props_list.append(feats)
+            i+=1
 
         out_dict = {key: [] for key in props_list[0].keys()}
+        print(nindex[0])
         nindex = pd.MultiIndex.from_tuples(nindex, names=self.cindices)
 
         for cells_props in props_list:
@@ -103,7 +121,8 @@ class TrackTrainer(Tracker):
 
     def gen_train_from_trap(self, trap_loc):
         subdf = self.meta[['list_index', 'cellLabels'
-                             ]].loc(axis=0)[trap_loc].sort_values('tp')
+                             ]].loc(axis=0)[trap_loc]
+        print(subdf)
         pairs = [
             trap_loc + tuple((pair, ))
             for pair in zip(subdf.index[:-1], subdf.index[1:])
@@ -189,7 +208,6 @@ class BudTrainer:
     def __init__(self, meta, data=None, masks=None, props=None ):
         super().__init__()
         self.indices = ['experimentID', 'position', 'trap', 'tp']
-        self.meta = meta.set_index(self.indices)
         self.data = data
         self.traps = data.traps
         self.feats2use = ['centroid', 'area',
