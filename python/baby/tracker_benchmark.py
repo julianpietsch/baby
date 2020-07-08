@@ -12,21 +12,32 @@ from skimage.measure import regionprops_table
 
 class TrackBenchmarker:
     '''
+    Takes a metadata dataframe and a model and estimates the prediction in a trap-wise manner.
     '''
     def __init__(self, meta, model):
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
         self.meta = meta
+        self.meta['cont_list_index'] = [i for i in range(len(self.meta))]
         self.tracker = Tracker(ctrack_model = model)
-        # self.tracker.get_new_lbls(None, prev_lbls, prev_feats, max_lbl, new_feats)
+        self.nstepsback = self.tracker.nstepsback
+        self.traps_loc
+        self.test = self.predict_set(*self.traps_loc[0])
+        # self.calculate_errsum()
 
-    def iterate_tracker(self):
-        new_feats=None
-        self.tracker.get_new_lbls(None, [], [], 0, new_feats=None)
-         
-    def filter(self, exp, pos, trap, tp=None):
+    @property
+    def traps_loc(self):
+        '''
+        Generates a list of trap locations using the metadata.
+        '''
+        if not hasattr(self, '_traps_loc'):
 
-        return df.loc(axis=0)[(exp,pos,trap)]
+            traps = np.unique([ind[:self.indices.index('trap')+1] for ind in self.meta.index], axis=0)
+            traps = [(ind[0], *map(int, ind[1:])) for ind in traps] # str->int conversion
+            self._traps_loc = *map(
+                tuple, traps),
+
+        return self._traps_loc
 
     @property
     def masks(self):
@@ -39,14 +50,8 @@ class TrackBenchmarker:
 
         return self._masks
 
-    # @property
-    # def props(self):
-    #     if not hasattr(self, '_props'):
-    #         self._props = [self.tracker.calc_feats_from_masks(
-    #             [masks[..., i] for i in range(masks.shape[2])])
-    #                        for masks in self.masks]
-
     def predict_lbls_from_tpimgs(self, tp_img_tuple):
+        # TODO account for initial rumbers
         max_lbl = 0
         prev_feats = []
         cell_lbls = []
@@ -61,31 +66,14 @@ class TrackBenchmarker:
         return (tp, cell_lbls)
 
     def df_get_imglist(self, exp, pos, trap, tp=None):
-        df = self.meta.loc[(exp, pos, trap), ['list_index', 'cell_id']]
-        return zip(df.index, self.masks[df['list_index'].values])
-
-    def split_outlines(self, filename, cell_id):
-        '''
-        Process trap using row of location DataFrame. if get_props=True it
-        returns the calculated properties. If it is False it returns a list
-        of outlines.
-
-        The main use of this function is to use the filename and default ids to
-        produce a list of outlines or the corresponding proprieties.
-        '''
-
-        ncells = len(aslist(cell_id))
-        img = imread(filename)
-        cellolines = np.hsplit(binary_fill_holes(img).astype(int), ncells)
-        # TODO: convert list to ndarray for BABY compatibility and remove cell_id
-
-        return cellolines
+        df = self.meta.loc[(exp, pos, trap), ['cont_list_index', 'cellLabels']]
+        return zip(df.index, [self.masks[i] for i in df['cont_list_index']])
 
     def predict_set(self, exp, pos, trap, tp=None):
-
-        print("Processing trap %s" % str(exp, pos, trap))
+        print("Processing trap {}".format(exp, pos, trap))
         tp_img_tuple = *self.df_get_imglist(exp, pos, trap),
         tp, lbl_list = self.predict_lbls_from_tpimgs(tp_img_tuple)
+        # print("loc {}, {}, {}, labels: {}".format(exp, pos, trap, lbl_list))
         return lbl_list
 
     def compare_traps(self, exp, pos, trap):
@@ -101,16 +89,17 @@ class TrackBenchmarker:
         list of 2-sized tuples: list of tp id of errors and the mistaken cell
 
         '''
-        printf("Testing trap {}, {}, {}".format(exp,pos,trap))
+        print("Testing trap {}, {}, {}".format(exp,pos,trap))
         new_cids = self.predict_set(exp, pos, trap)
 
         test_df = self.meta.loc(axis=0)[(exp, pos, trap)]
-        test_df.loc[:, 'pred_cellLabels'] = new_cids
+        test_df['pred_cellLabels'] = new_cids
 
         test = test_df['cellLabels'].values
         new = test_df['pred_cellLabels'].values
         local_indices = [[], []]
-        #
+
+
         #      # Case just defines if it is the test or new set
         print("Making tp-wise comparison")
         for i, case in enumerate((zip(test[:-1],
@@ -128,12 +117,12 @@ class TrackBenchmarker:
         ]
         tp_list = np.array(
             [i for i, vals in enumerate(local_indices[0]) for j in vals])
-        correct = flt_test == flt_new
+        correct = flt_test==flt_new
         error_list = tp_list[~correct]
         error_cid = test_df.iloc[1:]['cellLabels'].explode()[~correct].values
         frac_correct = np.mean(correct)
 
-        print(frac_correct)
+        print("Fraction of correct predictions", frac_correct)
         return (frac_correct, list(zip(error_list, error_cid)))
 
     def calculate_errsum(self):
@@ -149,30 +138,35 @@ class TrackBenchmarker:
                 all_errs[(thresh, nstepsback)] = []
                 frac_errs[(thresh, nstepsback)] = []
                 nerrs[(thresh, nstepsback)] = []
-                for i in range(1, 19):
-                    fraction, errors = self.compare_traps((i, 4))
+                for address in self.traps_loc:
+                    fraction, errors = self.compare_traps(*address)
                     all_errs[(thresh, nstepsback)].append(errors)
                     frac_errs[(thresh, nstepsback)].append(fraction)
                     nerrs[(thresh, nstepsback)].append(len(errors))
 
         return (frac_errs, all_errs, nerrs)
 
-def get_cells(filename, cell_id):
-    '''
-    Read a filename and cell id (only to get the number of cells)
-    and return the ndarray containing the cells in the z-axis
-    ---
-    input
-    filename: str indication the png location
-    cell_id: list of ints, where the ints are cell labels
+    def gen_errorplots(self):
+        '''
+        Calculates the trap-wise error and averages across a position.
+       '''
+        frac_errs, all_errs, nerrs = self.calculate_errsum()
 
-    output
-    ndarray (size_x, size_y, ncells). ndarray containing the mask for cells
-    in the z-axis
-    '''
+        nerrs_df = pd.DataFrame(nerrs).melt()
+        frac_df = pd.DataFrame(frac_errs).melt()
 
-    ncells = len(cell_id)
-    img = imread(filename)
-    cell_masks = np.hsplit(binary_fill_holes(img).astype(int), ncells)
+        from matplotlib import pyplot as plt
+        import seaborn as sns
 
-    return np.dstack(cell_masks)
+        ax = sns.barplot(x='variable_0', y='value', data=frac_df)
+        ax.set(xlabel='Backtrack depth',
+               ylabel='Fraction of correct assignments',
+               ylim=(0.9, 1))
+        plt.savefig('tracker_benchmark_btdepth.png')
+        plt.show()
+
+        # TODO check if it is worth incorporating absolute number of errors
+        # ax = sns.barplot(x='variable_1', y='value', data=nerrs_df)
+        # ax.set(xlabel='Backtrack depth', ylabel='Number of mistakes')
+        # plt.savefig('tracker_benchmark_nmistakes.png')
+        # plt.show()

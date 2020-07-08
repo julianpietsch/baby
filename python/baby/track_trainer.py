@@ -32,7 +32,7 @@ class TrackTrainer(Tracker):
             self.masks= [load_tiled_image(fname)[0] for
                          fname  in self.meta['filename']]
         self.process_traps()
-        # self.gen_train()
+        self.gen_train()
 
     def verify_mask_df_integrity(masks, df):
         nlayers=[mask.shape[2] for mask in masks]
@@ -66,7 +66,7 @@ class TrackTrainer(Tracker):
         Generates the data for training using all the loaded images.
         '''
 
-        traps = np.unique([ind[:3] for ind in self.traps.index], axis=0)
+        traps = np.unique([ind[:self.indices.index('trap')+1] for ind in self.traps.index], axis=0)
         traps = [(ind[0], *map(int, ind[1:])) for ind in traps] # str->int conversion
         traps = *map(
             tuple, traps),
@@ -109,7 +109,6 @@ class TrackTrainer(Tracker):
             i+=1
 
         out_dict = {key: [] for key in props_list[0].keys()}
-        print(nindex[0])
         nindex = pd.MultiIndex.from_tuples(nindex, names=self.cindices)
 
         for cells_props in props_list:
@@ -122,7 +121,6 @@ class TrackTrainer(Tracker):
     def gen_train_from_trap(self, trap_loc):
         subdf = self.meta[['list_index', 'cellLabels'
                              ]].loc(axis=0)[trap_loc]
-        print(subdf)
         pairs = [
             trap_loc + tuple((pair, ))
             for pair in zip(subdf.index[:-1], subdf.index[1:])

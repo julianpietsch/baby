@@ -75,22 +75,16 @@ class Tracker:
         :n2darray: ndarray (ncells, nfeats)
         '''
         feats=[]
-        for mask in masks:
-            if mask.sum():
+        if masks.sum():
+            for i in range(masks.shape[2]):
                 cell_feats = []
                 for feat in regionprops_table(
-                        mask.astype('int'),
+                        masks[..., i].astype('int'),
                         properties=feats2use or self.feats2use).values():
                     cell_feats.append(feat[0])
                 feats.append(cell_feats)
 
-        return feats
-
-        return np.array([[
-                feat[0] for feat in regionprops_table(
-                    mask.astype('int'),
-                    properties=feats2use or self.feats2use).values()
-            ] for mask in masks])
+        return np.array(feats)
 
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
@@ -134,7 +128,7 @@ class Tracker:
 
         ----
         input
-        :new_img: ndarray (ncells, len, width) containing the cell outlines
+        :new_img: ndarray (len, width, ncells) containing the cell outlines
         :max_lbl: int indicating the last assigned cell label
         :prev_feats: list of ndarrays of size (ncells x nfeatures)
         containing the features of previous timepoints
@@ -158,7 +152,7 @@ class Tracker:
                 lbls_order = list(counts.keys())
                 max_prob = np.zeros(
                     (len(lbls_order), len(new_feats)), dtype=float)
-
+      
                 for i, (lblset, prev_feat) in enumerate(zip(prev_lbls, prev_feats)):
                     if prev_feat.any():
                         feats_3darray = self.calc_feat_ndarray(
@@ -172,11 +166,6 @@ class Tracker:
                                     2]))
                         ])
                         pred_matrix = pred_list.reshape(orig_shape)
-                        # print('cumprob', cum_prob)
-                        # print('lbls order', lbls_order)
-                        # print('lennfeats', len(new_feats))
-                        # print('predmat', pred_matrix)
-                        # print('prevlbls', prev_lbls)
 
                         for j,lbl in enumerate(lblset):
                             # cum_prob[lbls_order.index(lbl), :] = cum_prob[
