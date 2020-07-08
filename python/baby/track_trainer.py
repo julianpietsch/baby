@@ -3,8 +3,9 @@ import numpy as np
 import pandas as pd
 import pickle
 
-from .tracker import Tracker
 from .io import load_tiled_image
+from .tracker import Tracker
+from .tracker_benchmark import TrackBenchmarker
 
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops_table
@@ -194,6 +195,13 @@ class TrackTrainer(Tracker):
     def save_model(self, filename):
         f = open(filename, 'wb')
         pickle.dump(track_trainer.rf.best_estimator_)
+
+    @property
+    def benchmarker(self):
+        if not hasattr(self, '_benchmarker'):
+            val_meta = self.meta.loc[self.meta['train_val'] == 'validation']
+            self._benchmarker = TrackBenchmarker(val_meta, self.rf)
+        return self._benchmarker
 
 
 class BudTrainer:

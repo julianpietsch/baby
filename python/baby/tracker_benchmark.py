@@ -51,7 +51,6 @@ class TrackBenchmarker:
         return self._masks
 
     def predict_lbls_from_tpimgs(self, tp_img_tuple):
-        # TODO account for initial rumbers
         max_lbl = 0
         prev_feats = []
         cell_lbls = []
