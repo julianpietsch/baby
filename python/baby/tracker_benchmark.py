@@ -134,6 +134,7 @@ class TrackBenchmarker:
             for thresh in threshs:
                 self.nstepsback = nstepsback
                 self.tracker.nstepsback = nstepsback
+                # self.tracker.red_fun = rand
                 self.ctrack_thresh = thresh
                 all_errs[(thresh, nstepsback)] = []
                 frac_errs[(thresh, nstepsback)] = []
@@ -170,3 +171,11 @@ class TrackBenchmarker:
         # ax.set(xlabel='Backtrack depth', ylabel='Number of mistakes')
         # plt.savefig('tracker_benchmark_nmistakes.png')
         # plt.show()
+
+    
+def rand(x):
+    '''
+    Return a random probability. Used to test the assign_lbls function
+    with a randomly assigned probability.
+    '''
+    return np.random.rand()

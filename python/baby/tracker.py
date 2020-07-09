@@ -27,7 +27,8 @@ class Tracker:
                  feats2use=None,
                  ba_feats=None,
                  ctrack_thresh=None,
-                 nstepsback=None):
+                 nstepsback=None,
+                 red_fun=None):
 
         if ba_model is None:
             ba_model_file = os.path.join(models_path, 'baby_randomforest_20190906.pkl')
@@ -63,6 +64,8 @@ class Tracker:
             self.nstepsback = 2
         if ctrack_thresh is None:
             self.ctrack_thresh = 0.75
+        if red_fun is None:
+            self.red_fun = np.nanmax
 
     def calc_feats_from_masks(self, masks, feats2use=None):
         '''
@@ -188,7 +191,7 @@ class Tracker:
             return ([], [], max_lbl)
         return (new_lbls, new_feats, new_max)
 
-    def assign_lbls(self, pred_3darray, prev_lbls, reduction_fun=np.nanmax):
+    def assign_lbls(self, pred_3darray, prev_lbls, red_fun=None):
         '''Assign labels using a prediction matrix of nxmxl where n is the number
         of cells in the previous image, m the number of steps back considered
         and l in the new image. It assigns the
@@ -198,7 +201,7 @@ class Tracker:
 
         :pred_3darray: Probability n x m x l array obtained as an output of rforest
         :prev_labels: List of cell labels for previous timepoint to be compared.
-        :reduction_fun: Function used to collapse the previous timepoints into one.
+        :red_fun: Function used to collapse the previous timepoints into one.
             If none provided it uses maximum and ignores np.nans.
 
         output
@@ -206,10 +209,12 @@ class Tracker:
         :new_lbls: ndarray of newly assigned labels obtained, new cells as
         zero.
         '''
+        if red_fun is None:
+            red_fun = self.red_fun
 
         new_lbls = np.zeros(pred_3darray.shape[2], dtype=int)  
 
-        pred_matrix = np.apply_along_axis(reduction_fun, 1, pred_3darray)
+        pred_matrix = np.apply_along_axis(red_fun, 1, pred_3darray)
 
 
         # We remove any possible conflict by taking the maximum vals
@@ -439,8 +444,9 @@ class Tracker:
         return output
 
 def decay(array, c=0.5):
-    '''Calculates the average using a decay function prob*1/(a*t) where
-    prob is the latest probability, t the time step and a a chosen coefficient
+    '''Calculates the average using a decay function p/(a*t) where
+    'p' is the probability of two cells being the same, 't' the timestep
+    and 'a' a chosen coefficient
     :array: List of probabilities
     :c: Scaling coefficient
     '''
