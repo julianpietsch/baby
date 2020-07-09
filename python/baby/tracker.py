@@ -438,14 +438,14 @@ class Tracker:
 
         return output
 
-def decay(array, a=0.5):
+def decay(array, c=0.5):
     '''Calculates the average using a decay function prob*1/(a*t) where
     prob is the latest probability, t the time step and a a chosen coefficient
     :array: List of probabilities
-    :a: Scaling coefficient
+    :c: Scaling coefficient
     '''
     result = 0
     for t, p in enumerate(array):
-        if not np.isnan(x):
-            result += p / (t * a)
+        if not np.isnan(p):
+            result += p / (t * c)
     return result
