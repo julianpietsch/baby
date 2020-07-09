@@ -150,8 +150,8 @@ class Tracker:
             if prev_feats:
                 counts = Counter([lbl for lbl_set in prev_lbls for lbl in lbl_set])
                 lbls_order = list(counts.keys())
-                max_prob = np.zeros(
-                    (len(lbls_order), len(new_feats)), dtype=float)
+                probs = np.full(
+                    (len(lbls_order), self.nstepsback, len(new_feats)), np.nan)
       
                 for i, (lblset, prev_feat) in enumerate(zip(prev_lbls, prev_feats)):
                     if prev_feat.any():
@@ -170,11 +170,10 @@ class Tracker:
                         for j,lbl in enumerate(lblset):
                             # cum_prob[lbls_order.index(lbl), :] = cum_prob[
                             #     lbls_order.index(lbl), :] + pred_matrix[j,:]
-                            max_prob[lbls_order.index(lbl), :] = np.maximum(
-                               max_prob[lbls_order.index(lbl), :], pred_matrix[j,:])
+                            probs[lbls_order.index(lbl), i, :] = pred_matrix[j,:]
 
                 # avg_prob = cum_prob / np.array(list(counts.values()))[:, None]
-                new_lbls = self.assign_lbls(max_prob, lbls_order)
+                new_lbls = self.assign_lbls(probs, lbls_order)
                 new_cells_pos = new_lbls==0
                 new_max = max_lbl + sum(new_cells_pos)
                 new_lbls[new_cells_pos] = [*range(max_lbl+1, new_max+1)]
@@ -189,19 +188,18 @@ class Tracker:
             return ([], [], max_lbl)
         return (new_lbls, new_feats, new_max)
 
-    def assign_lbls(self, pred_matrix, prev_lbls):
-        '''Assign labels using a prediction matrix of nxm where n is the number
-        of cells in the previous image and m in the new image. It assigns the
+    def assign_lbls(self, pred_3darray, prev_lbls, reduction_fun=np.nanmax):
+        '''Assign labels using a prediction matrix of nxmxl where n is the number
+        of cells in the previous image, m the number of steps back considered
+        and l in the new image. It assigns the
         number zero if it doesn't find the cell.
-        :pred_matrix: Probability n x m matrix obtained as an output of rforest
-        :prev_labels: List of cell labels for previous timepoint to be compared.
         ---
         input
 
-        :pred_matrix: Matrix with probabilities of the corresponding two cells
-        being the same.
-        :prev_lbls: List or ndarray of ints representing the cell labels in
-        the previous tp.
+        :pred_3darray: Probability n x m x l array obtained as an output of rforest
+        :prev_labels: List of cell labels for previous timepoint to be compared.
+        :reduction_fun: Function used to collapse the previous timepoints into one.
+            If none provided it uses maximum and ignores np.nans.
 
         output
 
@@ -209,7 +207,10 @@ class Tracker:
         zero.
         '''
 
-        new_lbls = np.zeros(pred_matrix.shape[1], dtype=int)
+        new_lbls = np.zeros(pred_3darray.shape[2], dtype=int)  
+
+        pred_matrix = np.apply_along_axis(reduction_fun, 1, pred_3darray)
+
 
         # We remove any possible conflict by taking the maximum vals
         if pred_matrix.any():
@@ -436,3 +437,15 @@ class Tracker:
             output['p_bud_assign'] = ba_probs.tolist()
 
         return output
+
+def decay(array, a=0.5):
+    '''Calculates the average using a decay function prob*1/(a*t) where
+    prob is the latest probability, t the time step and a a chosen coefficient
+    :array: List of probabilities
+    :a: Scaling coefficient
+    '''
+    result = 0
+    for t, p in enumerate(array):
+        if not np.isnan(x):
+            result += p / (t * a)
+    return result

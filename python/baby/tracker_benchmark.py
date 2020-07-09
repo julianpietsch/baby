@@ -133,6 +133,7 @@ class TrackBenchmarker:
         for nstepsback in stepsback:
             for thresh in threshs:
                 self.nstepsback = nstepsback
+                self.tracker.nstepsback = nstepsback
                 self.ctrack_thresh = thresh
                 all_errs[(thresh, nstepsback)] = []
                 frac_errs[(thresh, nstepsback)] = []
