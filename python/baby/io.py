@@ -1,11 +1,11 @@
 import json
 import re
-from collections import Counter
-from collections import namedtuple
-from itertools import groupby
-from pathlib import Path
-from typing import Union
 
+from pathlib import Path
+from fnmatch import translate as glob_to_re
+from os import walk
+from itertools import groupby, chain, repeat
+from collections import namedtuple
 import numpy as np
 import pandas as pd
 from PIL.PngImagePlugin import PngInfo
@@ -62,7 +62,8 @@ def save_tiled_image(img, filename, info={}, layout=None):
 
     meta = PngInfo()
     meta.add_text('Description', json.dumps(info))
-    imwrite(filename, tImg, format='png', pnginfo=meta, prefer_uint8=False)
+    imwrite(filename, tImg, format='png', pnginfo=meta,
+            prefer_uint8=tImg.dtype != 'uint16')
 
 
 def load_paired_images(filenames, typeA='Brightfield', typeB='segoutlines'):
@@ -100,7 +101,7 @@ class TrainValPairs(object):
         if not isinstance(pairs, list):
             raise ValueError('"training" must be a list')
         self._train_pairs = pairs
-        self._ncells = None
+        self._metadata = None
 
     @property
     def validation(self):
@@ -113,19 +114,24 @@ class TrainValPairs(object):
         if not isinstance(pairs, list):
             raise ValueError('"validation" must be a list')
         self._val_pairs = pairs
-        self._ncells = None
+        self._metadata = None # reset metadata if validation data changes
 
     @property
     def ncells(self):
-        if not hasattr(self, '_ncells') or not self._ncells:
-            ntrainval = Counter(self.metadata['train_val'])
-            ncells_tuple = namedtuple('ncells', 'training, validation')
-            self._ncells = ncells_tuple(**ntrainval)
-        return self._ncells
+        ncells_tuple = namedtuple('ncells', 'training, validation')
+        meta = self.metadata
+        if len(meta) == 0:
+            return ncells_tuple(0, 0)
+        ntrainval = Counter(
+            chain(*[
+                list(repeat(t, n))
+                for n, t in zip(map(len, meta.cellLabels), meta.train_val)
+            ]))
+        return ncells_tuple(**ntrainval)
 
     @property
     def metadata(self):
-        if not hasattr(self, '_metadata'):
+        if getattr(self, '_metadata', None) is None:
             trainvalpairs = {
                 'training': self.training,
                 'validation': self.validation
@@ -145,6 +151,8 @@ class TrainValPairs(object):
                 sub_metadata.append(pd.DataFrame(pair_meta))
                 sub_metadata[-1]['list_index'] = sub_metadata[-1].index
             self._metadata = pd.concat(sub_metadata, axis=0, ignore_index=True)
+            self._metadata = self.metadata.loc[np.array([x[0] for x in self.metadata['tilesize']])==81] #TODO Remove this fix when tilesize is consistent or normalised
+
         return self._metadata
 
     @property
@@ -253,10 +261,8 @@ class TrainValPairs(object):
         train_groups, val_groups = set(train_groups), set(val_groups)
 
         # Add new pairs to the existing train-val split
-        self.training.extend(
-            p for p, g in zip(pairs, pair_groups) if g in train_groups)
-        self.validation.extend(
-            p for p, g in zip(pairs, pair_groups) if g in val_groups)
+        self.training += [p for p, g in zip(pairs, pair_groups) if g in train_groups]
+        self.validation += [p for p, g in zip(pairs, pair_groups) if g in val_groups]
 
     def __repr__(self):
         return 'TrainValPairs: {:d} training and {:d} validation pairs'.format(
@@ -277,11 +283,11 @@ def aslist(val):
     return val
 
 def find_continuous_tps(traps, chunk_size):
-        tp_distance = traps.apply(lambda x: np.subtract(x[1:], x[:-1]))
-        tp_distance.apply(lambda x: [0 if dif > 1  else dif for dif in x])
-        traps['valid_chunks']= tp_distance.apply(
-            lambda x: find_contiguous_ones(array = x, chunk_size = chunk_size))
-        return traps
+    tp_distance = traps.apply(lambda x: np.subtract(x[1:], x[:-1]))
+    tp_distance.apply(lambda x: [0 if dif > 1  else dif for dif in x])
+    traps['valid_chunks']= tp_distance.apply(
+        lambda x: find_contiguous_ones(array = x, chunk_size = chunk_size))
+    return traps
 
 def find_contiguous_ones(array, chunk_size):
     '''Finds the location of continuous ones in a list of ones and zeros.

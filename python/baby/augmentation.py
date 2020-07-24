@@ -17,12 +17,12 @@ from skimage.draw import rectangle_perimeter
 
 from .preprocessing import segoutline_flattening
 
-
 AUGMENTATION_ORDER = ('substacks', 'rotate', 'vshift', 'hshift', 'downscale',
                       'crop', 'vflip', 'hflip', 'movestacks', 'noise')
 
 
 class Augmenter(object):
+
     def __init__(self, xy_out=80, probs={}, p_noop=0.05, substacks=None):
         """
         Random data augmentation of img and lbl.
@@ -45,27 +45,28 @@ class Augmenter(object):
 
         if type(xy_out) is int:
             self.xy_out = (xy_out, xy_out)
-        elif len(xy_out)==2:
+        elif len(xy_out) == 2:
             self.xy_out = xy_out
         else:
             raise Exception('"xy_out" must be an int or pair of ints')
 
         self.xy_in = None
 
-        self.aug_order = [a for a in AUGMENTATION_ORDER
-                          if probs.get(a,1)>0 or a=='crop']
+        self.aug_order = [
+            a for a in AUGMENTATION_ORDER
+            if probs.get(a, 1) > 0 or a == 'crop'
+        ]
 
         # Treat 'crop' and 'substacks' specially to have p = 1
         guaranteed_augs = ('crop', 'substacks')
         n_augs = len(self.aug_order) - len(guaranteed_augs)
-        p_default = (1.-p_noop)**n_augs/n_augs
+        p_default = (1. - p_noop)**n_augs / n_augs
         self.probs = np.array([
             1 if a in guaranteed_augs else probs.get(a, p_default)
             for a in self.aug_order
         ])
 
         self.nsubstacks = substacks
-
 
     def __call__(self, img, lbl):
         """
@@ -92,15 +93,15 @@ class Augmenter(object):
         self.xy_in = img.shape[:2]
 
         for a, p in zip(self.aug_order, self.probs):
-            if p==0.0:
+            if p == 0.0:
                 continue
-            elif p==1.0:
+            elif p == 1.0:
                 img, lbl = getattr(self, a)(img, lbl)
             else:
-                if np.random.uniform()<p:
+                if np.random.uniform() < p:
                     img, lbl = getattr(self, a)(img, lbl)
-                    if lbl_is_bool and lbl.dtype != 'bool':
-                        lbl = lbl > 0.5 # ensure label stays boolean
+            if lbl_is_bool and lbl.dtype != 'bool':
+                lbl = lbl > 0.5  # ensure label stays boolean
 
         self.xy_in = None
 
@@ -110,26 +111,30 @@ class Augmenter(object):
 
         return (img, lbl)
 
-
     def substacks(self, img, lbl):
         self.refslice = 0
+        nz = 1 if len(img.shape) < 3 else img.shape[2]
         if self.nsubstacks == 1:
-            self.refslice = np.random.choice(range(img.shape[2])) + 1
+            self.refslice = np.random.choice(range(nz)) + 1
             # print('selecting substack {} / {}...'.format(
             #     self.refslice, img.shape[2]))
             img = img[:, :, self.refslice - 1, None]
-        elif self.nsubstacks == 3:
-            choices = [[True, False, True, False, True],
-                       [True, True, False, False, True],
-                       [True, False, False, True, True],
-                       [False, True, True, False, True],
-                       [False, True, False, True, True],
-                       [True, False, True, True, False],
-                       [True, True, False, True, False]]
-            img = img[:,:,np.random.choice(choices)]
+        elif self.nsubstacks == 3 and nz == 5:
+            choices = [
+                [True, False, True, False, True],
+                [True, True, True, False, False],
+                [False, True, True, True, False],
+                [False, False, True, True, True],
+                # [True, True, False, False, True],
+                # [True, False, False, True, True],
+                [False, True, True, False, True],
+                [False, True, False, True, True],
+                [True, False, True, True, False],
+                [True, True, False, True, False]
+            ]
+            img = img[:, :, np.random.choice(choices)]
 
         return img, lbl
-
 
     def rotate(self, img, lbl):
         """Random rotation
@@ -139,11 +144,14 @@ class Augmenter(object):
         .. image:: ../report/figures/augmentations/turn.*
         """
         angle = np.random.choice(360)
-        return (
-            transform.rotate(img, angle=angle, mode='reflect', resize=True),
-            transform.rotate(lbl, angle=angle, mode='reflect', resize=True)
-        )
-
+        return (transform.rotate(img,
+                                 angle=angle,
+                                 mode='reflect',
+                                 resize=True),
+                transform.rotate(lbl,
+                                 angle=angle,
+                                 mode='reflect',
+                                 resize=True))
 
     def vshift(self, img, lbl, maxpix=None):
         """Shift along height, max of 10px by default
@@ -160,12 +168,11 @@ class Augmenter(object):
                 inshape = img.shape[0]
             else:
                 inshape = self.xy_in[0]
-            maxpix = np.max([0, (inshape - self.xy_out[0])//2])
+            maxpix = np.max([0, (inshape - self.xy_out[0]) // 2])
 
-        pix = np.random.choice(np.arange(-maxpix, maxpix+1, dtype='int'))
+        pix = np.random.choice(np.arange(-maxpix, maxpix + 1, dtype='int'))
         return (shift(img, [pix, 0, 0], mode='reflect', order=0),
                 shift(lbl, [pix, 0, 0], mode='reflect', order=0))
-
 
     def hshift(self, img, lbl, maxpix=None):
         """Shift along width, max of 10px by default
@@ -182,19 +189,17 @@ class Augmenter(object):
                 inshape = img.shape[1]
             else:
                 inshape = self.xy_in[1]
-            maxpix = np.max([0, (inshape - self.xy_out[1])//2])
+            maxpix = np.max([0, (inshape - self.xy_out[1]) // 2])
 
-        pix = np.random.choice(np.arange(-maxpix, maxpix+1, dtype='int'))
+        pix = np.random.choice(np.arange(-maxpix, maxpix + 1, dtype='int'))
         return (shift(img, [0, pix, 0], mode='reflect', order=0),
                 shift(lbl, [0, pix, 0], mode='reflect', order=0))
-
 
     def crop(self, img, lbl, xysize=None):
         if xysize is None:
             xysize = self.xy_out
 
         return _apply_crop(img, xysize), _apply_crop(lbl, xysize)
-
 
     def downscale(self, img, lbl, maxpix=None):
         if maxpix is None:
@@ -204,17 +209,15 @@ class Augmenter(object):
                 inshape = self.xy_in
             maxpix = np.max([0, np.min(inshape) - np.max(self.xy_out)])
 
-        pix = np.random.choice(maxpix+1)
+        pix = np.random.choice(maxpix + 1)
         pix = maxpix
-        img_crop, lbl_crop = self.crop(
-            img, lbl, xysize=np.array(self.xy_out)+pix)
+        img_crop, lbl_crop = self.crop(img,
+                                       lbl,
+                                       xysize=np.array(self.xy_out) + pix)
 
-        return (
-            transform.resize(img_crop, self.xy_out),
-            transform.resize(
-                lbl_crop, self.xy_out, anti_aliasing_sigma=0.05) > 0.3
-        )
-
+        return (transform.resize(img_crop, self.xy_out),
+                transform.resize(
+                    lbl_crop, self.xy_out, anti_aliasing_sigma=0.05) > 0.3)
 
     def vflip(self, img, lbl):
         """Vertical flip
@@ -225,7 +228,6 @@ class Augmenter(object):
         """
         return np.flip(img, axis=0), np.flip(lbl, axis=0)
 
-
     def hflip(self, img, lbl):
         """Horizontal flip
 
@@ -235,7 +237,6 @@ class Augmenter(object):
         """
         return np.flip(img, axis=1), np.flip(lbl, axis=1)
 
-
     def movestacks(self, img, lbl):
         """Translate stacks in img to increase robustness to shifts in focus
 
@@ -243,15 +244,14 @@ class Augmenter(object):
             repeated
         """
 
-        if np.random.uniform()<0.5:
+        if np.random.uniform() < 0.5:
             # Move img stacks up by one
-            img[:,:,1:] = img[:,:,:-1]
+            img[:, :, 1:] = img[:, :, :-1]
         else:
             # Move img stacks down by one
-            img[:,:,:-1] = img[:,:,1:]
+            img[:, :, :-1] = img[:, :, 1:]
 
         return img, lbl
-
 
     def noise(self, img, lbl):
         """Add gaussian noise to the img (not the lbl)
@@ -260,7 +260,6 @@ class Augmenter(object):
         img += np.random.normal(scale=np.random.exponential(0.003),
                                 size=img.shape)
         return img, lbl
-
 
     def elastic_deform(self, img, lbl, params={}):
         """Slight deformation
@@ -293,36 +292,60 @@ class Augmenter(object):
 
 
 class SmoothingSigmaModel(object):
-    def __init__(self, m=None, c=None):
-        self._m = m
+    """Model for picking a smoothing sigma for gaussian filtering
+    
+    a, b and c should be obtained by fitting data to the following model:
+        nedge = c + a * exp(b * sigma)
+    """
+
+    def __init__(self, a=None, b=None, c=None):
+        self._a = a
+        self._b = b
         self._c = c
-        self._formula = 'sigma = m*log(nedge) + c'
+        self._formula = 'sigma = log((nedge - c) / a) / b'
 
     def save(self, filename):
         with open(filename, 'wt') as f:
-            json.dump({'m': self._m, 'c': self._c}, f)
+            json.dump(
+                {
+                    'a': self._a,
+                    'b': self._b,
+                    'c': self._c,
+                    'formula': self._formula
+                }, f)
 
     def load(self, filename):
         with open(filename, 'rt') as f:
             model = json.load(f)
-        if self._formula != model.get('formula'):
+        if model.get('formula') == 'sigma = m*log(nedge) + c':
+            m, c = (model.get(k, 0) for k in ('m', 'c'))
+            self._a = np.exp(-c * m)
+            self._b = 1 / m
+            self._c = 0
+        elif self._formula != model.get('formula'):
             raise BadFile('Model formula does not match SmoothingSigmaModel')
-        self._m, self._c = (model[k] for k in ('m', 'c'))
+        else:
+            self._a, self._b, self._c = (
+                model.get(k, 0) for k in ('a', 'b', 'c'))
 
     def __repr__(self):
-        return 'SmoothingSigmaModel: {}; m = {:.2f}, c = {:.2f}'.format(
-                self._formula, self._m, self._c)
+        return 'SmoothingSigmaModel: {}; a = {:.2f}, b = {:.2f}, c = {:.2f}'.format(
+            self._formula, self._a, self._b, self._c)
 
     def __call__(self, s):
-        return self._m * np.log(np.sum(s)) + self._c
+        return np.log(np.clip(
+            (np.sum(s) - self._c) / self._a, 1, None)) / self._b
 
 
 class SmoothedLabelAugmenter(Augmenter):
-    def __init__(self, sigmafunc, targetgenfunc=segoutline_flattening, **kwargs):
+
+    def __init__(self,
+                 sigmafunc,
+                 targetgenfunc=segoutline_flattening,
+                 **kwargs):
         super(SmoothedLabelAugmenter, self).__init__(**kwargs)
         self.sigmafunc = sigmafunc
         self.targetgenfunc = targetgenfunc
-
 
     def __call__(self, img, lbl_info):
         """This augmenter needs to be used in combination with a label
@@ -331,14 +354,13 @@ class SmoothedLabelAugmenter(Augmenter):
 
         lbl, info = lbl_info
 
-        lbl_stack = []
-        for s in np.dsplit(lbl, lbl.shape[2]):
-            s = np.squeeze(s)
-            # Only smooth label if it is non-empty (allows for empty traps)
-            if s.sum() > 0 and self.sigmafunc(s) > 0:
-                s = gaussian(binary_fill_holes(s), self.sigmafunc(s))
-            lbl_stack += [s[..., np.newaxis]]
-        lbl = np.concatenate(lbl_stack, axis=2)
+        # Smooth filled label for to avoid anti-aliasing artefacts
+        lbl = lbl.astype('float')
+        for l in range(lbl.shape[2]):
+            o = lbl[..., l]  # slice a single outline
+            if o.sum() > 0 and self.sigmafunc(o) > 0:
+                lbl[..., l] = gaussian(binary_fill_holes(o),
+                                       self.sigmafunc(o))
 
         img, lbl = super(SmoothedLabelAugmenter, self).__call__(img, lbl)
 
@@ -359,17 +381,15 @@ class SmoothedLabelAugmenter(Augmenter):
 
         return img, lbl
 
-
     def crop(self, img, lbl, xysize=None):
         if xysize is None:
             xysize = np.array(self.xy_out)
 
         # Find edges and fill cells before cropping
         for s in range(lbl.shape[2]):
-            lbl[:,:,s] = _filled_canny(lbl[:,:,s])
+            lbl[:, :, s] = _filled_canny(lbl[:, :, s])
 
         return _apply_crop(img, xysize), _apply_crop(lbl, xysize)
-
 
     def downscale(self, img, lbl, maxpix=None):
         inshape = img.shape[:2]
@@ -379,19 +399,18 @@ class SmoothedLabelAugmenter(Augmenter):
             maxpix = np.max([0, np.min(inshape) - np.max(self.xy_out)])
 
         # Allow for small chance of no scaling, but robust if image sizes equal
-        pix = np.random.choice(maxpix+1)
-        scaling = (np.min(inshape)-pix)/np.min(inshape)
-        outshape = np.floor(np.array(img.shape[:2])*scaling)
+        pix = np.random.choice(maxpix + 1)
+        scaling = (np.min(inshape) - pix) / np.min(inshape)
+        outshape = np.floor(np.array(img.shape[:2]) * scaling)
 
-        return (
-            transform.resize(img, outshape),
-            transform.resize(lbl, outshape, anti_aliasing=False)
-        )
+        return (transform.resize(img, outshape),
+                transform.resize(lbl, outshape, anti_aliasing=False))
 
 
 class DownscalingAugmenter(SmoothedLabelAugmenter):
+
     def __init__(self, *args, pixdev=4, xy_scaled=None, **kwargs):
-        super(DownscalingAugmenter, self).__init__(*args,**kwargs)
+        super(DownscalingAugmenter, self).__init__(*args, **kwargs)
         self.probs[self.aug_order.index('downscale')] = 1
         self.pixdev = pixdev
         self.xy_scaled = xy_scaled or self.xy_out
@@ -403,19 +422,83 @@ class DownscalingAugmenter(SmoothedLabelAugmenter):
                 inshape = self.xy_in
             maxpix = np.max([0, np.min(inshape) - np.max(self.xy_scaled)])
 
-        pix = np.arange(np.max([0, maxpix - self.pixdev]), maxpix+1)
+        pix = np.arange(np.max([0, maxpix - self.pixdev]), maxpix + 1)
         if len(pix) == 0 or len(pix) == 1:
             pix = maxpix
         else:
             pix = np.random.choice(pix)
-        scaling = (np.min(inshape)-pix)/np.min(inshape)
-        outshape = np.floor(np.array(img.shape[:2])*scaling)
+        scaling = (np.min(inshape) - pix) / np.min(inshape)
+        outshape = np.floor(np.array(img.shape[:2]) * scaling)
 
-        return (
-            transform.resize(img, outshape),
-            transform.resize(lbl, outshape, anti_aliasing=False)
-        )
+        return (transform.resize(img, outshape),
+                transform.resize(lbl, outshape, anti_aliasing=False))
 
+
+class ScalingAugmenter(SmoothedLabelAugmenter):
+    """Augmenter with a target pixel size
+
+    Assumes that images have `pixel_size` property in their meta info. If it
+    is missing, images are assumed to be at the target size.
+
+    NB: The `downscale` augmentation can now also upscale the image.
+    """
+
+    def __init__(self,
+                 *args,
+                 target_pixel_size=0.263,
+                 scale_frac=0.05,
+                 **kwargs):
+        super(ScalingAugmenter, self).__init__(*args, **kwargs)
+        self.target_pixel_size = target_pixel_size
+        self.scale_frac = scale_frac
+        scale_index = self.aug_order.index('downscale')
+        self.scale_prob = self.probs[scale_index]
+        self.probs[scale_index] = 1
+
+    def __call__(self, img, lbl_info):
+        lbl, info = lbl_info
+        self._input_pix_size = info.get('pixel_size', self.target_pixel_size)
+        self._scaling = self._input_pix_size / self.target_pixel_size
+        self._outshape = np.round(np.array(self.xy_out) / self._scaling)
+        img, lbl = super(ScalingAugmenter, self).__call__(img, lbl_info)
+        self._input_pix_size = None
+        self._scaling = None
+        self._outshape = None
+        return img, lbl
+
+    def vshift(self, img, lbl, maxpix=None):
+        if maxpix is None:
+            if self.xy_in is None:
+                inshape = img.shape[0]
+            else:
+                inshape = self.xy_in[0]
+            maxpix = np.max([0, (inshape - self._outshape[0]) // 2])
+        return super(ScalingAugmenter, self).vshift(img, lbl, maxpix=maxpix)
+
+    def hshift(self, img, lbl, maxpix=None):
+        if maxpix is None:
+            if self.xy_in is None:
+                inshape = img.shape[1]
+            else:
+                inshape = self.xy_in[1]
+            maxpix = np.max([0, (inshape - self._outshape[1]) // 2])
+        return super(ScalingAugmenter, self).hshift(img, lbl, maxpix=maxpix)
+
+    def downscale(self, img, lbl, maxpix=None):
+        # Scale image and label to target pixel size
+        inshape = img.shape[:2]
+        scaling = self._scaling
+
+        # Apply random scaling according to probability for this op
+        p = self.scale_prob
+        if p == 1.0 or (p > 0 and np.random.uniform() < p):
+            scaling += scaling * self.scale_frac * np.random.uniform(-1, 1)
+
+        outshape = np.round(np.array(img.shape[:2]) * scaling)
+        outshape = np.maximum(outshape, self.xy_out)
+
+        return (transform.resize(img, outshape),
+                transform.resize(lbl, outshape, anti_aliasing=False))
 
 
 # =============== UTILITY FUNCTIONS ====================== #
@@ -424,9 +507,9 @@ class DownscalingAugmenter(SmoothedLabelAugmenter):
 def _apply_crop(stack, xysize):
     cropy, cropx = xysize
     starty, startx = stack.shape[:2]
-    startx = (startx - cropx)//2
-    starty = (starty - cropy)//2
-    return stack[starty:(starty+cropy), startx:(startx+cropx), ...]
+    startx = (startx - cropx) // 2
+    starty = (starty - cropy) // 2
+    return stack[starty:(starty + cropy), startx:(startx + cropx), ...]
 
 
 def _elastic_deform(image, alpha, sigma, random_state=None):
@@ -443,13 +526,16 @@ def _elastic_deform(image, alpha, sigma, random_state=None):
         random_state = np.random.RandomState(None)
 
     shape = image[:, :, 0].shape
-    dx = gaussian_filter((random_state.rand(*shape) * 2 - 1),
-                        sigma, mode="constant", cval=0) * alpha
-    dy = gaussian_filter((random_state.rand(*shape) * 2 - 1),
-                        sigma, mode="constant", cval=0) * alpha
+    dx = gaussian_filter(
+        (random_state.rand(*shape) * 2 - 1), sigma, mode="constant",
+        cval=0) * alpha
+    dy = gaussian_filter(
+        (random_state.rand(*shape) * 2 - 1), sigma, mode="constant",
+        cval=0) * alpha
 
-    _x, _y = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]),
-                        indexing='ij')
+    _x, _y = np.meshgrid(np.arange(shape[0]),
+                         np.arange(shape[1]),
+                         indexing='ij')
     indices = np.reshape(_x + dx, (-1, 1)), np.reshape(_y + dy, (-1, 1))
     if len(image.shape) == 3:
         result = np.empty_like(image)
@@ -457,13 +543,14 @@ def _elastic_deform(image, alpha, sigma, random_state=None):
             # iterate over depth
             cval = np.median(image[:, :, d])
             result[:, :, d] = map_coordinates(image[:, :, d],
-                                            indices, order=1,
-                                            cval=cval).reshape(shape)
+                                              indices,
+                                              order=1,
+                                              cval=cval).reshape(shape)
         result
     else:
         cval = np.median(image)
-        result = map_coordinates(image, indices,
-                                order=1, cval=cval).reshape(shape)
+        result = map_coordinates(image, indices, order=1,
+                                 cval=cval).reshape(shape)
     return result
 
 
@@ -479,18 +566,17 @@ def _filled_canny(segblur, bp=2):
 
     se = canny(np.pad(segblur, bp, 'edge'), sigma=0)
     sf = np.zeros(se.shape, dtype='bool')
-    sf[bp:-bp,bp:-bp] = se[bp:-bp,bp:-bp]
+    sf[bp:-bp, bp:-bp] = se[bp:-bp, bp:-bp]
 
     # The following assumes that the cell does not intersect with opposing
     # borders, filling bordering with two U-shaped border edges:
-    sf[:bp,:] = True
-    sf[-bp:,:] = True
-    sf[:,:bp] = True
+    sf[:bp, :] = True
+    sf[-bp:, :] = True
+    sf[:, :bp] = True
     sf = binary_fill_holes(sf)
 
-    sf[:,:bp] = False
-    sf[:,-bp:] = True
+    sf[:, :bp] = False
+    sf[:, -bp:] = True
     sf = binary_fill_holes(sf)
 
-    return sf[bp:-bp,bp:-bp]
-
+    return sf[bp:-bp, bp:-bp]

@@ -264,7 +264,8 @@ class BabyBrain(object):
 
         tnames = self.flattener.names()
         i_budneck = tnames.index('bud_neck')
-        i_bud = tnames.index('sml_fill')
+        bud_target = 'sml_fill' if 'sml_fill' in tnames else 'sml_inte'
+        i_bud = tnames.index(bud_target)
 
         for seg_output in self.segment(bf_img_batch,
                                        yield_masks=True,
@@ -331,7 +332,8 @@ class BabyBrain(object):
 
         tnames = self.flattener.names()
         i_budneck = tnames.index('bud_neck')
-        i_bud = tnames.index('sml_fill')
+        bud_target = 'sml_fill' if 'sml_fill' in tnames else 'sml_inte'
+        i_bud = tnames.index(bud_target)
 
         segment_gen = self.segment(bf_img_batch,
                                    yield_masks=True,
