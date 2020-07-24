@@ -2,6 +2,7 @@ import json
 import re
 
 from pathlib import Path
+from typing import Union
 from fnmatch import translate as glob_to_re
 from os import walk
 from itertools import groupby, chain, repeat
