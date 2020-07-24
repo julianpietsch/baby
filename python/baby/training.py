@@ -408,7 +408,7 @@ class Nursery(BabyTrainer):
     pass
 
 def load_history(subdir):
-    with open(log_dir / subdir / 'history.pkl', 'rb') as f:
+    with open(LOG_DIR / subdir / 'history.pkl', 'rb') as f:
         return pickle.load(f)
 
 
