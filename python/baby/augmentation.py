@@ -68,7 +68,7 @@ class Augmenter(object):
 
         self.nsubstacks = substacks
 
-    def __call__(self, img, lbl):
+    def __call__(self, img, lbl_info):
         """
         Random data augmentation of img and lbl.
 
@@ -85,6 +85,10 @@ class Augmenter(object):
         """
 
         # Ensure that img and lbl have the same xy dimensions
+        if isinstance(lbl_info, tuple):
+            lbl, info = lbl_info
+        else:
+            lbl = lbl_info
         assert img.shape[:2] == lbl.shape[:2], \
             'xy dimensions of img and lbl are mismatched'
 
