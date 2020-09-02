@@ -13,6 +13,7 @@ setup(
     description='Birth Annotator for Budding Yeast',
     install_requires=['scipy',
                       'numpy',
+                      'pandas',
                       'scikit-image',
                       'tensorflow',
                       'imageio',
