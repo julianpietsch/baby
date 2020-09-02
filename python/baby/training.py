@@ -1,11 +1,15 @@
 import json
 import pickle
+import shutil
+from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple, Union, Tuple, Any
 import numpy as np
+from kerastuner import RandomSearch
 from numpy.polynomial import Polynomial
 from scipy.optimize import curve_fit
 import pandas as pd
+from tensorflow.python.keras.models import load_model
 from tqdm import trange
 from skimage import filters
 from skimage import transform
@@ -37,6 +41,7 @@ from . import models
 from .segmentation import (binary_edge, mask_iou, squareconn,
                            morph_radial_thresh_fit, draw_radial)
 from .track_trainer import TrackTrainer, BudTrainer
+
 # from bud_test import BudTrainer
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
@@ -93,6 +98,548 @@ class BabyTrainerParameters(NamedTuple):
     xy_out: int = 80
     target_pixel_size: float = 0.263
     substacks: Union[None, int] = None
+
+
+@contextmanager
+def augmented_generator(gen: ImageLabel, aug: Augmenter):
+    # Save the previous augmenter if any
+    saved_aug = gen.aug
+    gen.aug = aug
+    try:
+        yield gen
+    # Todo: add except otherwise there might be an issue of there is an error?
+    finally:
+        gen.aug = saved_aug
+
+
+class SmoothingModelTrainer:
+    def __init__(self, save_dir, stats_file, model_file):
+        self.save_dir = save_dir
+        self.stats_file = save_dir / stats_file
+        self.model_file = save_dir / model_file
+        self._model = None
+
+    def generate_smoothing_sigma_stats(self, train_gen, val_gen):
+        with augmented_generator(train_gen, lambda x, y: (x, y)) as gen:
+            sss_train = _generate_smoothing_sigma_stats(gen)
+        with augmented_generator(val_gen, lambda x, y: (x, y)) as gen:
+            sss_val = _generate_smoothing_sigma_stats(gen)
+        sss_train['validation'] = False
+        sss_val['validation'] = True
+        sss = pd.concat((sss_train, sss_val))
+        sss.to_csv(self.stats_file)
+
+    @property
+    def stats(self):
+        if self._model is None:
+            if not self.stats_file.exists():
+                raise BadProcess(
+                    'smoothing sigma stats have not been generated')
+            self._model = pd.read_csv(self.stats_file)
+        return TrainValProperty(self._model[~self._model['validation']],
+                                self._model[self._model['validation']])
+
+    @property
+    def model(self):
+        if self._model is None:
+            if self.model_file.is_file():
+                smoothing_sigma_model = SmoothingSigmaModel()
+                smoothing_sigma_model.load(self.model_file)
+                self._model = smoothing_sigma_model
+            else:
+                raise BadProcess(
+                    'The "smoothing_sigma_model" has not been assigned yet')
+        return self._model
+
+    @model.setter
+    def model(self, ssm):
+        if isinstance(ssm, str):
+            ssm_file = find_file(ssm, self.save_dir, 'smoothing_sigma_model')
+            ssm = SmoothingSigmaModel()
+            ssm.load(ssm_file)
+        if not isinstance(ssm, SmoothingSigmaModel):
+            raise BadType(
+                '"smoothing_sigma_model" must be of type "baby.augmentation.SmoothingSigmaModel"'
+            )
+        ssm.save(self.model_file)
+        self._model = ssm
+
+    def _get_grouped_sss(self):
+        group_best_iou = lambda x: x.loc[x['iou'].idxmax(), :]
+        idcols = ['ind', 'cell', 'scaling', 'rotation']
+        stats = self.stats.train
+        stats = stats.groupby(idcols).apply(group_best_iou)
+        filts = {
+            'identity': (stats.scaling == 1) & (stats.rotation == 0),
+            'scaling': stats.scaling != 1,
+            'rotation': stats.rotation != 0
+        }
+        return stats, filts
+
+    def fit(self, filt='identity'):
+        stats, filts = self._get_grouped_sss()
+
+        if filt:
+            stats = stats[filts[filt]]
+
+        # Get initial parameters from linear fit of log transformed nedge
+        b = 10  # initial guess for offset term in final model
+        # Fit s = c + m * log(n - b); want n = b + exp((s - c)/m)
+        pinv = Polynomial.fit(np.log(np.clip(stats.nedge - b, 1, None)),
+                              stats.sigma,
+                              deg=1)
+        c = pinv(0)
+        m = pinv(1) - c
+
+        # Fit n = b + a * exp(p * s); inverse: s = log(n - c) / p - log(a) / p
+        model = lambda s, a, p, b: b + a * np.exp(p * s)
+        p0 = (np.exp(-c / m), 1 / m, b)
+        params, _ = curve_fit(model, stats.sigma, stats.nedge, p0=p0)
+
+        self.model = SmoothingSigmaModel(*params)
+
+    def plot_fitted_model(self):
+        stats, filts = self._get_grouped_sss()
+        model = lambda s, a, p, b: b + a * np.exp(p * s)
+        params = (self.model._a, self._model._b, self.model._c)
+
+        fig, axs = plt.subplots(2,
+                                len(filts),
+                                figsize=(12, 12 * 2 / len(filts)))
+        sigma_max = stats.sigma.max()
+        nedge_max = stats.nedge.max()
+        sigma = np.linspace(0, sigma_max, 100)
+        for ax, (k, f) in zip(axs[0], filts.items()):
+            ax.scatter(stats[f].sigma,
+                       stats[f].nedge,
+                       16,
+                       alpha=0.05,
+                       edgecolors='none')
+            ax.plot(sigma, model(sigma, *params), 'r')
+            ax.set(title=k.title(),
+                   xlabel='sigma',
+                   ylabel='nedge',
+                   ylim=[0, nedge_max])
+
+        nedge = np.linspace(1, nedge_max, 100)
+        for ax, (k, f) in zip(axs[1], filts.items()):
+            ax.scatter(stats[f].nedge,
+                       stats[f].sigma,
+                       16,
+                       alpha=0.05,
+                       edgecolors='none')
+            ax.plot(nedge, [self.model(n) for n in nedge], 'r')
+            ax.set(title=k.title(),
+                   xlabel='nedge',
+                   ylabel='sigma',
+                   ylim=[0, sigma_max])
+
+        fig.savefig(self.save_dir / 'fitted_smoothing_sigma_model.png')
+
+
+class FlattenerTrainer:
+    def __init__(self, save_dir, stats_file, flattener_file):
+        self.save_dir = save_dir
+        self.stats_file = self.save_dir / stats_file
+        self.flattener_file = self.save_dir / flattener_file
+        self._flattener = None
+        self._stats = None
+
+    def generate_flattener_stats(self, train_gen, val_gen,
+                                 train_aug, val_aug, max_erode=5):
+        # Set up temporary flattener
+        old_flattener = getattr(self, '_flattener', None)
+        self.flattener = lambda x, y: x
+        try:
+            with augmented_generator(train_gen, train_aug) as gen:
+                fs_train = _generate_flattener_stats(gen, max_erode)
+            with augmented_generator(val_gen, val_aug) as gen:
+                fs_val = _generate_flattener_stats(gen, max_erode)
+        finally:
+            self.flattener = old_flattener
+
+        with open(self.stats_file, 'wt') as f:
+            json.dump({'train': fs_train, 'val': fs_val}, f)
+        self._stats = None  # trigger reload of property
+
+    @property
+    def stats(self):
+        if self._stats is None:
+            if not self.stats_file.exists():
+                raise BadProcess(
+                    'flattener stats have not been generated')
+            with open(self.stats_file, 'rt') as f:
+                self._stats = json.load(f)
+        # Fixme: this recreates an object at each call, can we just save the
+        #  object?
+        return TrainValProperty(self._stats.get('train', {}),
+                                self._stats.get('val', {}))
+
+    @property
+    def flattener(self):
+        if self._flattener is None:
+            if self.flattener_file.is_file():
+                f = SegmentationFlattening()
+                f.load(self.flattener_file)
+                self._flattener = f
+            else:
+                raise BadProcess('The "flattener" has not been assigned yet')
+        return self._flattener
+
+    @flattener.setter
+    def flattener(self, f):
+        if isinstance(f, str):
+            flattener_file = find_file(f, self.save_dir, 'flattener')
+            f = SegmentationFlattening()
+            f.load(flattener_file)
+        if not isinstance(f, SegmentationFlattening):
+            raise BadType(
+                '"flattener" must be of type "baby.preprocessing.SegmentationFlattening"'
+            )
+        f.save(self.flattener_file)
+        self._flattener = f
+
+    def fit(self, nbins=30, min_size=10, pad_frac=0.03, bud_max=200):
+        if pad_frac > 0.25 or pad_frac < 0:
+            raise BadParam('"pad_frac" must be between 0 and 0.2')
+
+        # Find the best split
+        overlapping = self.stats.train.get('overlap_sizes', [])
+        erosion_sizes = self.stats.train.get('erosion_sizes', [])
+        if len(overlapping) == 0 or len(erosion_sizes) == 0 or \
+                len(list(zip(*erosion_sizes))) != len(overlapping):
+            raise BadProcess(
+                '"flattener_stats.json" file appears to be corrupted')
+
+        o_noerode = overlapping[0]
+        x, y, _ = zip(*o_noerode)
+        max_size = max(x + y)
+        pad = max([pad_frac * max_size, min_size])
+        edges = np.linspace(pad, max_size - pad, nbins)[1:-1]
+
+        o_maxerode = _best_overlapping(overlapping, erosion_sizes, min_size)
+        split0, w0 = _find_best_fgroup_split(o_maxerode, edges, pad=pad)
+
+        ogL, ogH = zip(*[_group_overlapping(o, split0, pad=pad) for o in
+                         overlapping])
+        szgL, szgH = _group_sizes(erosion_sizes, split0, pad=pad)
+
+        ogL = _best_overlapping(ogL, szgL, min_size)
+        ogH = _best_overlapping(ogH, szgH, min_size)
+
+        w_ogL = sum([w for _, _, w in ogL])
+        w_ogH = sum([w for _, _, w in ogH])
+        if w_ogL == w_ogH:
+            w_ogL, w_ogH = w0
+
+        if w_ogL > w_ogH:
+            edges = np.linspace(pad, split0 - pad, nbins)
+            og = ogL
+        else:
+            edges = np.linspace(split0 + pad, max_size, nbins)
+            og = ogH
+
+        split1, _ = _find_best_fgroup_split(og, edges, pad=pad)
+
+        splits = list(sorted([split0, split1]))
+
+        szg0, szg12 = _group_sizes(erosion_sizes, splits[0], pad=pad)
+        szg1, szg2 = _group_sizes(szg12, splits[1], pad=pad)
+
+        ne0 = _best_nerode(szg0, min_size)
+        ne1 = _best_nerode(szg1, min_size)
+        ne2 = _best_nerode(szg2, min_size)
+
+        flattener = SegmentationFlattening()
+
+        flattener.addGroup('small', upper=int(np.round(splits[0] + pad)))
+        flattener.addGroup('medium', lower=int(np.round(splits[0] - pad)),
+                           upper=int(np.round(splits[1] + pad)))
+        flattener.addGroup('large', lower=int(np.round(splits[1] - pad)))
+        flattener.addGroup('buds', upper=bud_max, budonly=True)
+
+        flattener.addTarget('lge_inte', 'large', 'interior', nerode=ne2)
+        flattener.addTarget('lge_edge', 'large', 'edge')
+        flattener.addTarget('mid_inte', 'medium', 'interior', nerode=ne1)
+        flattener.addTarget('mid_edge', 'medium', 'edge')
+        flattener.addTarget('sml_inte', 'small', 'filled', nerode=ne0)
+        flattener.addTarget('sml_edge', 'small', 'edge')
+        flattener.addTarget('bud_neck', 'buds', 'budneck')
+
+        flattener.save(self.flattener_file)
+        self._flattener = None
+
+    def plot_stats(self):
+        overlapping = self.stats.train.get('overlap_sizes', [])
+        max_erode = len(overlapping)
+        fig, axs = plt.subplots(1, max_erode, figsize=(16, 16 / max_erode))
+        x, y, _ = zip(*overlapping[0])
+        max_size = max(x + y)
+        for ax, (e, os) in zip(axs, enumerate(overlapping)):
+            if len(os) > 0:
+                x, y, w = zip(*os)
+            else:
+                x, y, w = 3 * [[]]
+            ax.hist2d(x, y, bins=30, weights=w,
+                      range=[[0, max_size], [0, max_size]])
+            ax.plot((0, max_size), (0, max_size), 'r')
+            ax.set_title('nerosions = {:d}'.format(e))
+        fig.savefig(self.save_dir / 'flattener_stats.png')
+
+
+class HyperParameterTrainer:
+    """
+    Class that chooses the best hyperparameters for a specific model-type.
+
+    Note: uses Keras-tuner Hypermodels -- requires tensorflow 2
+
+    Outputs: a set of parameters for that form of model, into a file.
+    If using tensorflow 1: these parameters need to be set by the user by
+    default.
+    """
+
+    # Todo: where do we stop tweaking?
+    #  - Model parameters
+    #  - Augmentation choices?
+    #  - Optimizer and learning rate?
+    def __init__(self, model, gen, aug):
+        self.aug = aug
+        self.gen = gen
+        self.model = model
+
+        self.tuner = RandomSearch(model,
+                                  objective='val_loss',
+                                  max_trials=5,
+                                  directory='test_dir')
+        self._best_parameters = None
+
+    @property
+    def best_parameters(self):
+        if self._best_parameters is None:
+            self._best_parameters = self.tuner.get_best_hyperparameters(
+            )[0].values
+        return self._best_parameters
+
+    def save_best_parameters(self, filename):
+        with open(filename, 'w') as fd:
+            json.dump(self._best_parameters, fd)
+
+    def search(self, epochs=100, steps_per_epoch=10, **kwargs):
+        """
+        Runs search with the instance's generator and tuner.
+
+        Keyword arguments are those you would normally use in a `model.fit` call.
+        For instance:
+        ```python
+        tuner.search(generator,
+                     steps_per_epoch=train_steps,
+                     epochs=args.nb_epochs,
+                     callbacks=[early_stopping, checkpointer, tensor_board],
+                     validation_data=val_generator,
+                     validation_steps=val_steps,
+                     verbose=1,
+                     workers=args.nb_workers,
+                     class_weight=class_weight)
+        ```
+        :param kwargs:
+        :return:
+        """
+        with augmented_generator(self.gen.train, self.aug.train) as train_gen:
+            with augmented_generator(self.gen.val, self.aug.val) as val_gen:
+                self.tuner.search(train_gen,
+                                steps_per_epoch=steps_per_epoch,
+                                epochs=epochs,
+                                validation_data=val_gen,
+                                **kwargs)
+
+
+class CNNTrainer:
+    # Todo: change class so that hyperparmeter changes don't need to be
+    #  separate models in the models file
+    def __init__(self, save_dir, cnn_set, gen, aug, flattener, max_cnns=3):
+        self.flattener = flattener
+        self.aug = aug
+        self.gen = gen
+        self._max_cnns = max_cnns
+        self.save_dir = save_dir
+        self.cnn_set = cnn_set
+        self._cnn_fn = None
+        self._cnns = dict()
+
+    @property
+    def cnn_fn(self):
+        if self._cnn_fn is None:
+            self.cnn_fn = self.cnn_set[0]
+        return getattr(models, self._cnn_fn)
+
+    @cnn_fn.setter
+    def cnn_fn(self, fn):
+        if fn not in self.cnn_set:
+            raise BadType('That model is not in "parameters.cnn_set"')
+        if not hasattr(models, fn):
+            raise BadType('That is not a recognised model')
+        self._cnn_fn = fn
+
+    @property
+    def cnn_dir(self):
+        d = self.save_dir / self.cnn_name
+        if not d.is_dir():
+            d.mkdir()
+        return d
+
+    @property
+    def cnn_name(self):
+        return get_name(self.cnn_fn)
+
+    @property
+    def cnn(self):
+        if self.cnn_name not in self._cnns:
+            if len(self._cnns) > self._max_cnns:
+                # To avoid over-consuming memory reset graph
+                # TODO: ensure TF1/TF2 compat and check RTX bug
+                tf.keras.backend.clear_session()
+                # Reset any potentially loaded models
+                self._cnns = dict()
+                self._opt_cnn = None
+            # Todo: separate generator from trainer
+            #   Make model accept an input shape and a set of outputs
+            self.gen.train.aug = self.aug.train
+            print('Loading "{}" CNN...'.format(self.cnn_name))
+            model = self.cnn_fn(self.gen.train, self.flattener)
+            self._cnns[self.cnn_name] = model
+
+            # Save initial weights if they haven't already been saved
+            filename = self.cnn_dir / INIT_WEIGHTS_FILE
+            if not filename.exists():
+                print('Saving initial weights...')
+                model.save_weights(str(filename))
+        return self._cnns[self.cnn_name]
+
+    @property
+    def histories(self):
+        # Always get the most up-to-date version from disk
+        hdict = {}
+        active_cnn_fn = self.cnn_name
+        try:
+            for cnn_id in self.cnn_set:
+                self.cnn_fn = cnn_id
+                history_file = self.cnn_dir / HISTORY_FILE
+                if not history_file.exists():
+                    continue
+                with open(history_file, 'rb') as f:
+                    history = pickle.load(f)
+                history['name'] = self.cnn_name
+                history['file'] = history_file
+                hdict[cnn_id] = history
+        finally:
+            self.cnn_fn = active_cnn_fn
+        return hdict
+
+    @property
+    def opt_dir(self):
+        history = min(self.histories.values(),
+                      default=None,
+                      key=lambda x: min(x['history']['val_loss']))
+        if not history:
+            raise BadProcess('No trained CNN models found')
+        return history['file'].parent
+
+    @property
+    def opt_cnn(self):
+        if self._opt_cnn is None:
+            opt_dir = self.cnn_opt_dir
+            opt_file = opt_dir / OPT_WEIGHTS_FILE
+            if not opt_file.exists():
+                raise BadProcess(
+                    'Optimised model for {} model is missing'.format(
+                        opt_dir.name))
+            self._opt_cnn = load_model(str(opt_file),
+                                       custom_objects=custom_objects)
+        return self._opt_cnn
+
+    def fit(self, epochs=400, schedule=None, replace=False, extend=False):
+        # First check output names match current flattener names
+        assert (all([
+            m == f
+            for m, f in zip(self.cnn.output_names, self.flattener.names())
+        ]))
+
+        if schedule is None:
+            schedule = [(1e-3, epochs)]
+
+        finalfile = self.cnn_dir / FINAL_WEIGHTS_FILE
+        if extend:
+            self.cnn.load_weights(str(finalfile))
+        else:
+            initfile = self.cnn_dir / INIT_WEIGHTS_FILE
+            self.cnn.load_weights(str(initfile))
+
+        optfile = self.cnn_dir / OPT_WEIGHTS_FILE
+        if not replace and optfile.is_file():
+            raise BadProcess('Optimised weights already exist')
+
+        logdir = self.cnn_dir / LOG_DIR
+        callbacks = [
+            ModelCheckpoint(filepath=str(optfile),
+                            monitor='val_loss',
+                            save_best_only=True,
+                            verbose=1),
+            TensorBoard(log_dir=str(logdir)),
+            LearningRateScheduler(
+                lambda epoch: schedule_steps(epoch, schedule))
+        ]
+        self.gen.train.aug = self.aug.train
+        self.gen.val.aug = self.aug.val
+        history = self.cnn.fit_generator(generator=self.gen.train,
+                                         validation_data=self.gen.val,
+                                         epochs=epochs,
+                                         callbacks=callbacks)
+
+        # Save history
+        with open(self.cnn_dir / HISTORY_FILE, 'wb') as f:
+            pickle.dump({
+                'history': history.history,
+                'epoch': history.epoch
+            }, f)
+
+        print('Saving final weights...')
+        self.cnn.save_weights(str(finalfile))
+
+    def plot_histories(self, key='loss', log=True, window=21, ax=None,
+                       save=True, legend=True):
+        if save:
+            fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
+        if ax is None:
+            ax = plt.gca()
+
+        max_epoch = 1
+        hdict = self.histories
+        for history in hdict.values():
+            epoch = history['epoch']
+            max_epoch = max([max_epoch, max(epoch)])
+            val = history['history']['val_' + key]
+            hndl = ax.plot(epoch,
+                           savgol_filter(val, window, 3),
+                           label=history['name'] + ' Val')
+            val = history['history'][key]
+            colour = to_rgba(hndl[0].get_color(), 0.7)
+            ax.plot(epoch,
+                    savgol_filter(val, window, 3),
+                    ':',
+                    color=colour,
+                    label=history['name'] + ' Train')
+
+        ax.set(xlabel='Epochs',
+               ylabel=key.replace('_', ' ').title(),
+               xlim=[0, max_epoch])
+        if log:
+            ax.set_yscale('log')
+        if legend:
+            ax.legend()
+
+        if save:
+            fig.savefig(self.save_dir / 'histories_{}.png'.format(key))
+            plt.close(fig)
 
 
 class BabyTrainer(object):
@@ -183,7 +730,7 @@ class BabyTrainer(object):
             self._gen_val = None
             # Trigger save of the data
             datafile = self.save_dir / self.parameters.train_val_pairs_file
-            self._impairs.save(datafile)
+            self._impairs.save(datafile, self.base_dir)
             self._ncells = self._impairs.ncells
 
     @property
@@ -192,7 +739,7 @@ class BabyTrainer(object):
             self._impairs = TrainValPairs()
             pairs_file = self.save_dir / self.parameters.train_val_pairs_file
             if pairs_file.is_file():
-                self._impairs.load(pairs_file)
+                self._impairs.load(pairs_file, self.base_dir)
         self._check_for_data_update()
         return self._impairs
 
@@ -247,20 +794,21 @@ class BabyTrainer(object):
 
         ncol = len(img_batch)
         nrow = len(target_names) + 1
-        fig = plt.figure(figsize=(3*ncol, 3*nrow))
+        fig = plt.figure(figsize=(3 * ncol, 3 * nrow))
         for b, (bf, seg) in enumerate(zip(img_batch, lbl_batch)):
-            plt.subplot(nrow, ncol, b+0*ncol+1)
-            plt.imshow(bf[:,:,0], cmap='gray')
-            plt.imshow(colour_segstack(seg[:,:,edge_inds]))
+            plt.subplot(nrow, ncol, b + 0 * ncol + 1)
+            plt.imshow(bf[:, :, 0], cmap='gray')
+            plt.imshow(colour_segstack(seg[:, :, edge_inds]))
 
             for i, name in enumerate(target_names):
-                plt.subplot(nrow, ncol, b+(i+1)*ncol+1)
-                plt.imshow(seg[:,:,i], cmap='gray')
+                plt.subplot(nrow, ncol, b + (i + 1) * ncol + 1)
+                plt.imshow(seg[:, :, i], cmap='gray')
                 plt.title(name)
 
         fig.savefig(self.save_dir / '{}_generator_sample.png'.format(
             'validation' if validation else 'training'))
 
+    # Todo: remove - SmoothingSigmaTrainer
     def generate_smoothing_sigma_stats(self):
         gt = self.gen.train
         a = gt.aug
@@ -281,6 +829,7 @@ class BabyTrainer(object):
         sss_file = self.save_dir / sss_file
         sss.to_csv(sss_file)
 
+    # Todo: remove - SmoothingSigmaTrainer
     @property
     def smoothing_sigma_stats(self):
         if getattr(self, '_sss', None) is None:
@@ -293,6 +842,7 @@ class BabyTrainer(object):
         return TrainValProperty(self._sss[~self._sss['validation']],
                                 self._sss[self._sss['validation']])
 
+    # Todo: remove - SmoothingSigmaTrainer
     @property
     def smoothing_sigma_model(self):
         if not hasattr(self, '_ssm') or not self._ssm:
@@ -307,6 +857,7 @@ class BabyTrainer(object):
                     'The "smoothing_sigma_model" has not been assigned yet')
         return self._ssm
 
+    # Todo: remove - SmoothingSigmaTrainer
     @smoothing_sigma_model.setter
     def smoothing_sigma_model(self, ssm):
         if isinstance(ssm, str):
@@ -321,6 +872,7 @@ class BabyTrainer(object):
         ssm.save(self.save_dir / p.smoothing_sigma_model_file)
         self._ssm = ssm
 
+    # Todo: remove - FlattenerTrainer
     def generate_flattener_stats(self, max_erode=5):
         # Set up temporary flattener
         old_flattener = getattr(self, '_flattener', None)
@@ -339,8 +891,9 @@ class BabyTrainer(object):
         fs_file = self.save_dir / fs_file
         with open(fs_file, 'wt') as f:
             json.dump({'train': fs_train, 'val': fs_val}, f)
-        self._fs = None # trigger reload of property
+        self._fs = None  # trigger reload of property
 
+    # Todo: remove - FlattenerTrainer
     @property
     def flattener_stats(self):
         if getattr(self, '_fs', None) is None:
@@ -354,6 +907,7 @@ class BabyTrainer(object):
         return TrainValProperty(self._fs.get('train', {}),
                                 self._fs.get('val', {}))
 
+    # Todo: remove - FlattenerTrainer
     @property
     def flattener(self):
         if not hasattr(self, '_flattener') or not self._flattener:
@@ -367,6 +921,7 @@ class BabyTrainer(object):
                 raise BadProcess('The "flattener" has not been assigned yet')
         return self._flattener
 
+    # Todo: remove - FlattenerTrainer
     @flattener.setter
     def flattener(self, f):
         if isinstance(f, str):
@@ -405,12 +960,14 @@ class BabyTrainer(object):
                              })
         return TrainValProperty(t, v)
 
+    # Todo: remove - CNNTrainer
     @property
     def cnn_fn(self):
         if not hasattr(self, '_active_cnn_fn') or not self._active_cnn_fn:
             self.cnn_fn = self.parameters.cnn_set[0]
         return getattr(models, self._active_cnn_fn)
 
+    # Todo: remove - CNNTrainer
     @cnn_fn.setter
     def cnn_fn(self, fn):
         if fn not in self.parameters.cnn_set:
@@ -419,6 +976,7 @@ class BabyTrainer(object):
             raise BadType('That is not a recognised model')
         self._active_cnn_fn = fn
 
+    # Todo: remove - CNNTrainer
     @property
     def cnn_dir(self):
         self.cnn_fn  # ensure that _active_cnn_fn is initialised
@@ -427,10 +985,12 @@ class BabyTrainer(object):
             d.mkdir()
         return d
 
+    # Todo: remove - CNNTrainer
     @property
     def cnn_name(self):
         return get_name(self.cnn_fn)
 
+    # Todo: remove - CNNTrainer
     @property
     def cnn(self):
         if not hasattr(self, '_cnns') or not self._cnns:
@@ -457,6 +1017,7 @@ class BabyTrainer(object):
                 model.save_weights(str(filename))
         return self._cnns[cnn_id]
 
+    # Todo: remove - CNNTrainer
     @property
     def histories(self):
         # Always get the most up-to-date version from disk
@@ -477,6 +1038,7 @@ class BabyTrainer(object):
             self._active_cnn_fn = active_cnn_fn
         return hdict
 
+    # Todo: remove - CNNTrainer
     @property
     def cnn_opt_dir(self):
         history = min(self.histories.values(),
@@ -486,6 +1048,7 @@ class BabyTrainer(object):
             raise BadProcess('No trained CNN models found')
         return history['file'].parent
 
+    # Todo: remove - CNNTrainer
     @property
     def cnn_opt(self):
         if not getattr(self, '_opt_cnn', None):
@@ -500,16 +1063,19 @@ class BabyTrainer(object):
         return self._opt_cnn
 
     def track_trainer(self):
+        # Todo: switch new variable initialization (monkey-patching?)
         if not hasattr(self, '_track_trainer'):
             self._track_trainer = TrackTrainer(self.data._metadata, self.data)
-            return self._track_trainer
+        return self._track_trainer
 
     @property
     def bud_trainer(self):
+        # Todo: switch new variable initialization (monkey-patching?)
         if not hasattr(self, '_track_trainer'):
             self._bud_trainer = BudTrainer(self.data._metadata, self.data)
             return self._bud_trainer
 
+    # Todo: remove - SmoothingModelTrainer
     def _get_grouped_sss(self):
         group_best_iou = lambda x: x.loc[x['iou'].idxmax(), :]
         idcols = ['ind', 'cell', 'scaling', 'rotation']
@@ -522,6 +1088,7 @@ class BabyTrainer(object):
         }
         return stats, filts
 
+    # Todo: remove - SmoothingModelTrainer
     def fit_smoothing_model(self, filt='identity'):
         stats, filts = self._get_grouped_sss()
 
@@ -544,6 +1111,7 @@ class BabyTrainer(object):
 
         self.smoothing_sigma_model = SmoothingSigmaModel(*params)
 
+    # Todo: remove - SmoothingModelTrainer
     def plot_fitted_smoothing_sigma_model(self):
         stats, filts = self._get_grouped_sss()
         ssm = self.smoothing_sigma_model
@@ -583,6 +1151,7 @@ class BabyTrainer(object):
 
         fig.savefig(self.save_dir / 'fitted_smoothing_sigma_model.png')
 
+    # Todo: remove - FlattenerTrainer
     def fit_flattener(self, nbins=30, min_size=10, pad_frac=0.03, bud_max=200):
         if pad_frac > 0.25 or pad_frac < 0:
             raise BadParam('"pad_frac" must be between 0 and 0.2')
@@ -592,7 +1161,8 @@ class BabyTrainer(object):
         erosion_sizes = self.flattener_stats.train.get('erosion_sizes', [])
         if len(overlapping) == 0 or len(erosion_sizes) == 0 or \
                 len(list(zip(*erosion_sizes))) != len(overlapping):
-            raise BadProcess('"flattener_stats.json" file appears to be corrupted')
+            raise BadProcess(
+                '"flattener_stats.json" file appears to be corrupted')
 
         o_noerode = overlapping[0]
         x, y, _ = zip(*o_noerode)
@@ -604,7 +1174,7 @@ class BabyTrainer(object):
         split0, w0 = _find_best_fgroup_split(o_maxerode, edges, pad=pad)
 
         ogL, ogH = zip(*[_group_overlapping(o, split0, pad=pad) for o in
-            overlapping])
+                         overlapping])
         szgL, szgH = _group_sizes(erosion_sizes, split0, pad=pad)
 
         ogL = _best_overlapping(ogL, szgL, min_size)
@@ -637,7 +1207,7 @@ class BabyTrainer(object):
 
         flattener.addGroup('small', upper=int(np.round(splits[0] + pad)))
         flattener.addGroup('medium', lower=int(np.round(splits[0] - pad)),
-                upper=int(np.round(splits[1] + pad)))
+                           upper=int(np.round(splits[1] + pad)))
         flattener.addGroup('large', lower=int(np.round(splits[1] - pad)))
         flattener.addGroup('buds', upper=bud_max, budonly=True)
 
@@ -654,6 +1224,7 @@ class BabyTrainer(object):
         flattener.save(flattener_file)
         self._flattener = None
 
+    # Todo: remove - FlattenerTrainer
     def plot_flattener_stats(self, nbins=30):
         overlapping = self.flattener_stats.train.get('overlap_sizes', [])
         max_erode = len(overlapping)
@@ -665,11 +1236,13 @@ class BabyTrainer(object):
                 x, y, w = zip(*os)
             else:
                 x, y, w = 3 * [[]]
-            ax.hist2d(x, y, bins=30, weights=w, range=[[0, max_size], [0, max_size]])
+            ax.hist2d(x, y, bins=30, weights=w,
+                      range=[[0, max_size], [0, max_size]])
             ax.plot((0, max_size), (0, max_size), 'r')
             ax.set_title('nerosions = {:d}'.format(e))
         fig.savefig(self.save_dir / 'flattener_stats.png')
 
+    # Todo: move to CNNTrainer
     def fit_cnn(self, epochs=400, schedule=None, replace=False, extend=False):
         # First check output names match current flattener names
         assert (all([
@@ -718,13 +1291,9 @@ class BabyTrainer(object):
         print('Saving final weights...')
         self.cnn.save_weights(str(finalfile))
 
-    def plot_histories(self,
-                       key='loss',
-                       log=True,
-                       window=21,
-                       ax=None,
-                       save=True,
-                       legend=True):
+    # Todo: move to CNNTrainer
+    def plot_histories(self, key='loss', log=True, window=21, ax=None,
+                       save=True, legend=True):
         if save:
             fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
         if ax is None:
@@ -759,6 +1328,8 @@ class BabyTrainer(object):
             fig.savefig(self.save_dir / 'histories_{}.png'.format(key))
             plt.close(fig)
 
+    # Todo: move to SegmentationParamTrainer
+    # Todo fill
     def fit_seg_params(self):
         pass
 
@@ -766,9 +1337,11 @@ class BabyTrainer(object):
 class Nursery(BabyTrainer):
     pass
 
+
 def load_history(subdir):
     with open(LOG_DIR / subdir / 'history.pkl', 'rb') as f:
         return pickle.load(f)
+
 
 def get_best_and_worst(model, gen):
     best = {}
@@ -935,15 +1508,17 @@ def _group_sizes(es, thresh, pad=0):
 
 def _group_overlapping(os, thresh, pad=0):
     return ([
-        (x, y, w) for x, y, w in os if x < thresh + pad and y < thresh + pad
-    ], [(x, y, w) for x, y, w in os if x >= thresh - pad and y >= thresh - pad
-       ])
+                (x, y, w) for x, y, w in os if
+                x < thresh + pad and y < thresh + pad
+            ], [(x, y, w) for x, y, w in os if
+                x >= thresh - pad and y >= thresh - pad
+                ])
 
 
 def _best_overlapping(overlapping, erosion_sizes, min_size):
     sz_erosions = list(zip(*erosion_sizes))
     e_invalid = [any([c < min_size for c in e]) for e in
-            sz_erosions[:0:-1]]
+                 sz_erosions[:0:-1]]
     o_valid = [o for o, e in zip(overlapping[:0:-1], e_invalid) if not e]
     o_valid += [overlapping[0]]
     return o_valid[0]
@@ -961,6 +1536,7 @@ def _find_best_fgroup_split(os, edges, pad=0):
         _sum_group_overlapping(os, thresh, pad=pad) for thresh in edges
     ]
     return min(zip(edges, overlaps), key=lambda x: sum(x[1]))
+
 
 def _best_nerode(szg, min_size):
     ne = [

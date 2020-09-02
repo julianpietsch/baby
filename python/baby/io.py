@@ -6,7 +6,7 @@ from typing import Union
 from fnmatch import translate as glob_to_re
 from os import walk
 from itertools import groupby, chain, repeat
-from collections import namedtuple
+from collections import namedtuple, Counter
 import numpy as np
 import pandas as pd
 from PIL.PngImagePlugin import PngInfo
@@ -76,7 +76,7 @@ def load_paired_images(filenames, typeA='Brightfield', typeB='segoutlines'):
     valid = filter(lambda m: m[0], zip(matches, filenames))
     grouped = {
         k: {m.group(2): f for m, f in v
-           } for k, v in groupby(valid, key=lambda m: m[0].group(1))
+            } for k, v in groupby(valid, key=lambda m: m[0].group(1))
     }
     valid = [
         set(v.keys()).issuperset({typeA, typeB}) for v in grouped.values()
@@ -85,7 +85,7 @@ def load_paired_images(filenames, typeA='Brightfield', typeB='segoutlines'):
         raise UnpairedImagesError
     return {
         l: {t: load_tiled_image(f) for t, f in g.items()
-           } for l, g in grouped.items()
+            } for l, g in grouped.items()
     }
 
 
@@ -115,7 +115,7 @@ class TrainValPairs(object):
         if not isinstance(pairs, list):
             raise ValueError('"validation" must be a list')
         self._val_pairs = pairs
-        self._metadata = None # reset metadata if validation data changes
+        self._metadata = None  # reset metadata if validation data changes
 
     @property
     def ncells(self):
@@ -143,36 +143,41 @@ class TrainValPairs(object):
                 for _, l in pairs:
                     info = json.loads(imread(l).meta.get(
                         'Description', '{}'))
-                    pair_meta.append({field: value for field, value in info.items()})
-                    pair_meta[-1]['cellLabels'] = aslist(pair_meta[-1]['cellLabels'])
+                    pair_meta.append(
+                        {field: value for field, value in info.items()})
+                    pair_meta[-1]['cellLabels'] = aslist(
+                        pair_meta[-1]['cellLabels'])
                     pair_meta[-1]['filename'] = l
                     pair_meta[-1]['train_val'] = k
-
 
                 sub_metadata.append(pd.DataFrame(pair_meta))
                 sub_metadata[-1]['list_index'] = sub_metadata[-1].index
             self._metadata = pd.concat(sub_metadata, axis=0, ignore_index=True)
-            self._metadata = self.metadata.loc[np.array([x[0] for x in self.metadata['tilesize']])==81] #TODO Remove this fix when tilesize is consistent or normalised
+            self._metadata = self._metadata.loc[np.array([x[0] for x in
+                                                          self._metadata[
+                                                              'tilesize']]) == 81]  # TODO Remove this fix when tilesize is consistent or normalised
 
         return self._metadata
 
     @property
-    def traps(self, chunk_size = 4, min_tp = 2, trap_together=True):
+    def traps(self, chunk_size=4, min_tp=2, trap_together=True):
         ''' Group the data in chunks to use for cell tracking random forest cross-validation'''
-        df = self._metadata[self._metadata['train_val']=='training'] #TODO Reconsider this filter
+        df = self._metadata[self._metadata[
+                                'train_val'] == 'training']  # TODO Reconsider this filter
         traps = pd.DataFrame(df.sort_values(['tp']).groupby(
             ['experimentID', 'position', 'trap'])['tp'].apply(list))
         # Some of the next parts are disabled while we find out why there are repeated metadatas
         # traps = traps.sample(frac=1, random_state=42) # shuffle dataframe
-        traps['tp_uniq'] = traps['tp'].apply(np.unique) #TODO remove this when metadata issue is fixed
+        traps['tp_uniq'] = traps['tp'].apply(
+            np.unique)  # TODO remove this when metadata issue is fixed
         traps['cont'] = find_continuous_tps(traps['tp_uniq'], chunk_size)
-        #TODO ALAN: Add split operation
+        # TODO ALAN: Add split operation
 
-        if not trap_together: # shuffle after splitting rn chunks?
+        if not trap_together:  # shuffle after splitting rn chunks?
             traps = traps.sample(frac=1, random_state=24)
 
         # remove non-continuous values
-        traps = traps.loc[traps['cont'].apply(len)>min_tp] #clean up
+        traps = traps.loc[traps['cont'].apply(len) > min_tp]  # clean up
         self._traps = traps
         return self._traps
         # return tp_chunks
@@ -188,9 +193,9 @@ class TrainValPairs(object):
         else:
             train_pairs = trainval.get('training', [])
             val_pairs = trainval.get('validation', [])
-        train_pairs = [(base_dir/img, base_dir/lbl)
+        train_pairs = [(base_dir / img, base_dir / lbl)
                        for img, lbl in train_pairs]
-        val_pairs = [(base_dir/img, base_dir/lbl)
+        val_pairs = [(base_dir / img, base_dir / lbl)
                      for img, lbl in val_pairs]
         self.training = train_pairs
         self.validation = val_pairs
@@ -198,16 +203,25 @@ class TrainValPairs(object):
     def save(self, filename, base_dir: Union[Path, str] = './'):
         if isinstance(base_dir, str):
             base_dir = Path(base_dir)
-        with open(filename, 'wt') as f:
-            json.dump(
+        # Create a string first to catch exceptions and avoid overwriting
+        # the train_val_pairs file
+        try:
+            data = json.dumps(
+
                 {
-                    'training': [p.relative_to(base_dir)
+                    'training': [tuple(path.relative_to(base_dir)
+                                       for path in p)
                                  for p in self.training],
-                    'validation': [p.relative_to(base_dir)
+                    'validation': [tuple(path.relative_to(base_dir)
+                                         for path in p)
                                    for p in self.validation]
                 },
-                f,
                 cls=PathEncoder)
+            with open(filename, 'wt') as f:
+                f.write(data)
+
+        except ValueError as e:
+            raise e
 
     def add_from(self,
                  base_dir,
@@ -234,7 +248,7 @@ class TrainValPairs(object):
             t: list(ims)
             for t, ims in groupby(sorted(p, key=first), key=first)
         }
-                   for _, p in groupby(matches, key=prefix)]
+            for _, p in groupby(matches, key=prefix)]
         pairs = [(p['img'][0][2], p['lbl'][0][2])
                  for p in grouped
                  if len(p.get('img', [])) == 1 and len(p.get('lbl', [])) == 1]
@@ -262,12 +276,15 @@ class TrainValPairs(object):
         train_groups, val_groups = set(train_groups), set(val_groups)
 
         # Add new pairs to the existing train-val split
-        self.training += [p for p, g in zip(pairs, pair_groups) if g in train_groups]
-        self.validation += [p for p, g in zip(pairs, pair_groups) if g in val_groups]
+        self.training += [p for p, g in zip(pairs, pair_groups) if
+                          g in train_groups]
+        self.validation += [p for p, g in zip(pairs, pair_groups) if
+                            g in val_groups]
 
     def __repr__(self):
         return 'TrainValPairs: {:d} training and {:d} validation pairs'.format(
             len(self.training), len(self.validation))
+
 
 # ---------------- HELPER FUNCTIONS -----------------------
 
@@ -283,12 +300,14 @@ def aslist(val):
 
     return val
 
+
 def find_continuous_tps(traps, chunk_size):
     tp_distance = traps.apply(lambda x: np.subtract(x[1:], x[:-1]))
-    tp_distance.apply(lambda x: [0 if dif > 1  else dif for dif in x])
-    traps['valid_chunks']= tp_distance.apply(
-        lambda x: find_contiguous_ones(array = x, chunk_size = chunk_size))
+    tp_distance.apply(lambda x: [0 if dif > 1 else dif for dif in x])
+    traps['valid_chunks'] = tp_distance.apply(
+        lambda x: find_contiguous_ones(array=x, chunk_size=chunk_size))
     return traps
+
 
 def find_contiguous_ones(array, chunk_size):
     '''Finds the location of continuous ones in a list of ones and zeros.
@@ -296,11 +315,11 @@ def find_contiguous_ones(array, chunk_size):
     values as individual zeros'''
     chunks_list = []
     if len(array) >= chunk_size:
-        cumsum=0
+        cumsum = 0
         for i in range(len(array)):
-            if array[i]==0 or i==len(array):
+            if array[i] == 0 or i == len(array):
                 chunks_list.append(cumsum)
-                cumsum=0
+                cumsum = 0
             else:
-                cumsum+=1
+                cumsum += 1
     return chunks_list
