@@ -3,7 +3,8 @@
 from collections import Counter
 import pickle
 import numpy as np
-from skimage.measure import regionprops_table
+from skimage.measure import regionprops_table 
+from skimage.transform import resize
 from skimage.draw import polygon
 import os
 
@@ -67,7 +68,7 @@ class Tracker:
         if red_fun is None:
             self.red_fun = np.nanmax
 
-    def calc_feats_from_masks(self, masks, feats2use=None):
+    def calc_feats_from_mask(self, masks, feats2use=None):
         '''
         Calculate feature ndarray from ndarray of cell masks
         ---
@@ -80,9 +81,10 @@ class Tracker:
         feats=[]
         if masks.sum():
             for i in range(masks.shape[2]):
+                # Double conversion to prevent values from being floored to zero
+                resized_mask = resize(masks[..., i], (100, 100)).astype(bool).astype(int)
                 cell_feats = []
-                for feat in regionprops_table(
-                        masks[..., i].astype('int'),
+                for feat in regionprops_table(resized_mask,
                         properties=feats2use or self.feats2use).values():
                     cell_feats.append(feat[0])
                 feats.append(cell_feats)
@@ -147,7 +149,7 @@ class Tracker:
 
         '''
         if new_feats is None:
-            new_feats = self.calc_feats_from_masks(new_img)
+            new_feats = self.calc_feats_from_mask(new_img)
 
         if new_feats.any():
             if prev_feats:
@@ -248,7 +250,7 @@ class Tracker:
         '''
 
         if feats is None:
-            feats = self.calc_feats_from_masks(masks, feats2use=self.ba_feats)
+            feats = self.calc_feats_from_mask(masks, feats2use=self.ba_feats)
         elif len(feats) != len(masks):
             raise Exception('number of features must match number of masks')
 
@@ -366,7 +368,7 @@ class Tracker:
         prev_feats = state.get('prev_feats', [])
 
         # Get features for cells at this time point
-        feats = self.calc_feats_from_masks(masks)
+        feats = self.calc_feats_from_mask(masks)
 
         lastn_lbls = cell_lbls[-self.nstepsback:]
         lastn_feats = prev_feats[-self.nstepsback:]
