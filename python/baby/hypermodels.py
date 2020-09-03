@@ -12,6 +12,7 @@ class UNet(HyperModel):
         self.weights = {n: weights.get(n, 1) for n in outputs}
         self.input_shape = input_shape
         self.outputs = outputs
+        self.name = 'UNet'
 
     def build(self, hp):
         inputs = Input(shape=self.input_shape)
@@ -38,6 +39,7 @@ class MSD(HyperModel):
         self.input_shape = generator.shapes.input[1:]
         self.flattener = flattener
         self.weights = {n : weights.get(n, 1) for n in flattener.names()}
+        self.name = 'MSD'
 
     def build(self, hp):
         inputs = Input(shape=self.input_shape)

@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple, Union, Tuple, Any
 import numpy as np
-from kerastuner import RandomSearch
+from kerastuner import RandomSearch, Tuner, Hyperband, BayesianOptimization
 from numpy.polynomial import Polynomial
 from scipy.optimize import curve_fit
 import pandas as pd
@@ -387,6 +387,18 @@ class FlattenerTrainer:
         fig.savefig(self.save_dir / 'flattener_stats.png')
 
 
+def instantiate_tuner(model, method='random', **kwargs):
+    method = method.lower()
+    if method == 'random':
+        return RandomSearch(model, **kwargs)
+    elif method == 'hyperband':
+        return Hyperband(model, **kwargs)
+    elif method == 'bayesian':
+        return BayesianOptimization(model, **kwargs)
+    else:
+        raise (ValueError, 'Method {} is not supported.'.format(method))
+
+
 class HyperParameterTrainer:
     """
     Class that chooses the best hyperparameters for a specific model-type.
@@ -402,15 +414,26 @@ class HyperParameterTrainer:
     #  - Model parameters
     #  - Augmentation choices?
     #  - Optimizer and learning rate?
-    def __init__(self, model, gen, aug):
+    def __init__(self, model, gen, aug,
+                 tuner: Union[Tuner, None, dict, str] = None):
         self.aug = aug
         self.gen = gen
         self.model = model
 
-        self.tuner = RandomSearch(model,
-                                  objective='val_loss',
-                                  max_trials=5,
-                                  directory='test_dir')
+        if tuner is None:
+            tuner = RandomSearch(model,
+                                 objective='val_loss',
+                                 max_trials=5,
+                                 directory='./',
+                                 project_name=self.model.name,
+                                 overwrite=False)
+        elif isinstance(tuner, str):
+            with open(tuner, 'r') as fd:
+                params = json.load(fd)
+            tuner = instantiate_tuner(self.model, **params)
+        elif isinstance(tuner, dict):
+            tuner = instantiate_tuner(self.model, **tuner)
+        self.tuner = tuner
         self._best_parameters = None
 
     @property
@@ -424,7 +447,8 @@ class HyperParameterTrainer:
         with open(filename, 'w') as fd:
             json.dump(self._best_parameters, fd)
 
-    def search(self, epochs=100, steps_per_epoch=10, **kwargs):
+    def search(self, epochs=100, steps_per_epoch=10, validation_steps=10,
+               **kwargs):
         """
         Runs search with the instance's generator and tuner.
 
@@ -447,10 +471,11 @@ class HyperParameterTrainer:
         with augmented_generator(self.gen.train, self.aug.train) as train_gen:
             with augmented_generator(self.gen.val, self.aug.val) as val_gen:
                 self.tuner.search(train_gen,
-                                steps_per_epoch=steps_per_epoch,
-                                epochs=epochs,
-                                validation_data=val_gen,
-                                **kwargs)
+                                  steps_per_epoch=steps_per_epoch,
+                                  epochs=epochs,
+                                  validation_data=val_gen,
+                                  validation_steps=validation_steps,
+                                  **kwargs)
 
 
 class CNNTrainer:
