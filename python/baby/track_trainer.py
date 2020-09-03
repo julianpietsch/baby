@@ -9,6 +9,7 @@ from .tracker_benchmark import TrackBenchmarker
 
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops_table
+from skimage.transform import resize
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 
@@ -100,10 +101,12 @@ class TrackTrainer(Tracker):
                 print('nlabels and img mismatch in row: ')
 
             trapfeats = [
-                regionprops_table(self.masks[index][..., i].astype('int'),
+                regionprops_table(resize(self.masks[index][..., i],
+                                         (100, 100)).astype('bool').astype('int'),
                                   properties=self.feats2use)  #
                 for i in range(len(lbl))
             ]
+
             for cell, feats in zip(lbl, trapfeats):
                 nindex.append(ind + (cell, ))
                 props_list.append(feats)
@@ -194,7 +197,7 @@ class TrackTrainer(Tracker):
 
     def save_model(self, filename):
         f = open(filename, 'wb')
-        pickle.dump(track_trainer.rf.best_estimator_)
+        pickle.dump(self.rf.best_estimator_, f)
 
     @property
     def benchmarker(self):

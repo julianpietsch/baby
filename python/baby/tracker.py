@@ -122,6 +122,29 @@ class Tracker:
 
         return n3darray
 
+    def predict_from_imgpair(self, img1, img2):
+        ''' Generate predictions for two images. Useful to produce statistics.
+        '''
+        feats1 = self.calc_feats_from_mask(img1)
+        feats2 = self.calc_feats_from_mask(img2)
+
+        feats_3darray = self.calc_feat_ndarray(feats1, feats2)
+
+        pred_matrix = self.predict_proba_from_ndarray(feats_3darray)
+
+    def predict_proba_from_ndarray(self, array_3d):
+        orig_shape = array_3d.shape[:2]
+
+        # Flatten for predictions and then reshape back into matrix
+        pred_list = np.array([
+            val[1] for val in self.ctrack_model.predict_proba(
+                array_3d.reshape(-1, array_3d.shape[
+                    2]))
+        ])
+        pred_matrix = pred_list.reshape(orig_shape)
+
+        return pred_matrix
+
     def get_new_lbls(self,
                      new_img,
                      prev_lbls,
@@ -162,26 +185,17 @@ class Tracker:
                     if prev_feat.any():
                         feats_3darray = self.calc_feat_ndarray(
                             prev_feat, new_feats)
-                        orig_shape = feats_3darray.shape[:2]
 
-                        # Flatten for predictions and then reshape back into matrix
-                        pred_list = np.array([
-                            val[1] for val in self.ctrack_model.predict_proba(
-                                feats_3darray.reshape(-1, feats_3darray.shape[
-                                    2]))
-                        ])
-                        pred_matrix = pred_list.reshape(orig_shape)
+                        pred_matrix = self.predict_proba_from_ndarray(feats_3darray)
 
                         for j,lbl in enumerate(lblset):
-                            # cum_prob[lbls_order.index(lbl), :] = cum_prob[
-                            #     lbls_order.index(lbl), :] + pred_matrix[j,:]
                             probs[lbls_order.index(lbl), i, :] = pred_matrix[j,:]
 
-                # avg_prob = cum_prob / np.array(list(counts.values()))[:, None]
                 new_lbls = self.assign_lbls(probs, lbls_order)
                 new_cells_pos = new_lbls==0
                 new_max = max_lbl + sum(new_cells_pos)
                 new_lbls[new_cells_pos] = [*range(max_lbl+1, new_max+1)]
+                 
                 # ensure that label output is consistently a list
                 new_lbls = new_lbls.tolist()
 

@@ -77,7 +77,7 @@ def test_bad_track(evolve60env):
         ncells = len(masks)
 
         # Check feature calculation
-        features = tracker.calc_feats_from_masks(masks)
+        features = tracker.calc_feats_from_mask(masks)
         assert len(features) == ncells
         assert ncells == 0 or features.any()
 
