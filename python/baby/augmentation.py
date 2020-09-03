@@ -465,9 +465,9 @@ class ScalingAugmenter(SmoothedLabelAugmenter):
         self._scaling = self._input_pix_size / self.target_pixel_size
         self._outshape = np.round(np.array(self.xy_out) / self._scaling)
         img, lbl = super(ScalingAugmenter, self).__call__(img, lbl_info)
-        self._input_pix_size = None
-        self._scaling = None
-        self._outshape = None
+       # self._input_pix_size = None
+       # iself.scaling = None
+       # self._outshape = None
         return img, lbl
 
     def vshift(self, img, lbl, maxpix=None):
