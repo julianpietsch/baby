@@ -14,10 +14,31 @@
     "default_image_size": [81, 81]
   },
   "prime95b_brightfield_60x_1z": {
-    "morph_model_file": "I1_unet4s_20190916.hdf5",
-    "flattener_file": "flattener_v2_20190905.json",
+    "morph_model_file": "I1_prime_unet_4s_20200630.hdf5",
+    "flattener_file": "flattener_60x_prime_20200630.json",
     "celltrack_model_file": "ctrack_randomforest_20200513.pkl",
     "budassign_model_file": "baby_randomforest_20190906.pkl",
     "default_image_size": [117, 117]
+  },
+  "evolve_brightfield_60x_1z": {
+    "morph_model_file": "I1_evolve_unet_4s_20200630.hdf5",
+    "flattener_file": "flattener_60x_prime_20200630.json",
+    "celltrack_model_file": "ctrack_randomforest_20200513.pkl",
+    "budassign_model_file": "baby_randomforest_20190906.pkl",
+    "default_image_size": [81, 81]
+  },
+  "prime95b_brightfield_60x_3z": {
+    "morph_model_file": "I3_prime_unet_4s_20200903.hdf5",
+    "flattener_file": "flattener_60x_prime_20200630.json",
+    "celltrack_model_file": "ctrack_randomforest_20200513.pkl",
+    "budassign_model_file": "baby_randomforest_20190906.pkl",
+    "default_image_size": [117, 117]
+  },
+  "evolve_brightfield_60x_3z": {
+    "morph_model_file": "I3_evolve_unet_4s_20200903.hdf5",
+    "flattener_file": "flattener_60x_prime_20200630.json",
+    "celltrack_model_file": "ctrack_randomforest_20200513.pkl",
+    "budassign_model_file": "baby_randomforest_20190906.pkl",
+    "default_image_size": [81, 81]
   }
 }
