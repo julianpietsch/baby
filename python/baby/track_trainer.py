@@ -57,11 +57,23 @@ class TrackTrainer(Tracker):
         self.traps.set_index('tp', inplace=True, append=True)
         self.clean_indices = self.traps.index
 
-        #TODO check cellLabels not being different between timepoints
         self.meta = self.meta.loc(axis=0)[self.clean_indices]
-        # self.meta.set_index('tp', inplace=True, append=True)
         self.meta['ncells'] = [len(i) for i in self.meta['cellLabels'].values]
-        # self.meta = self.meta.loc[self.meta['ncells']>0]
+
+    def get_truth_matrix_from_tups(self, tup1, tup2):
+        for i in range(3):
+            if tup1[i]!=tup2[i]:
+                raise IndexError("Indices are not from the same trap")
+            
+        if np.abs(tup[4] - tup2[3])>5:
+            raise Warning("Indices are more than five timepoints apart")
+
+        clabs1 = self.meta.loc(axis=0)[tup1, 'cellLabels'].tolist()
+        clabs2 = self.meta.loc(axis=0)[tup2, 'cellLabels'].tolist()
+
+        truth_mat = gen_boolmat_from_clabs(clabs1, clabs2)
+
+        return truth_mat
 
     def gen_train(self):
         '''
@@ -166,7 +178,8 @@ class TrackTrainer(Tracker):
                     n3darray[..., self.out_feats.index('centroid-1')]**2)
 
             # Add here any other calculation to use it as a feature
-        return n3darray  # Removed globids
+
+        return n3darray  
 
     def explore_hyperparams(self):
 
@@ -275,7 +288,7 @@ class BudTrainer:
             props1 = regionprops_table(outline1, coordinates='rc')[0]
         if props2 is None:
             props2 = regionprops_table(outline2, coordinates='rc')[0]
-           
+
         centroid_1 = self.get_centroid(props1)
         centroid_2 = self.get_centroid(props2)
         centroid_dist = get_distance(centroid_1, centroid_2)
@@ -315,7 +328,7 @@ class BudTrainer:
         return output
 
         #TODO implement rectangle calculation
-       
+
     def get_centroid(self, props):
         return (props[self.outfeats.index('centroid-0')],
                   props[self.outfeats.index('centroid-1')])
@@ -350,7 +363,7 @@ class BudTrainer:
 
     def save_model(self, filename):
         f = open(filename, 'wb')
-        pickle.dump(track_trainer._rf.best_estimator_)
+        pickle.dump(track_trainer._rf.best_estimator_, f)
 
 def get_distance(point1, point2):
     return(np.sqrt(np.sum(np.array([point1[i]-point2[i] for i in [0,1]])**2)))
@@ -363,3 +376,12 @@ def get_ground_truth(cell_labels, buds):
             truth[cell_labels.index(bud), i] = True
 
     return truth
+
+def gen_boolmat_from_clabs(clabs1, clabs2):
+    boolmat = np.zeros((len(clabs1), len(clabs2))).astype(bool)
+    for i, lab1 in enumerate(clabs1):
+        for j, lab2 in enumerate(clabs2):
+            if lab1==lab2:
+                boolmat[i, j] = True
+
+    return boolmat

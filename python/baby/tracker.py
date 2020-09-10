@@ -39,7 +39,7 @@ class Tracker:
 
         if ctrack_model is None:
             ctrack_model_file = os.path.join(models_path,
-                                      'ctrack_randomforest_20200513.pkl')
+                                      'ctrack_randomforest_20200903.pkl')
             with open(ctrack_model_file, 'rb') as file_to_load:
                 ctrack_model = pickle.load(file_to_load)
         self.ctrack_model = ctrack_model
@@ -130,16 +130,20 @@ class Tracker:
 
         feats_3darray = self.calc_feat_ndarray(feats1, feats2)
 
-        pred_matrix = self.predict_proba_from_ndarray(feats_3darray)
+        pred_matrix_bool = self.predict_proba_from_ndarray(feats_3darray, boolean=True)
 
-    def predict_proba_from_ndarray(self, array_3d):
+        return pred_matrix_bool
+
+    def predict_proba_from_ndarray(self, array_3d, boolean=False):
+        predict_fun = self.ctrack_model.predict if boolean else self.ctrack_model.predict_proba
+
+
         orig_shape = array_3d.shape[:2]
 
         # Flatten for predictions and then reshape back into matrix
         pred_list = np.array([
-            val[1] for val in self.ctrack_model.predict_proba(
-                array_3d.reshape(-1, array_3d.shape[
-                    2]))
+            val[1] for val in predict_fun(array_3d.reshape(
+                -1, array_3d.shape[2]))
         ])
         pred_matrix = pred_list.reshape(orig_shape)
 
@@ -353,7 +357,9 @@ class Tracker:
                       return_baprobs=False):
         '''
         Calculate features and track cells and budassignments
+
         input
+
         :masks: 3d ndarray (ncells, size_x, size_y) containing cell masks
         :p_budneck: 2d ndarray (size_x, size_y) giving the probability that a
             pixel corresponds to a bud neck
@@ -366,6 +372,7 @@ class Tracker:
             in the returned output
 
         returns a dict consisting of
+
         :cell_label: list of int, the tracked global ID for each cell mask
         :state: the updated state to be used in a subsequent step
         :mother_assign: (optional) list of int, specifying the assigned mother
