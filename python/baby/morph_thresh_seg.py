@@ -62,7 +62,7 @@ class Cell:
                                              return_outline=True)
             self._mask = ndimage.binary_fill_holes(self.edge)
         else:
-            edge = e | (border_rect & m)
+            edge = self.edge | (self.border_rect & self.mask)
             coords = tuple()
         self._coords = coords
         self._edge = edge
@@ -446,7 +446,7 @@ class MorphSegGrouped:
                 '"pred" arg does not match number of flattener targets')
         shape = np.squeeze(pred[0]).shape
         border_rect = np.pad(
-            np.zeros(tuple(x - 1 for x in shape), dtype='bool'),
+            np.zeros(tuple(x - 2 for x in shape), dtype='bool'),
             pad_width=1, mode='constant',
             constant_values=True)
 
