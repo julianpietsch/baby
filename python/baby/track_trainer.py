@@ -47,7 +47,7 @@ class TrackTrainer(Tracker):
 
     def process_metadata(self):
         '''
-        Process all traps (run for finished experiments), combine results with location df and drop
+        Process all traps (run on finished experiments), combine results with location df and drop
         unused columns.
         '''
         
@@ -57,12 +57,41 @@ class TrackTrainer(Tracker):
         self.traps.set_index('tp', inplace=True, append=True)
         self.clean_indices = self.traps.index
 
-        #TODO check cellLabels not being different between timepoints
         self.meta = self.meta.loc(axis=0)[self.clean_indices]
-        # self.meta.set_index('tp', inplace=True, append=True)
         self.meta['ncells'] = [len(i) for i in self.meta['cellLabels'].values]
-        # self.meta = self.meta.loc[self.meta['ncells']>0]
 
+    def get_truth_matrix_from_pair(self, pair):
+            
+        if np.abs(pair[3][0] - pair[3][1])>5:
+            raise Warning("Indices are more than five timepoints apart")
+
+        clabs1 = self.meta.loc[pair[:3] + (pair[3][0], ), 'cellLabels']
+        clabs2 = self.meta.loc[pair[:3] + (pair[3][1], ), 'cellLabels']
+
+        truth_mat = gen_boolmat_from_clabs(clabs1, clabs2)
+
+        return truth_mat
+
+    def gen_cm_stats(self, pair, red_fun=np.nanmax, thresh=0.5):
+
+        # pair = tuple(list(tup1[:3]) + [(tup1[3], tup2[3])])
+        ndarray = self.df_calc_feat_matrix(pair)
+        prob_mat = self.predict_proba_from_ndarray(ndarray)
+        pred_mat = prob_mat > thresh
+        
+        true_mat = self.get_truth_matrix_from_pair(pair)
+
+        true_flat = true_mat.flatten()
+        pred_flat = pred_mat.flatten()
+
+        acc=np.sum(true_flat==pred_flat)/len(true_flat)
+        print('Fraction correct: ', acc)
+        true_pos = np.sum(true_flat & pred_flat)
+        false_pos = np.sum(true_flat & ~pred_flat)
+        false_neg = np.sum(~true_flat & pred_flat)
+
+        return (acc, true_pos, false_pos, false_neg)
+        
     def gen_train(self):
         '''
         Generates the data for training using all the loaded images.
@@ -166,7 +195,8 @@ class TrackTrainer(Tracker):
                     n3darray[..., self.out_feats.index('centroid-1')]**2)
 
             # Add here any other calculation to use it as a feature
-        return n3darray  # Removed globids
+
+        return n3darray  
 
     def explore_hyperparams(self):
 
@@ -275,7 +305,7 @@ class BudTrainer:
             props1 = regionprops_table(outline1, coordinates='rc')[0]
         if props2 is None:
             props2 = regionprops_table(outline2, coordinates='rc')[0]
-           
+
         centroid_1 = self.get_centroid(props1)
         centroid_2 = self.get_centroid(props2)
         centroid_dist = get_distance(centroid_1, centroid_2)
@@ -315,7 +345,7 @@ class BudTrainer:
         return output
 
         #TODO implement rectangle calculation
-       
+
     def get_centroid(self, props):
         return (props[self.outfeats.index('centroid-0')],
                   props[self.outfeats.index('centroid-1')])
@@ -350,7 +380,7 @@ class BudTrainer:
 
     def save_model(self, filename):
         f = open(filename, 'wb')
-        pickle.dump(track_trainer._rf.best_estimator_)
+        pickle.dump(track_trainer._rf.best_estimator_, f)
 
 def get_distance(point1, point2):
     return(np.sqrt(np.sum(np.array([point1[i]-point2[i] for i in [0,1]])**2)))
@@ -363,3 +393,12 @@ def get_ground_truth(cell_labels, buds):
             truth[cell_labels.index(bud), i] = True
 
     return truth
+
+def gen_boolmat_from_clabs(clabs1, clabs2):
+    boolmat = np.zeros((len(clabs1), len(clabs2))).astype(bool)
+    for i, lab1 in enumerate(clabs1):
+        for j, lab2 in enumerate(clabs2):
+            if lab1==lab2:
+                boolmat[i, j] = True
+
+    return boolmat
