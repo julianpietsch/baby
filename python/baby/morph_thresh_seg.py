@@ -2,7 +2,7 @@ import numpy as np
 import itertools
 
 
-from scipy.ndimage import binary_fill_holes
+from scipy import ndimage
 
 from typing import Union, Iterable, Any, Optional, List
 
@@ -10,6 +10,8 @@ from .errors import BadParam
 from .segmentation import mask_containment, iterative_erosion, thresh_seg, \
     binary_edge, single_region_prop, outline_to_radial, get_edge_scores, \
     refine_radial_grouped, iterative_dilation, draw_radial
+from .volume import volume
+
 
 
 # class ContainmentFunction:
@@ -58,7 +60,7 @@ class Cell:
             rprop = single_region_prop(self.mask)
             coords, edge = outline_to_radial(self.edge, rprop,
                                              return_outline=True)
-            self._mask = binary_fill_holes(self.edge)
+            self._mask = ndimage.binary_fill_holes(self.edge)
         else:
             edge = e | (border_rect & m)
             coords = tuple()
@@ -76,6 +78,12 @@ class Cell:
         if self._coords is None:
             self._calculate_properties(fit_radial=self.fit_radial)
         return self._coords
+
+    def volume(self, method='conical'):
+        return volume(self.edge, method=method)
+
+
+
 
 class Target:
     def __init__(self, name, flattener, desired_targets=None):
@@ -284,7 +292,7 @@ class MorphSegGrouped:
                  use_group_thresh=False, group_thresh_expansion=0.,
                  edge_sub_dilations=None,
                  containment_thresh=0.8, containment_func=mask_containment,
-                 return_masks=False, return_coords=False):
+                 return_masks=False, return_coords=False, return_volume=False):
         """
 
         :param flattener:
@@ -313,6 +321,7 @@ class MorphSegGrouped:
         self.containment_func = containment_func
         self.return_masks = return_masks
         self.return_coords = return_coords
+        self.return_volume = return_volume
 
         self.flattener = flattener
 
@@ -381,7 +390,7 @@ class MorphSegGrouped:
                     upper_group.cells.remove(upper)
 
     # Todo: rename
-    def extract_edges(self, pred, shape, refine_outlines):
+    def extract_edges(self, pred, shape, refine_outlines, return_volume):
         masks = [[]]
         if refine_outlines:
             # Refine outlines using edge predictions
@@ -399,19 +408,28 @@ class MorphSegGrouped:
             edges = [draw_radial(radii, angles, centre, shape)
                      for centre, radii, angles in coords]
             if self.return_masks:
-                masks = [binary_fill_holes(e) for e in edges]
+                masks = [ndimage.binary_fill_holes(e) for e in edges]
+            if return_volume:
+                volumes = [volume(edge, method='conical') for edge in edges]
+                return edges, masks, coords, volumes
+            return edges, masks, coords
         else:
             # Extract edges, masks and AC coordinates from initial segmentation
-            outputs = [(cell.edge, cell.mask, cell.coords)
-                       for group in self.groups
-                       for cell in group.cells]
-            if len(outputs) > 0:
-                edges, masks, coords = zip(*outputs)
+            if return_volume:
+                outputs = [(cell.edge, cell.mask, cell.coords, cell.volume)
+                        for group in self.groups
+                        for cell in group.cells]
             else:
-                edges, masks, coords = 3 * [[]]
-        return edges, masks, coords
+                outputs = [(cell.edge, cell.mask, cell.coords)
+                            for group in self.groups
+                            for cell in group.cells]
 
-    def segment(self, pred, refine_outlines=False):
+            if len(outputs) > 0:
+                return zip(*outputs)
+            else:
+                return 4 * [[]] if return_volume else 3 * [[]]
+
+    def segment(self, pred, refine_outlines=False, return_volume=False):
         """
         Take the output of the neural network and turn it into an instance
         segmentation output.
@@ -441,12 +459,14 @@ class MorphSegGrouped:
 
         # Remove cells that are duplicated in several groups
         self.remove_duplicates()
-        edges, masks, coords = self.extract_edges(pred, shape,
-                                                  refine_outlines=refine_outlines)
+        # edges, masks, coords, volumes = \
+        result = self.extract_edges(pred, shape, refine_outlines=refine_outlines,
+                                                return_volume=return_volume)
 
-        output = tuple(itertools.compress([edges, masks, coords],
+        output = tuple(itertools.compress(result,
                                           [True, self.return_masks,
-                                           self.return_coords]))
+                                           self.return_coords,
+                                           self.return_volume]))
         if len(output) > 1:
             return output
         else:
