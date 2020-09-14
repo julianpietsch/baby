@@ -384,10 +384,13 @@ async def get_segmentation(request):
     # Format pred output for JSON response (NB: pred is shallow copy from
     # taskmaster, so in-place editing of dicts is ok):
     for p in pred:
+        # - Custom data transformations -
+        if 'edgemasks' in p:
+            # Convert edge masks to lists of x and y coords
+            p[k] = [[x + 1 for x in np.where(m)] for m in v]
+
+        # - Generic data transformations -
         for k, v in p.items():
-            if k == 'edgemasks':
-                # Convert edge masks to lists of x and y coords
-                p[k] = [[x + 1 for x in np.where(m)] for m in v]
             if isinstance(v, np.ndarray):
                 p[k] = None # heavy ndarrays must be obtained via other routes
 

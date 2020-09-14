@@ -466,7 +466,7 @@ class MorphSegGrouped:
         output = tuple(itertools.compress(result,
                                           [True, self.return_masks,
                                            self.return_coords,
-                                           self.return_volume]))
+                                           return_volume or self.return_volume]))
         if len(output) > 1:
             return output
         else:
