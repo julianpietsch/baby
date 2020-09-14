@@ -151,31 +151,18 @@ class TrackBenchmarker:
         '''
         Calculates the trap-wise error and averages across a position.
        '''
-        frac_errs, all_errs, nerrs = self.calculate_errsum()
+        self.frac_errs, self.all_errs, self.nerrs = self.calculate_errsum()
 
-        nerrs_df = pd.DataFrame(nerrs).melt()
-        frac_df = pd.DataFrame(frac_errs).melt()
+        nerrs_df = pd.DataFrame(self.nerrs).melt()
+        frac_df = pd.DataFrame(self.frac_errs).melt()
 
         from matplotlib import pyplot as plt
         import seaborn as sns
 
         ax = sns.barplot(x='variable_0', y='value', data=frac_df)
-        ax.set(xlabel='Backtrack depth',
+        ax.set(xlabel='Backtrace depth',
                ylabel='Fraction of correct assignments',
                ylim=(0.9, 1))
         plt.savefig('tracker_benchmark_btdepth.png')
         plt.show()
-
-        # TODO check if it is worth incorporating absolute number of errors
-        # ax = sns.barplot(x='variable_1', y='value', data=nerrs_df)
-        # ax.set(xlabel='Backtrack depth', ylabel='Number of mistakes')
-        # plt.savefig('tracker_benchmark_nmistakes.png')
-        # plt.show()
-
     
-def rand(x):
-    '''
-    Return a random probability. Used to test the assign_lbls function
-    with a randomly assigned probability.
-    '''
-    return np.random.rand()
