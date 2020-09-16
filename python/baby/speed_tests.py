@@ -266,7 +266,7 @@ def subtask_timings(timing, seg_expt, bb, ntps=5, refine_outlines=True,
     outer_timing.finish()
 
 
-if __name__ == "__main__":
+def main():
     from optparse import OptionParser
     usage = "usage: %prog [options] experiment_dir"
     parser = OptionParser(usage=usage)

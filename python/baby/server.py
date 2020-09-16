@@ -402,7 +402,7 @@ app.add_routes(routes)
 app['TaskMaster'] = TaskMaster()
 app['Executor'] = ThreadPoolExecutor(2)
 
-if __name__ == '__main__':
+def main():
     import tensorflow as tf
 
     tf_version = tuple(int(v) for v in tf.version.VERSION.split('.'))
