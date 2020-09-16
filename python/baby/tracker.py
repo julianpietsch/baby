@@ -134,9 +134,48 @@ class Tracker:
 
         return pred_matrix_bool
 
+    def get_truth_matrix_from_pair(self, pair):
+        '''
+        Requires self.meta
+
+        args:
+        :pair: tuple of size 4 (experimentID, position, trap (tp1, tp2))
+
+        output
+
+       :truth_mat: boolean ndarray of shape (ncells(tp1) x ncells(tp2)
+        links cells in tp1 to cells in tp2
+        '''
+        
+        clabs1 = self.meta.loc[pair[:3] + (pair[3][0], ), 'cellLabels']
+        clabs2 = self.meta.loc[pair[:3] + (pair[3][1], ), 'cellLabels']
+
+        truth_mat = gen_boolmat_from_clabs(clabs1, clabs2)
+
+        return truth_mat
+
+    def gen_cm_stats(self, pair, red_fun=np.nanmax, thresh=0.5):
+
+        # pair = tuple(list(tup1[:3]) + [(tup1[3], tup2[3])])
+        ndarray = self.df_calc_feat_matrix(pair)
+        prob_mat = self.predict_proba_from_ndarray(ndarray)
+        pred_mat = prob_mat > thresh
+        
+        true_mat = self.get_truth_matrix_from_pair(pair)
+
+        true_flat = true_mat.flatten()
+        pred_flat = pred_mat.flatten()
+
+        acc=np.sum(true_flat==pred_flat)/len(true_flat)
+        print('Fraction correct: ', acc)
+        true_pos = np.sum(true_flat & pred_flat)
+        false_pos = np.sum(true_flat & ~pred_flat)
+        false_neg = np.sum(~true_flat & pred_flat)
+
+        return (acc, true_pos, false_pos, false_neg)
+        
     def predict_proba_from_ndarray(self, array_3d, boolean=False):
         predict_fun = self.ctrack_model.predict if boolean else self.ctrack_model.predict_proba
-
 
         orig_shape = array_3d.shape[:2]
 
@@ -466,15 +505,16 @@ class Tracker:
 
         return output
 
-def decay(array, c=0.5):
-    '''Calculates the average using a decay function p/(a*t) where
-    'p' is the probability of two cells being the same, 't' the timestep
-    and 'a' a chosen coefficient
-    :array: List of probabilities
-    :c: Scaling coefficient
-    '''
-    result = 0
-    for t, p in enumerate(array):
-        if not np.isnan(p):
-            result += p / (t * c)
-    return result
+# def decay(array, c=0.5):
+#     '''Calculates the average using a decay function p/(a*t) where
+#     'p' is the probability of two cells being the same, 't' the timestep
+#     and 'a' a chosen coefficient
+#     :array: List of probabilities
+#     :c: Scaling coefficient
+#     '''
+#     result = 0
+#     for t, p in enumerate(array):
+#         if not np.isnan(p):
+#             result += p / (t * c)
+#     return result
+

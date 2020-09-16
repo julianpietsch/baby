@@ -150,7 +150,8 @@ class TrainValPairs(object):
                 sub_metadata.append(pd.DataFrame(pair_meta))
                 sub_metadata[-1]['list_index'] = sub_metadata[-1].index
             self._metadata = pd.concat(sub_metadata, axis=0, ignore_index=True)
-            self._metadata = self.metadata.loc[np.array([x[0] for x in self.metadata['tilesize']])==81] #TODO Remove this fix when tilesize is consistent or normalised
+            self._metadata = self.metadata.loc[
+                np.array([x[0] for x in self.metadata['tilesize']])==81]
             self._metadata.sort_values(['experimentID', 'position', 'trap', 'tp'], inplace=True)
             self._metadata.set_index(['experimentID', 'position', 'trap'], inplace=True)
             self._metadata_tp = self._metadata.set_index('tp', append=True)

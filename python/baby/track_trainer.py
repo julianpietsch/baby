@@ -44,7 +44,6 @@ class TrackTrainer(Tracker):
             if i!=j:
                 print(x)
 
-
     def process_metadata(self):
         '''
         Process all traps (run on finished experiments), combine results with location df and drop
@@ -60,38 +59,6 @@ class TrackTrainer(Tracker):
         self.meta = self.meta.loc(axis=0)[self.clean_indices]
         self.meta['ncells'] = [len(i) for i in self.meta['cellLabels'].values]
 
-    def get_truth_matrix_from_pair(self, pair):
-            
-        if np.abs(pair[3][0] - pair[3][1])>5:
-            raise Warning("Indices are more than five timepoints apart")
-
-        clabs1 = self.meta.loc[pair[:3] + (pair[3][0], ), 'cellLabels']
-        clabs2 = self.meta.loc[pair[:3] + (pair[3][1], ), 'cellLabels']
-
-        truth_mat = gen_boolmat_from_clabs(clabs1, clabs2)
-
-        return truth_mat
-
-    def gen_cm_stats(self, pair, red_fun=np.nanmax, thresh=0.5):
-
-        # pair = tuple(list(tup1[:3]) + [(tup1[3], tup2[3])])
-        ndarray = self.df_calc_feat_matrix(pair)
-        prob_mat = self.predict_proba_from_ndarray(ndarray)
-        pred_mat = prob_mat > thresh
-        
-        true_mat = self.get_truth_matrix_from_pair(pair)
-
-        true_flat = true_mat.flatten()
-        pred_flat = pred_mat.flatten()
-
-        acc=np.sum(true_flat==pred_flat)/len(true_flat)
-        print('Fraction correct: ', acc)
-        true_pos = np.sum(true_flat & pred_flat)
-        false_pos = np.sum(true_flat & ~pred_flat)
-        false_neg = np.sum(~true_flat & pred_flat)
-
-        return (acc, true_pos, false_pos, false_neg)
-        
     def gen_train(self):
         '''
         Generates the data for training using all the loaded images.
@@ -231,6 +198,17 @@ class TrackTrainer(Tracker):
 
     @property
     def benchmarker(self):
+        '''
+        Create a benchmarker instance to test the newly calculated model
+
+        requires
+        :self.rf:
+        :self.meta:
+
+        returns
+        :self._benchmarker:
+        
+        '''
         if not hasattr(self, '_benchmarker'):
             val_meta = self.meta.loc[self.meta['train_val'] == 'validation']
             self._benchmarker = TrackBenchmarker(val_meta, self.rf)
@@ -394,11 +372,3 @@ def get_ground_truth(cell_labels, buds):
 
     return truth
 
-def gen_boolmat_from_clabs(clabs1, clabs2):
-    boolmat = np.zeros((len(clabs1), len(clabs2))).astype(bool)
-    for i, lab1 in enumerate(clabs1):
-        for j, lab2 in enumerate(clabs2):
-            if lab1==lab2:
-                boolmat[i, j] = True
-
-    return boolmat

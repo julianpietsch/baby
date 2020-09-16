@@ -499,6 +499,19 @@ class BabyTrainer(object):
             self._bud_trainer = BudTrainer(self.data._metadata, self.data)
         return self._bud_trainer
 
+    def split_train_val(self):
+        '''
+        Splits the data into a training and validation sets
+        using the metadata's info
+        '''
+
+        dft = df.loc[df['train_val'] == 'training']
+        dfv = df.loc[df['train_val'] == 'validation']
+        self.data.training = list(
+        np.array(nursery.data.training)[dft['list_index']])
+        self.data.validation = list(
+        np.array(nursery.data.validation)[dfv['list_index']])
+
     def _get_grouped_sss(self):
         group_best_iou = lambda x: x.loc[x['iou'].idxmax(), :]
         idcols = ['ind', 'cell', 'scaling', 'rotation']

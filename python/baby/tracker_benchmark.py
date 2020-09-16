@@ -22,7 +22,7 @@ class TrackBenchmarker:
         self.tracker = Tracker(ctrack_model = model)
         self.nstepsback = self.tracker.nstepsback
         self.traps_loc
-        self.test = self.predict_set(*self.traps_loc[0])
+        # self.test = self.predict_set(*self.traps_loc[0])
         # self.calculate_errsum()
 
     @property
@@ -69,6 +69,9 @@ class TrackBenchmarker:
         return zip(df.index, [self.masks[i] for i in df['cont_list_index']])
 
     def predict_set(self, exp, pos, trap, tp=None):
+        '''
+        Predict labels using tp1-tp2 accuracy of prediction
+        '''
         print("Processing trap {}".format(exp, pos, trap))
         tp_img_tuple = *self.df_get_imglist(exp, pos, trap),
         tp, lbl_list = self.predict_lbls_from_tpimgs(tp_img_tuple)
@@ -166,3 +169,53 @@ class TrackBenchmarker:
         plt.savefig('tracker_benchmark_btdepth.png')
         plt.show()
     
+
+    def get_truth_matrix_from_pair(self, pair):
+        '''
+        Requires self.meta
+
+        args:
+        :pair: tuple of size 4 (experimentID, position, trap (tp1, tp2))
+
+        output
+
+       :truth_mat: boolean ndarray of shape (ncells(tp1) x ncells(tp2)
+        links cells in tp1 to cells in tp2
+        '''
+        
+        clabs1 = self.meta.loc[pair[:3] + (pair[3][0], ), 'cellLabels']
+        clabs2 = self.meta.loc[pair[:3] + (pair[3][1], ), 'cellLabels']
+
+        truth_mat = gen_boolmat_from_clabs(clabs1, clabs2)
+
+        return truth_mat
+
+    def gen_cm_stats(self, pair, red_fun=np.nanmax, thresh=0.5):
+
+        masks = [self.masks[i] for i in self.meta.loc[pair,'cont_list_index']]
+        feats = [self.tracker.calc_feats_from_mask(mask) for mask in masks]
+        ndarray = self.tracker.calc_feat_ndarray(*feats)
+        prob_mat = self.tracker.predict_proba_from_ndarray(ndarray)
+        pred_mat = prob_mat > thresh
+        
+        true_mat = self.get_truth_matrix_from_pair(pair)
+
+        true_flat = true_mat.flatten()
+        pred_flat = pred_mat.flatten()
+
+        acc=np.sum(true_flat==pred_flat)/len(true_flat)
+        print('Fraction correct: ', acc)
+        true_pos = np.sum(true_flat & pred_flat)
+        false_pos = np.sum(true_flat & ~pred_flat)
+        false_neg = np.sum(~true_flat & pred_flat)
+
+        return (acc, true_pos, false_pos, false_neg)
+
+def gen_boolmat_from_clabs(clabs1, clabs2):
+    boolmat = np.zeros((len(clabs1), len(clabs2))).astype(bool)
+    for i, lab1 in enumerate(clabs1):
+        for j, lab2 in enumerate(clabs2):
+            if lab1==lab2:
+                boolmat[i, j] = True
+
+    return boolmat
