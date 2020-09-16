@@ -4,31 +4,58 @@
 
 Neural network code for segmenting buds from brightfield stacks.
 
-## Set up
+## Installation
 
-**NB:** To make use of a GPU, first follow the [set up
+BABY requires Python 3 and [TensorFlow](https://www.tensorflow.org). For some
+versions of TensorFlow, you specifically need Python 3.6.
+
+In any case, it is recommended that you install the package into a virtual
+environment (i.e., `conda create` if you are using Anaconda, or `python3 -m
+venv` otherwise).
+
+By default, BABY will trigger installation of the latest version of
+TensorFlow. Our experience, however, is that performance is best with
+TensorFlow version 1.14. If you want to use this version, first install that
+in your virtual environment by running:
+
+```bash
+> pip install tensorflow==1.14
+```
+
+**NB:** To make use of a GPU you should also follow the [set up
 instructions](https://www.tensorflow.org/install/gpu#windows_setup) for
 installing `tensorflow-gpu`.
 
-**Requirements:**
+Install BABY by first obtaining this repository (e.g., `git clone
+https://git.ecdf.ed.ac.uk/jpietsch/baby.git`), and then using pip:
 
-- Python 3.6 (not 3.7)
-- tensorflow == 1.14
-- numpy
-- scipy
-- scikit-image
-- scikit-learn
+```bash
+> pip install baby/
+```
 
-If you install using Anaconda, then you will probably need to `pip install`
-the `tensorflow` package to get the correct version.
+NB: If you are upgrading, then you may instead need to run: `pip install -U
+baby/`.
 
-It is recommended that you install the packages into a virtual environment
-(using either `conda create` or `python3 -m venv`).
+*Developers:* You may prefer to install an editable version:
 
-Once installed, you can add the python folder to your python path by creating
-a `.pth` file in the environment's `site-packages` folder. E.g., create a file
-`baby.pth` that contains a single line specifying the path to the python
-folder of this repository `C:\path\to\repository\baby\python`.
+```bash
+> pip install -e baby/
+```
+
+## Running the server
+
+Once installed, you should be able to start a server to accept segmentation
+requests using:
+
+```bash
+> baby-phone
+```
+
+or on windows:
+
+```
+> baby-phone.exe
+```
 
 ## Jupyter notebooks
 
