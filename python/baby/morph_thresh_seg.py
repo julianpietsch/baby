@@ -1,17 +1,15 @@
 import numpy as np
 import itertools
 
-
 from scipy import ndimage
 
-from typing import Union, Iterable, Any, Optional, List
+from typing import Union, Iterable, Any, Optional, List, NamedTuple
 
 from .errors import BadParam
 from .segmentation import mask_containment, iterative_erosion, thresh_seg, \
     binary_edge, single_region_prop, outline_to_radial, get_edge_scores, \
     refine_radial_grouped, iterative_dilation, draw_radial
 from .volume import volume
-
 
 
 # class ContainmentFunction:
@@ -60,9 +58,9 @@ class Cell:
             rprop = single_region_prop(self.mask)
             coords, edge = outline_to_radial(self.edge, rprop,
                                              return_outline=True)
-            self._mask = ndimage.binary_fill_holes(self.edge)
+            self.mask = ndimage.binary_fill_holes(self.edge)
         else:
-            edge = self.edge | (self.border_rect & self.mask)
+            edge = self._edge | (self.border_rect & self.mask)
             coords = tuple()
         self._coords = coords
         self._edge = edge
@@ -82,8 +80,6 @@ class Cell:
     @property
     def volume(self, method='conical'):
         return volume(self.edge, method=method)
-
-
 
 
 class Target:
@@ -130,9 +126,7 @@ class Target:
                     'filled']
             else:
                 raise ValueError('No interior or filled target specified in '
-                             f'available targets {self.available_targets}')
-
-
+                                 f'available targets {self.available_targets}')
 
     @property
     def definition(self):
@@ -217,7 +211,7 @@ class Group:
         if self.edge_sub_dilations is not None and max_n_erode == 0:
             return 1
         else:
-            return max_n_erode # Todo: add number of dilations?
+            return max_n_erode  # Todo: add number of dilations?
 
     @property
     def n_cells(self):
@@ -346,13 +340,13 @@ class MorphSegGrouped:
         for i, target_names in enumerate(cellgroups):
             targets = [Target(name, flattener) for name in target_names]
             self.groups.append(Group(targets, min_area=min_area[i],
-                                 use_thresh=use_group_thresh,
-                                 thresh_expansion=group_thresh_expansion,
-                                 interior_threshold=interior_threshold[i],
-                                 n_closing=n_closing[i],
-                                 n_opening=n_opening[i],
-                                 connectivity=connectivity[i],
-                                 edge_sub_dilations=edge_sub_dilations[i]))
+                                     use_thresh=use_group_thresh,
+                                     thresh_expansion=group_thresh_expansion,
+                                     interior_threshold=interior_threshold[i],
+                                     n_closing=n_closing[i],
+                                     n_opening=n_opening[i],
+                                     connectivity=connectivity[i],
+                                     edge_sub_dilations=edge_sub_dilations[i]))
         self.group_segs = None
 
     # Todo: This is ideally the form of the input argument
@@ -418,12 +412,12 @@ class MorphSegGrouped:
             # Extract edges, masks and AC coordinates from initial segmentation
             if return_volume:
                 outputs = [(cell.edge, cell.mask, cell.coords, cell.volume)
-                        for group in self.groups
-                        for cell in group.cells]
+                           for group in self.groups
+                           for cell in group.cells]
             else:
                 outputs = [(cell.edge, cell.mask, cell.coords)
-                            for group in self.groups
-                            for cell in group.cells]
+                           for group in self.groups
+                           for cell in group.cells]
 
             if len(outputs) > 0:
                 return zip(*outputs)
@@ -461,14 +455,28 @@ class MorphSegGrouped:
         # Remove cells that are duplicated in several groups
         self.remove_duplicates()
         # edges, masks, coords, volumes = \
-        result = self.extract_edges(pred, shape, refine_outlines=refine_outlines,
-                                                return_volume=return_volume)
+        result = self.extract_edges(pred, shape,
+                                    refine_outlines=refine_outlines,
+                                    return_volume=return_volume)
 
-        output = tuple(itertools.compress(result,
-                                          [True, self.return_masks,
-                                           self.return_coords,
-                                           return_volume or self.return_volume]))
-        if len(output) > 1:
-            return output
-        else:
-            return output[0]
+        # Todo: return_masks and return_coords seem useless as always set
+        #  necessary for brain.segment and tracker
+        output = SegmentationOutput(*result)
+                                                       # [True,
+                                                       #  self.return_masks,
+                                                       #  self.return_coords,
+                                                       #  self.return_volume]))
+
+        return output
+        # if len(output) > 1:
+        #     return output
+        # else:
+        #     return output[0]
+
+
+class SegmentationOutput(NamedTuple):
+    edges: list
+    masks: list = []
+    coords: list = []
+    volume: list = []
+

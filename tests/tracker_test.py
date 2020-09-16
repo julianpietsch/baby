@@ -1,17 +1,17 @@
-import pytest
-
-from os.path import isfile
 import pickle
 from collections import namedtuple, Counter
-import numpy as np
+from os.path import isfile
 
-from baby.io import load_paired_images, save_tiled_image
-from baby.preprocessing import raw_norm, seg_norm, SegmentationFlattening
+import baby
+import numpy as np
+import pytest
 from baby.brain import default_params
+from baby.io import load_paired_images
 from baby.morph_thresh_seg import MorphSegGrouped
+from baby.preprocessing import raw_norm, SegmentationFlattening
 from baby.tracker import Tracker
 
-from .conftest import MODEL_DIR, IMAGE_DIR
+MODEL_DIR = baby.model_path()
 
 TrackerEnv = namedtuple('TrackerEnv', ['masks', 'p_budneck', 'p_bud'])
 
@@ -24,7 +24,7 @@ def resolve_file(filename):
 
 
 @pytest.fixture(scope='module')
-def evolve60env(modelsets):
+def evolve60env(modelsets, image_dir):
     mset = modelsets['evolve_brightfield_60x_5z']
 
     # Load flattener
@@ -43,7 +43,7 @@ def evolve60env(modelsets):
     segmenter = MorphSegGrouped(flattener, return_masks=True, **params)
 
     # Load CNN outputs
-    impairs = load_paired_images(IMAGE_DIR.glob('evolve_testF_tp*.png'),
+    impairs = load_paired_images(image_dir.glob('evolve_testF_tp*.png'),
                                  typeA='preds')
     assert len(impairs) > 0
     tpkeys = sorted(impairs.keys())
@@ -53,7 +53,8 @@ def evolve60env(modelsets):
     for k in tpkeys:
         impair = impairs[k]
         cnn_out = raw_norm(*impair['preds']).transpose((2, 0, 1))
-        _, masks = segmenter.segment(cnn_out, refine_outlines=True)
+        seg_output = segmenter.segment(cnn_out, refine_outlines=True)
+        masks = seg_output.masks
         trkin.append(TrackerEnv(masks, cnn_out[i_budneck], cnn_out[i_bud]))
 
     # Load the celltrack and budassign models

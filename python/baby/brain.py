@@ -17,7 +17,7 @@ from .preprocessing import robust_norm, SegmentationFlattening
 from .utils import batch_iterator, split_batch_pred
 from .morph_thresh_seg import MorphSegGrouped
 
-models_path = join(dirname(__file__), '..', '..', 'models')
+models_path = join(dirname(__file__), 'models')
 
 tf_version = [int(v) for v in tf.__version__.split('.')]
 
@@ -229,14 +229,13 @@ class BabyBrain(object):
             morph_preds = split_batch_pred(self.morph_predict(batch))
 
             for cnn_output in morph_preds:
-                segout = self.morph_segmenter.segment(
+                seg_result = self.morph_segmenter.segment(
                     cnn_output,
                     refine_outlines=refine_outlines,
                     return_volume=yield_volumes)
-                edges, masks, coords = segout[0:3]
 
-                if len(coords) > 0:
-                    centres, radii, angles = zip(*coords)
+                if len(seg_result.coords) > 0:
+                    centres, radii, angles = zip(*seg_result.coords)
                 else:
                     centres, radii, angles = 3 * [[]]
 
@@ -249,19 +248,19 @@ class BabyBrain(object):
 
                 _0xy = (0,) + cnn_output.shape[1:3]
                 if yield_masks:
-                    if len(masks) > 0:
-                        output['masks'] = np.stack(masks)
+                    if len(seg_result.masks) > 0:
+                        output['masks'] = np.stack(seg_result.masks)
                     else:
                         output['masks'] = np.zeros(_0xy, dtype='bool')
                 if yield_edgemasks:
-                    if len(edges) > 0:
-                        output['edgemasks'] = np.stack(edges)
+                    if len(seg_result.edges) > 0:
+                        output['edgemasks'] = np.stack(seg_result.edges)
                     else:
                         output['edgemasks'] = np.zeros(_0xy, dtype='bool')
                 if yield_preds:
                     output['preds'] = cnn_output
                 if yield_volumes:
-                    output['volumes'] = segout[3]
+                    output['volumes'] = seg_result.volume
 
                 yield output
 
