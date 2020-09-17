@@ -154,25 +154,6 @@ class Tracker:
 
         return truth_mat
 
-    def gen_cm_stats(self, pair, red_fun=np.nanmax, thresh=0.5):
-
-        # pair = tuple(list(tup1[:3]) + [(tup1[3], tup2[3])])
-        ndarray = self.df_calc_feat_matrix(pair)
-        prob_mat = self.predict_proba_from_ndarray(ndarray)
-        pred_mat = prob_mat > thresh
-        
-        true_mat = self.get_truth_matrix_from_pair(pair)
-
-        true_flat = true_mat.flatten()
-        pred_flat = pred_mat.flatten()
-
-        acc=np.sum(true_flat==pred_flat)/len(true_flat)
-        print('Fraction correct: ', acc)
-        true_pos = np.sum(true_flat & pred_flat)
-        false_pos = np.sum(true_flat & ~pred_flat)
-        false_neg = np.sum(~true_flat & pred_flat)
-
-        return (acc, true_pos, false_pos, false_neg)
         
     def predict_proba_from_ndarray(self, array_3d, boolean=False):
         predict_fun = self.ctrack_model.predict if boolean else self.ctrack_model.predict_proba

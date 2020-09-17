@@ -505,12 +505,13 @@ class BabyTrainer(object):
         using the metadata's info
         '''
 
+        df = self.data.metadata
         dft = df.loc[df['train_val'] == 'training']
         dfv = df.loc[df['train_val'] == 'validation']
         self.data.training = list(
-        np.array(nursery.data.training)[dft['list_index']])
+        np.array(self.data.training)[dft['list_index']])
         self.data.validation = list(
-        np.array(nursery.data.validation)[dfv['list_index']])
+        np.array(self.data.validation)[dfv['list_index']])
 
     def _get_grouped_sss(self):
         group_best_iou = lambda x: x.loc[x['iou'].idxmax(), :]

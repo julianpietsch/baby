@@ -13,7 +13,9 @@ from skimage.measure import regionprops_table
 class TrackBenchmarker:
     '''
     Takes a metadata dataframe and a model and estimates the prediction in a trap-wise manner.
-    '''
+
+    This class can also produce confusion matrices for a given Tracker and validation dataset.
+     '''
     def __init__(self, meta, model):
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
@@ -111,7 +113,7 @@ class TrackBenchmarker:
                     prev_cells.index(cell) if cell in prev_cells else -1
                     for cell in pos_cells
                 ]
-                local_indices[i].append(local_assignment)
+                local_indices[i] += local_assignment
 
         # Flatten
         flt_test, flt_new = [
@@ -144,9 +146,9 @@ class TrackBenchmarker:
                 nerrs[(thresh, nstepsback)] = []
                 for address in self.traps_loc:
                     fraction, errors = self.compare_traps(*address)
-                    all_errs[(thresh, nstepsback)].append(errors)
-                    frac_errs[(thresh, nstepsback)].append(fraction)
-                    nerrs[(thresh, nstepsback)].append(len(errors))
+                    all_errs[(thresh, nstepsback)] += errors
+                    frac_errs[(thresh, nstepsback)] += fraction
+                    nerrs[(thresh, nstepsback)] += len(errors)
 
         return (frac_errs, all_errs, nerrs)
 
@@ -190,7 +192,7 @@ class TrackBenchmarker:
 
         return truth_mat
 
-    def gen_cm_stats(self, pair, red_fun=np.nanmax, thresh=0.5):
+    def gen_cm_stats(self, pair, thresh=0.5):
 
         masks = [self.masks[i] for i in self.meta.loc[pair,'cont_list_index']]
         feats = [self.tracker.calc_feats_from_mask(mask) for mask in masks]
@@ -203,13 +205,41 @@ class TrackBenchmarker:
         true_flat = true_mat.flatten()
         pred_flat = pred_mat.flatten()
 
-        acc=np.sum(true_flat==pred_flat)/len(true_flat)
-        print('Fraction correct: ', acc)
         true_pos = np.sum(true_flat & pred_flat)
         false_pos = np.sum(true_flat & ~pred_flat)
         false_neg = np.sum(~true_flat & pred_flat)
+        true_neg = np.sum(~true_flat & ~pred_flat)
 
-        return (acc, true_pos, false_pos, false_neg)
+        return (true_pos, false_pos, false_neg, true_neg)
+
+    def extract_pairs_from_trap(self, trap_loc):
+        subdf = self.meta[['list_index', 'cellLabels'
+                             ]].loc(axis=0)[trap_loc]
+        pairs = [
+            trap_loc + tuple((pair, ))
+            for pair in zip(subdf.index[:-1], subdf.index[1:])
+        ]
+
+        return pairs
+
+    def gen_cm_from_pairs(self, thresh=0.5):
+        con_mat = {}
+        con_mat['tp'] = 0
+        con_mat['fp'] = 0
+        con_mat['fn'] = 0
+        con_mat['tn'] = 0
+        for pairset in self.pairs:
+            for pair in pairset:
+                res = self.gen_cm_stats(pair, thresh=thresh)
+                con_mat['tp'] += res[0]
+                con_mat['fp'] += res[1]
+                con_mat['fn'] += res[2]
+                con_mat['tn'] += res[3]
+        self._con_mat = con_mat
+        return self._con_mat
+
+    def gen_pairlist(self):
+        self.pairs = [self.extract_pairs_from_trap(trap) for trap in self.traps_loc]
 
 def gen_boolmat_from_clabs(clabs1, clabs2):
     boolmat = np.zeros((len(clabs1), len(clabs2))).astype(bool)
@@ -219,3 +249,32 @@ def gen_boolmat_from_clabs(clabs1, clabs2):
                 boolmat[i, j] = True
 
     return boolmat
+
+def gen_stats_dict(results):
+    '''
+    Generates a dictionary using results from different binary classification tasks,
+    for example, using different thresholds
+
+    output
+
+    dictionary containing the name of statistic as a key and a list
+    of that statistic for the data subsets.
+    '''
+    funs = (get_precision, get_recall, get_tnr, get_balanced_acc)
+    names = ('precision', 'recall', 'TNR', 'balanced_acc')
+    stats_dict = {name : [fun(res) for res in results]
+                  for fun, name in zip(funs, names)}
+
+    return stats_dict
+
+def get_precision(res_dict):
+    return (res_dict['tp']) / (res_dict['tp'] + res_dict['fp'])
+
+def get_recall(res_dict):
+    return res_dict['tp'] / (res_dict['tp'] + res_dict['fn'])
+
+def get_tnr(res_dict):
+    return res_dict['tn'] / (res_dict['tn'] + res_dict['fp'])
+
+def get_balanced_acc(res_dict):
+    return (get_recall(res_dict) + get_tnr(res_dict))/2
