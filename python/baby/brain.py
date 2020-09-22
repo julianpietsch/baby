@@ -1,7 +1,10 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
-from os.path import dirname, join, isfile
+from os.path import dirname, join, isfile, isdir
 from itertools import repeat
+import logging
+from time import strftime
+from uuid import uuid1
 
 import numpy as np
 import pickle
@@ -15,7 +18,8 @@ from .segmentation import morph_seg_grouped
 from .tracker import Tracker
 from .preprocessing import robust_norm, SegmentationFlattening
 from .utils import batch_iterator, split_batch_pred
-from .morph_thresh_seg import MorphSegGrouped
+from .morph_thresh_seg import MorphSegGrouped, SegmentationOutput
+from .io import save_tiled_image
 
 models_path = join(dirname(__file__), 'models')
 
@@ -56,6 +60,11 @@ class BabyBrain(object):
         neural network model into (useful only for Tensorflow versions <2)
     :param graph: optionally specify the Tensorflow graph to load the neural
         network model into (useful only for Tensorflow versions <2)
+    :param suppress_errors: whether or not to catch Exceptions raised during
+        segmentation or tracking. If True, then any Exceptions will be logged
+        using standard Python logging.
+    :param error_dump_dir: optionally specify a directory in which to dump
+        input parameters when an error is caught.
     '''
 
     def __init__(self,
@@ -67,7 +76,9 @@ class BabyBrain(object):
                  params=default_params,
                  session=None,
                  graph=None,
-                 print_info=False):
+                 print_info=False,
+                 suppress_errors=False,
+                 error_dump_dir=None):
 
         self.reshaped_models = {}
 
@@ -128,8 +139,12 @@ class BabyBrain(object):
                     'dice_coeff': dice_coeff
                 })
 
+        self.suppress_errors = suppress_errors
+        self.error_dump_dir = error_dump_dir
+
         self.flattener = SegmentationFlattening(flattener_file)
         self.params = params
+
         self.morph_segmenter = MorphSegGrouped(self.flattener,
                                                return_masks=True,
                                                return_coords=True,
@@ -229,10 +244,35 @@ class BabyBrain(object):
             morph_preds = split_batch_pred(self.morph_predict(batch))
 
             for cnn_output in morph_preds:
-                seg_result = self.morph_segmenter.segment(
-                    cnn_output,
-                    refine_outlines=refine_outlines,
-                    return_volume=yield_volumes)
+                output = {}
+
+                try:
+                    seg_result = self.morph_segmenter.segment(
+                        cnn_output,
+                        refine_outlines=refine_outlines,
+                        return_volume=yield_volumes)
+                except:
+                    # Log errors
+                    err_id = _generate_error_dump_id()
+                    if (self.error_dump_dir is not None and
+                            isdir(self.error_dump_dir)):
+                        save_tiled_image(
+                            np.uint16((2**16 - 1) * cnn_output),
+                            join(self.error_dump_dir,
+                                 err_id + '_cnn_out.png'))
+                    if self.suppress_errors:
+                        err_msg = dict(ID=err_id,
+                                       refine_outlines=refine_outlines,
+                                       return_volume=yield_volumes)
+                        err_msg = [
+                            '{}: {}'.format(k, v) for k, v in err_msg.items()
+                        ]
+                        err_msg.insert(0, 'Segmentation error')
+                        logging.exception('\n'.join(err_msg))
+                        seg_result = SegmentationOutput([])
+                        output['error'] = 'Segmentation error: ' + err_id
+                    else:
+                        raise
 
                 if len(seg_result.coords) > 0:
                     centres, radii, angles = zip(*seg_result.coords)
@@ -240,11 +280,11 @@ class BabyBrain(object):
                     centres, radii, angles = 3 * [[]]
 
                 # Return output as a dict
-                output = {
+                output.update({
                     'centres': centres,
                     'angles': [a.tolist() for a in angles],
                     'radii': [r.tolist() for r in radii]
-                }
+                })
 
                 _0xy = (0,) + cnn_output.shape[1:3]
                 if yield_masks:
@@ -392,3 +432,7 @@ class BabyBrain(object):
                 yield seg, state
             else:
                 yield seg
+
+
+def _generate_error_dump_id():
+    return strftime('%Y-%m-%d_%H-%M-%S_') + str(uuid1())
