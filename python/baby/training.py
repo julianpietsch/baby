@@ -6,7 +6,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple, Union, Tuple, Any
 import numpy as np
-from kerastuner import RandomSearch, Tuner, Hyperband, BayesianOptimization
+from baby.hypermodels import get_hypermodel
+from kerastuner import RandomSearch, Tuner, Hyperband, BayesianOptimization, \
+    HyperModel
 from numpy.polynomial import Polynomial
 from scipy.optimize import curve_fit
 import pandas as pd
@@ -391,11 +393,11 @@ class FlattenerTrainer:
 def instantiate_tuner(model, method='random', **kwargs):
     method = method.lower()
     if method == 'random':
-        return RandomSearch(model, **kwargs)
+        return RandomSearch(model, **kwargs, project_name=model.name)
     elif method == 'hyperband':
-        return Hyperband(model, **kwargs)
+        return Hyperband(model, **kwargs, project_name=model.name)
     elif method == 'bayesian':
-        return BayesianOptimization(model, **kwargs)
+        return BayesianOptimization(model, **kwargs, project_name=model.name)
     else:
         raise (ValueError, 'Method {} is not supported.'.format(method))
 
@@ -415,27 +417,82 @@ class HyperParameterTrainer:
     #  - Model parameters
     #  - Augmentation choices?
     #  - Optimizer and learning rate?
-    def __init__(self, model, gen, aug,
-                 tuner: Union[Tuner, None, dict, str] = None):
+    def __init__(self, save_dir: Path, cnn_set, gen, aug, outputs,
+                 tuner_params: Union[Tuner, None, dict, str] = None):
+        self.save_dir = save_dir
         self.aug = aug
         self.gen = gen
-        self.model = model
+        self.outputs = outputs
+        self._init_hypermodels(cnn_set)
+        self._tuners = dict()
 
-        if tuner is None:
-            tuner = RandomSearch(model,
-                                 objective='val_loss',
-                                 max_trials=5,
-                                 directory='./',
-                                 project_name=self.model.name,
-                                 overwrite=False)
-        elif isinstance(tuner, str):
+        self._cnn = None
+        self.cnn = self.cnn_set[0]
+
+        if tuner_params is None:
+            self._tuner_params = dict(method='random',
+                                      objective='val_loss',
+                                      max_trials=3,
+                                      directory='./',
+                                      overwrite=True)
+        elif isinstance(tuner_params, str):
+            with open(tuner_params, 'r') as fd:
+                self._tuner_params = json.load(fd)
+        elif isinstance(tuner_params, dict):
+            # Todo: save tuner to file
+            self._tuner_params = tuner_params
+        self._best_parameters = None
+
+    def _init_hypermodels(self, cnn_set):
+        self.cnn_set = [None] * len(cnn_set)
+        for i, cnn in enumerate(cnn_set):
+            if isinstance(cnn, str):
+                # Get from Hypermodel file by name
+                shapes = self.gen.train.shapes
+                self.cnn_set[i] = get_hypermodel(cnn, shapes.input[1:],
+                                                 self.outputs)
+            elif not isinstance(cnn, HyperModel):
+                raise TypeError("Non-standard CNNs must be in the form of a "
+                                "keras.Hypermodel, "
+                                "received {}".format(type(cnn)))
+
+    @property
+    def cnn(self):
+        return self._cnn
+
+    @cnn.setter
+    def cnn(self, cnn):
+        if isinstance(cnn, HyperModel):
+            self._cnn = cnn
+        else:
+            raise TypeError("CNN instance must be of type "
+                            "kerastuner.Hypermodel.")
+
+    @property
+    def cnn_dir(self):
+        cnn_dir = self.save_dir / self.cnn.name
+        if not cnn_dir.exists():
+            cnn_dir.mkdir()
+        return cnn_dir
+
+    @property
+    def tuner(self):
+        if self.cnn.name not in self._tuners:
+            self._tuners[self.cnn.name] = instantiate_tuner(self.cnn,
+                                                            **self._tuner_params)
+        return self._tuners[self.cnn.name]
+
+    # Todo: set tuner parameters, not tuner itself
+    @tuner.setter
+    def tuner(self, tuner):
+        if isinstance(tuner, str):
             with open(tuner, 'r') as fd:
                 params = json.load(fd)
-            tuner = instantiate_tuner(self.model, **params)
+            self._tuner_params = params
         elif isinstance(tuner, dict):
-            tuner = instantiate_tuner(self.model, **tuner)
-        self.tuner = tuner
-        self._best_parameters = None
+            self._tuner_params = tuner
+        # Invalidate current tuners
+        self._tuners = dict()
 
     @property
     def best_parameters(self):
@@ -446,7 +503,7 @@ class HyperParameterTrainer:
 
     def save_best_parameters(self, filename):
         with open(filename, 'w') as fd:
-            json.dump(self._best_parameters, fd)
+            json.dump(self.best_parameters, fd)
 
     def search(self, epochs=100, steps_per_epoch=10, validation_steps=10,
                **kwargs):
@@ -477,17 +534,20 @@ class HyperParameterTrainer:
                                   validation_data=val_gen,
                                   validation_steps=validation_steps,
                                   **kwargs)
+        # Get best parameters
+        self.save_best_parameters(self.cnn_dir / 'hyperparameters.json')
 
 
 class CNNTrainer:
-    def __init__(self, save_dir, cnn_set, gen, aug, flattener, max_cnns=3):
+    def __init__(self, save_dir, cnn_set, gen, aug, flattener, max_cnns=3,
+                 cnn_fn=None):
         self.flattener = flattener
         self.aug = aug
         self.gen = gen
         self._max_cnns = max_cnns
         self.save_dir = save_dir
         self.cnn_set = cnn_set
-        self._cnn_fn = None
+        self._cnn_fn = cnn_fn
         self._cnns = dict()
 
     @property
@@ -529,7 +589,17 @@ class CNNTrainer:
             #   Make model accept an input shape and a set of outputs
             self.gen.train.aug = self.aug.train
             print('Loading "{}" CNN...'.format(self.cnn_name))
-            model = self.cnn_fn(self.gen.train, self.flattener)
+            # Load hyperparameters
+            hyper_param_file = self.cnn_dir / "hyperparameters.json"
+            if not hyper_param_file.exists():
+                # Todo: just use defaults
+                raise FileNotFoundError("Hyperparameter file {} for {} not "
+                                        "found.".format(hyper_param_file,
+                                                        self.cnn_name))
+            with open(hyper_param_file, 'r') as fd:
+                hyperparameters = json.load(fd)
+            model = self.cnn_fn(self.gen.train, self.flattener,
+                                **hyperparameters)
             self._cnns[self.cnn_name] = model
 
             # Save initial weights if they haven't already been saved
@@ -713,6 +783,7 @@ class BabyTrainer(object):
         # Trainers
         self._smoothing_sigma_trainer = None
         self._flattener_trainer = None
+        self._hyperparameter_trainer = None
         self._cnn_trainer = None
         self._track_trainer = None
         self._bud_trainer = None
@@ -720,19 +791,49 @@ class BabyTrainer(object):
     @property
     def smoothing_sigma_trainer(self):
         if self._smoothing_sigma_trainer is None:
-            self._smoothing_sigma_trainer = SmoothingModelTrainer()
+            self._smoothing_sigma_trainer = SmoothingModelTrainer(
+                save_dir=self.save_dir,
+                stats_file=self.parameters.smoothing_sigma_stats_file,
+                model_file=self.parameters.smoothing_sigma_model_file
+            )
         return self._smoothing_sigma_trainer
 
     @property
     def flattener_trainer(self):
         if self._flattener_trainer is None:
-            self._flattener_trainer = FlattenerTrainer()
+            self._flattener_trainer = FlattenerTrainer(
+                save_dir=self.save_dir,
+                stats_file=self.parameters.flattener_stats_file,
+                flattener_file=self.parameters.flattener_file
+            )
         return self._flattener_trainer
+
+    @property
+    def hyperparameter_trainer(self):
+        if self._hyperparameter_trainer is None:
+            self._hyperparameter_trainer = HyperParameterTrainer(
+                save_dir=self.save_dir,
+                cnn_set=self.parameters.cnn_set,
+                gen=self.gen,
+                aug=self.aug,
+                outputs=self.flattener_trainer.flattener.names(),
+                tuner_params=None
+                # Todo: tuner file if it exists in parameters
+            )
+        return self._hyperparameter_trainer
 
     @property
     def cnn_trainer(self):
         if self._cnn_trainer is None:
-            self._cnn_trainer = CNNTrainer()
+            self._cnn_trainer = CNNTrainer(
+                save_dir=self.save_dir,
+                cnn_set=self.parameters.cnn_set,
+                gen=self.gen,
+                aug=self.aug,
+                flattener=self.flattener_trainer.flattener,
+                cnn_fn=self.parameters.cnn_fn,
+                max_cnns=self._max_cnns  # Todo: private access OK?
+            )
         return self._cnn_trainer
 
     @property
@@ -869,8 +970,8 @@ class BabyTrainer(object):
             'validation' if validation else 'training'))
 
     def generate_smoothing_sigma_stats(self):
-        train_gen = augmented_generator(self.gen.train, lambda x, y: (x,y))
-        val_gen = augmented_generator(self.gen.train, lambda x, y: (x,y))
+        train_gen = augmented_generator(self.gen.train, lambda x, y: (x, y))
+        val_gen = augmented_generator(self.gen.train, lambda x, y: (x, y))
         self.smoothing_sigma_trainer.generate_smoothing_sigma_stats(
             train_gen, val_gen)
 
