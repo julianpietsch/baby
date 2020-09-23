@@ -391,12 +391,16 @@ async def get_segmentation(request):
         # - Custom data transformations -
         if 'edgemasks' in p:
             # Convert edge masks to lists of x and y coords
-            p[k] = [[x + 1 for x in np.where(m)] for m in v]
+            p["edgemasks"] = [[(x + 1).tolist() for x in np.where(m)]
+                                  for m in p["edgemasks"]]
 
         # - Generic data transformations -
         for k, v in p.items():
             if isinstance(v, np.ndarray):
                 p[k] = None # heavy ndarrays must be obtained via other routes
+            else: # Many seem to be numpy arrays in lists of lists
+                p[k] = [m.tolist() if isinstance(m, np.ndarray) else m for m
+                        in v]
 
     return web.json_response(pred)
 
