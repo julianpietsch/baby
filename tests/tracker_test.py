@@ -33,7 +33,8 @@ def evolve60env(modelsets, image_dir):
 
     tnames = flattener.names()
     i_budneck = tnames.index('bud_neck')
-    i_bud = tnames.index('sml_fill')
+    bud_target = 'sml_fill' if 'sml_fill' in tnames else 'sml_inte'
+    i_bud = tnames.index(bud_target)
 
     # Load BabyBrain param defaults
     params = default_params.copy()

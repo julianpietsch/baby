@@ -6,6 +6,12 @@ setup(
     packages=find_packages('python'),
     package_dir={'': 'python'},
     include_package_data=True,
+    entry_points={
+        'console_scripts': [
+            'baby-phone = baby.server:main',
+            'baby-race = baby.speed_tests:main'
+            ]
+        },
     url='',
     license='',
     author='Julian Pietsch',

@@ -249,7 +249,9 @@ def subtask_timings(timing, seg_expt, bb, ntps=5, refine_outlines=True,
     # Running time for tracking
     tnames = bb.flattener.names()
     i_budneck = tnames.index('bud_neck')
-    i_bud = tnames.index('sml_fill')
+    bud_target = 'sml_fill' if 'sml_fill' in tnames else 'sml_inte'
+    i_bud = tnames.index(bud_target)
+
     tracker_states = list(repeat(None, len(tps_traps[0])))
     for tp in range(ntps):
         timing.start('Tracking time point {:d}...'.format(tp + 1))
@@ -264,7 +266,7 @@ def subtask_timings(timing, seg_expt, bb, ntps=5, refine_outlines=True,
     outer_timing.finish()
 
 
-if __name__ == "__main__":
+def main():
     from optparse import OptionParser
     usage = "usage: %prog [options] experiment_dir"
     parser = OptionParser(usage=usage)

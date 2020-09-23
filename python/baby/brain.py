@@ -112,23 +112,21 @@ class BabyBrain(object):
                 if self.print_info:
                     print('Loading model into session "{}"...'.format(
                         K.get_session()))
-                self.morph_model = models.load_model(morph_model_file,
-                                                     custom_objects={
-                                                         'bce_dice_loss':
-                                                             bce_dice_loss,
-                                                         'dice_loss':
-                                                             dice_loss,
-                                                         'dice_coeff':
-                                                             dice_coeff
-                                                     })
+                self.morph_model = models.load_model(
+                    morph_model_file,
+                    custom_objects={
+                        'bce_dice_loss': bce_dice_loss,
+                        'dice_loss': dice_loss,
+                        'dice_coeff': dice_coeff
+                    })
         else:
-            self.morph_model = models.load_model(morph_model_file,
-                                                 custom_objects={
-                                                     'bce_dice_loss':
-                                                         bce_dice_loss,
-                                                     'dice_loss': dice_loss,
-                                                     'dice_coeff': dice_coeff
-                                                 })
+            self.morph_model = models.load_model(
+                morph_model_file,
+                custom_objects={
+                    'bce_dice_loss': bce_dice_loss,
+                    'dice_loss': dice_loss,
+                    'dice_coeff': dice_coeff
+                })
 
         self.flattener = SegmentationFlattening(flattener_file)
         self.params = params
@@ -196,8 +194,8 @@ class BabyBrain(object):
                 yield_edgemasks=False,
                 yield_masks=False,
                 yield_preds=False,
-                refine_outlines=False,
-                yield_volume=False):
+                yield_volumes=False,
+                refine_outlines=False):
         '''Generator yielding segmented output for a batch of input images
 
         :param bf_img_batch: a list of ndarray with shape (X, Y, Z), or
@@ -209,19 +207,32 @@ class BabyBrain(object):
         :param yield_preds: if set to True, additionally yield full prediction
             output from neural network
 
-        :yields: for each image in the batch a dict specifying centres, angles
-            and radii for each cell detected in the image
+        :yields: for each image in `bf_img_batch` a dict with
+            - centres: list of float pairs corresponding to (x, y) coords for
+              each detected cell,
+            - angles: list of lists of floats corresponding, for each cell, to
+              angles (radians) used to form active contour outline in radial
+              space
+            - radii: list of lists of floats corresponding, for each cell, to
+              radii used to form active contour outline in radial space
+            - edgemasks: (optional) an ndarray of dtype "bool" with shape
+              (N_cells, X, Y) specifying the rasterised edge for each
+              segmented cell
+            - volumes: (optional) list of floats corresponding, for each cell,
+              to the conical section method for cell volume estimation 
         '''
         # First preprocess each brightfield image in batch
-        bf_img_batch = np.stack([robust_norm(img, {}) for img in bf_img_batch])
+        bf_img_batch = np.stack(
+            [robust_norm(img, {}) for img in bf_img_batch])
 
         for batch in batch_iterator(bf_img_batch):
             morph_preds = split_batch_pred(self.morph_predict(batch))
 
             for cnn_output in morph_preds:
-                seg_result = self.morph_segmenter.segment(cnn_output,
-                                                          refine_outlines=refine_outlines,
-                                                          return_volume=yield_volume)
+                seg_result = self.morph_segmenter.segment(
+                    cnn_output,
+                    refine_outlines=refine_outlines,
+                    return_volume=yield_volumes)
 
                 if len(seg_result.coords) > 0:
                     centres, radii, angles = zip(*seg_result.coords)
@@ -246,14 +257,10 @@ class BabyBrain(object):
                         output['edgemasks'] = np.stack(seg_result.edges)
                     else:
                         output['edgemasks'] = np.zeros(_0xy, dtype='bool')
-                if yield_volume:
-                    if len(seg_result.volume) > 0:
-                        output['volume'] = np.stack(seg_result.volume)
-                    else:
-                        # Todo: returning zero volumes could break post-proc.
-                        output['volume'] = np.zeros(_0xy, dtype=float)
                 if yield_preds:
                     output['preds'] = cnn_output
+                if yield_volumes:
+                    output['volumes'] = seg_result.volume
 
                 yield output
 
@@ -290,7 +297,7 @@ class BabyBrain(object):
                           assign_mothers=False,
                           return_baprobs=False,
                           refine_outlines=False,
-                          return_volume=False):
+                          yield_volumes=False):
         '''Generator yielding segmented and tracked output for a batch of input
         images
 
@@ -305,6 +312,8 @@ class BabyBrain(object):
             output
         :param return_baprobs: whether to include the bud assignment
             probability matrix in the output
+        :param yield_volumes: whether to calculate and include volume
+            estimates in the output
 
         :yields: for each image in `bf_img_batch` a dict with
             - centres: list of float pairs corresponding to (x, y) coords for
@@ -314,7 +323,7 @@ class BabyBrain(object):
               space
             - radii: list of lists of floats corresponding, for each cell, to
               radii used to form active contour outline in radial space
-            - cell_label: list of int corresponding to assigned global ID for
+            - cell_label: list of int corresponding to tracked global ID for
               each cell detected in this image (indexed from 1)
             - mother_assign: (optional) list of int specifying for each
               (global) cell label ID, the cell label ID of the corresponding
@@ -322,6 +331,9 @@ class BabyBrain(object):
             - p_bud_assign: (optional) matrix as a list of lists of floats,
               specifying the probability that a cell (outer list) is a mother
               to another cell (inner lists) in this image
+            - edgemasks: (optional) an ndarray of dtype "bool" with shape
+              (N_cells, X, Y) specifying the rasterised edge for each
+              segmented cell
 
             If `yield_next` is True, yields the dict described above and
             tracker states for this time point as a tuple
@@ -339,13 +351,15 @@ class BabyBrain(object):
                                    yield_masks=True,
                                    yield_edgemasks=True,
                                    yield_preds=True,
-                                   refine_outlines=refine_outlines,
-                                   yield_volume=return_volume)
+                                   yield_volumes=yield_volumes,
+                                   refine_outlines=refine_outlines)
 
         for seg, state in zip(segment_gen, tracker_states):
             tracking = self.tracker.step_trackers(
-                seg['masks'], seg['preds'][i_budneck],
-                seg['preds'][i_bud], state=state,
+                seg['masks'],
+                seg['preds'][i_budneck],
+                seg['preds'][i_bud],
+                state=state,
                 assign_mothers=assign_mothers,
                 return_baprobs=return_baprobs)
 
@@ -356,6 +370,17 @@ class BabyBrain(object):
 
             seg['cell_label'] = tracking['cell_label']
             state = tracking['state']
+
+            # Use the last added "previous features" in the tracker state to
+            # obtain the major and minor ellipsoid axes
+            feats = state['prev_feats'][-1]
+            ellip_inds = tuple(
+                self.tracker.outfeats.index(p)
+                for p in ('major_axis_length', 'minor_axis_length'))
+            if feats.shape[0] > 0:
+                seg['ellipse_dims'] = feats[:, ellip_inds].tolist()
+            else:
+                seg['ellipse_dims'] = []
 
             if assign_mothers:
                 seg['mother_assign'] = tracking['mother_assign']

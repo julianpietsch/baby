@@ -77,6 +77,7 @@ class Cell:
             self._calculate_properties(fit_radial=self.fit_radial)
         return self._coords
 
+    @property
     def volume(self, method='conical'):
         return volume(self.edge, method=method)
 

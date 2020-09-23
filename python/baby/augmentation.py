@@ -8,6 +8,7 @@ two arrays as input, and will perform identitcal transformations on both arrays.
 from __future__ import absolute_import, division, print_function
 import json
 import numpy as np
+from itertools import permutations, repeat
 from scipy.ndimage import map_coordinates, gaussian_filter, shift
 from scipy.ndimage.morphology import binary_fill_holes
 from skimage import transform
@@ -16,6 +17,7 @@ from skimage.filters import gaussian
 from skimage.draw import rectangle_perimeter
 
 from .preprocessing import segoutline_flattening
+from .errors import BadParam
 
 AUGMENTATION_ORDER = ('substacks', 'rotate', 'vshift', 'hshift', 'downscale',
                       'crop', 'vflip', 'hflip', 'movestacks', 'noise')
@@ -66,6 +68,11 @@ class Augmenter(object):
             for a in self.aug_order
         ])
 
+        if substacks is not None:
+            if type(substacks) != int:
+                raise BadParam('"substacks" must be None or an int')
+            if substacks < 1:
+                raise BadParam('"substacks" must be a positive integer')
         self.nsubstacks = substacks
 
     def __call__(self, img, lbl_info):
@@ -116,27 +123,55 @@ class Augmenter(object):
         return (img, lbl)
 
     def substacks(self, img, lbl):
+        """Randomly pick Z-sections to match the chosen substack size
+
+        By default all Z-sections are used. If `substacks` was specified in
+        the constructor, then Z-sections are randomly chosen to limit to that
+        number of stacks. All subsets are considered except those where
+        Z-sections are separated by more than one omitted Z-slice.
+
+        An error will be raised if the image has fewer Z-sections than the
+        number specified in `substacks`.
+
+        Images presented to the augmenter call do not necessarily all need to
+        have the same number of Z-sections; this will result in consistent
+        output if `substacks` is specified, but will potentially result in
+        inconsistent output in the default case.
+        """
+
         self.refslice = 0
-        nz = 1 if len(img.shape) < 3 else img.shape[2]
-        if self.nsubstacks == 1:
-            self.refslice = np.random.choice(range(nz)) + 1
-            # print('selecting substack {} / {}...'.format(
-            #     self.refslice, img.shape[2]))
-            img = img[:, :, self.refslice - 1, None]
-        elif self.nsubstacks == 3 and nz == 5:
-            choices = [
-                [True, False, True, False, True],
-                [True, True, True, False, False],
-                [False, True, True, True, False],
-                [False, False, True, True, True],
-                # [True, True, False, False, True],
-                # [True, False, False, True, True],
-                [False, True, True, False, True],
-                [False, True, False, True, True],
-                [True, False, True, True, False],
-                [True, True, False, True, False]
+        nsub = self.nsubstacks
+
+        if nsub:
+            # nz = number of z-sections in input image
+            nz = 1 if len(img.shape) < 3 else img.shape[2]
+            if nz < self.nsubstacks:
+                raise BadParam(
+                    '"img" has fewer Z-sections than the specified "substacks"')
+            
+            # Obtain set of permuted filters (logical masks) to subset the
+            # current Z-sections to that specified by `nsubstacks`
+            template_filter = tuple(repeat(True, nsub)) + tuple(repeat(False, nz - nsub))
+            ss_filters = tuple(np.array(f) for f in set(permutations(template_filter)))
+
+            # Exclude filters that select Z-sections separated by more than one
+            # omitted Z-section. The logic is:
+            # - `f[:-1] != f[1:]` finds transition points between blocks of
+            #   True/False
+            # - Prepending logic with `f[0]` ensures that odd counts in diff
+            #   will be False (pairs with `[::2]`)
+            # - Blocks of False at the end are ignored by not appending
+            #   anything to the logic
+            # - Blocks of False at the start are ignored by subsetting the
+            #   results of `where`
+            ss_filters = [
+                f for f in ss_filters if
+                (np.diff(np.where(np.concatenate(([f[0]],f[:-1] != f[1:])))[0][1:])[::2] < 2).all()
             ]
-            img = img[:, :, np.random.choice(choices)]
+
+            ss = ss_filters[np.random.randint(len(ss_filters))]
+            img = img[:, :, ss]
+            self.refslice = int(np.median(np.where(ss))) + 1
 
         return img, lbl
 
