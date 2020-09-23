@@ -20,7 +20,7 @@ setup(
     install_requires=['scipy',
                       'numpy',
                       'scikit-image',
-                      'tensorflow',
+                      'tensorflow>=1.14',
                       'imageio',
                       'pillow',
                       'matplotlib']
