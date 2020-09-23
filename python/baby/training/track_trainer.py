@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 import pickle
 
-from .tracker import Tracker
-from .io import load_tiled_image
+from baby.tracker import Tracker
+from baby.io import load_tiled_image
 
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops_table

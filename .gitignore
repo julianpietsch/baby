@@ -11,3 +11,4 @@ baby-server-test.png
 **/data/*
 *.egg-info/
 **/venv/
+/tf1_venv/

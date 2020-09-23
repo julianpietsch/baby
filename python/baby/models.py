@@ -43,13 +43,12 @@ def unet_4s(inputs):
 
 @named_model_fn('Unet')
 def unet(inputs, depth=4, layer_size=8, batchnorm=True, dropout=0.):
-    # Todo: make all the input arguments necessary
     layer_sizes = [layer_size*(2**i) for i in range(depth)]
     return unet_block(inputs, layer_sizes,
                       dropout=dropout, batchnorm=batchnorm)
 
 
 @named_model_fn('MSD')
-def msd(inputs, depth=80, width=80, n_dilations=4, dilation=1, batchnorm=True):
+def msd(inputs, depth=80, width=1, n_dilations=4, dilation=1, batchnorm=True):
     dilations = [dilation * (2 ** i) for i in range(n_dilations)]
     return msd_block(inputs, depth, width, dilations, batchnorm=batchnorm)

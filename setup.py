@@ -15,7 +15,9 @@ setup(
                       'numpy',
                       'pandas',
                       'scikit-image',
+                      'scikit-learn',
                       'tensorflow',
+                      'tqdm',
                       'imageio',
                       'pillow',
                       'matplotlib']
