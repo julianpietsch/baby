@@ -490,7 +490,7 @@ class BabyTrainer(object):
     @property
     def track_trainer(self):
         if not hasattr(self, '_track_trainer'):
-            self._track_trainer = TrackTrainer(self.data._metadata, self.data)
+            self._track_trainer = TrackTrainer(self.data._metadata, data=self.data)
         return self._track_trainer
 
     @property

@@ -34,8 +34,10 @@ class TrackBenchmarker:
         '''
         if not hasattr(self, '_traps_loc'):
 
-            traps = np.unique([ind[:self.indices.index('trap')+1] for ind in self.meta.index], axis=0)
-            traps = [(ind[0], *map(int, ind[1:])) for ind in traps] # str->int conversion
+            traps = np.unique([ind[:self.indices.index('trap')+1]
+                               for ind in self.meta.index], axis=0)
+            # str->int conversion
+            traps = [(ind[0], *map(int, ind[1:])) for ind in traps] 
             self._traps_loc = *map(
                 tuple, traps),
 
@@ -48,7 +50,8 @@ class TrackBenchmarker:
                               fname in self.meta['filename']]
             for i, mask in enumerate(self._masks):
                 for j in range(mask.shape[2]):
-                    self._masks[i][..., j] = binary_fill_holes(self._masks[i][..., j])
+                    self._masks[i][..., j] = \
+                    binary_fill_holes(self._masks[i][..., j])
 
         return self._masks
 
@@ -99,35 +102,48 @@ class TrackBenchmarker:
         test_df = self.meta.loc(axis=0)[(exp, pos, trap)]
         test_df['pred_cellLabels'] = new_cids
 
-        test = test_df['cellLabels'].values
+        orig = test_df['cellLabels'].values
         new = test_df['pred_cellLabels'].values
         local_indices = [[], []]
 
-
-        #      # Case just defines if it is the test or new set
+        # Case just defines if it is the test or new set
         print("Making tp-wise comparison")
-        for i, case in enumerate((zip(test[:-1],
-                                      test[1:]), zip(new[:-1], new[1:]))):
+        for i, case in enumerate((zip(orig[:-1],
+                                      orig[1:]), zip(new[:-1], new[1:]))):
             for prev_cells, pos_cells in case:
                 local_assignment = [
                     prev_cells.index(cell) if cell in prev_cells else -1
                     for cell in pos_cells
                 ]
                 local_indices[i] += local_assignment
+        print(local_indices, new, orig)
 
         # Flatten
-        flt_test, flt_new = [
-            np.array([j for i in case for j in i]) for case in local_indices
-        ]
-        tp_list = np.array(
-            [i for i, vals in enumerate(local_indices[0]) for j in vals])
+        if len(local_indices) > 2: #TODO check why this stopped working
+            flt_test, flt_new = [
+                np.array([j for i in case for j in i]) for case in local_indices
+            ]
+            tp_list = np.array(
+                [i for i, vals in enumerate(local_indices[0]) for j in vals])
+        else:
+            flt_test, flt_new = [
+                np.array([i for i in case]) for case in local_indices
+            ]
+            # tp_list = np.array(
+            #     [i for i, vals in enumerate(local_indices[0]) for j in vals])
+
         correct = flt_test==flt_new
-        error_list = tp_list[~correct]
+        if len(local_indices) > 2:
+            error_list = tp_list[~correct]
         error_cid = test_df.iloc[1:]['cellLabels'].explode()[~correct].values
         frac_correct = np.mean(correct)
 
         print("Fraction of correct predictions", frac_correct)
-        return (frac_correct, list(zip(error_list, error_cid)))
+        if len(local_indices)>2:
+            return (frac_correct, list(zip(error_list, error_cid)))
+        else:
+            print("Single timepoint")
+            return (frac_correct, error_cid)
 
     def calculate_errsum(self):
         frac_errs = {}
@@ -139,7 +155,6 @@ class TrackBenchmarker:
             for thresh in threshs:
                 self.nstepsback = nstepsback
                 self.tracker.nstepsback = nstepsback
-                # self.tracker.red_fun = rand
                 self.ctrack_thresh = thresh
                 all_errs[(thresh, nstepsback)] = []
                 frac_errs[(thresh, nstepsback)] = []

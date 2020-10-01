@@ -34,7 +34,6 @@ class TrackTrainer(Tracker):
             self.masks= [load_tiled_image(fname)[0] for
                          fname  in self.meta['filename']]
         self.process_traps()
-        self.gen_train()
 
     def verify_mask_df_integrity(masks, df):
         nlayers=[mask.shape[2] for mask in masks]
@@ -69,14 +68,22 @@ class TrackTrainer(Tracker):
         traps = *map(
             tuple, traps),
 
-        train = *map(self.gen_train_from_trap, traps),
+        train = []
+        for trap in traps: # fill the training dataset with traps' tuples
+            trapsets = self.gen_train_from_trap(trap) 
+            if trapsets:
+                train.append(trapsets)
         self.train = np.concatenate(train)
 
     def gen_train_from_pair(self, pair_loc):
         subdf = self.meta[['list_index', 'cellLabels']].loc(axis=0)[pair_loc]
 
+        if not subdf['cellLabels'].all():
+            return None
+
         truemat = np.equal.outer(*subdf['cellLabels'].values).reshape(-1)
-        propsmat = self.df_calc_feat_matrix(pair_loc).reshape(-1, self.nfeats)
+        propsmat = self.df_calc_feat_matrix(pair_loc).reshape(
+            -1, self.nfeats) 
 
         return [x for x in zip(truemat, propsmat)]
 
@@ -126,9 +133,16 @@ class TrackTrainer(Tracker):
             for pair in zip(subdf.index[:-1], subdf.index[1:])
         ]
 
-        res_tuples = [
-            tup for pair in pairs for tup in self.gen_train_from_pair(pair)
-        ]
+        res_tuples = []
+        for pair in pairs: # linearise the resulting tuples
+            pair_trainset = self.gen_train_from_pair(pair)
+            if pair_trainset:
+                for tup in pair_trainset:
+                    res_tuples.append(tup)
+
+        # res_tuples = [
+        #     tup for pair in pairs for tup in self.gen_train_from_pair(pair)
+        # ]
 
         return res_tuples
 
@@ -142,6 +156,10 @@ class TrackTrainer(Tracker):
             df = self.rprops
 
         subdf = df.loc(axis=0)[pair_loc]
+
+        if pair_loc[2]== 11 and pair_loc[3]==(1,2): #debugging
+            print(subdf)
+
         group_props = subdf.groupby('tp')
         group_sizes = group_props.size().to_list()
 

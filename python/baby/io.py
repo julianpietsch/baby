@@ -212,6 +212,11 @@ class TrainValPairs(object):
                  lbl_suffix='segoutlines',
                  test_size=0.25,
                  group_by=('experimentID', 'position', 'trap')):
+        only_outlines = False
+        if img_suffix is None:
+            img_suffix='segoutlines'
+            only_outlines = True
+
 
         # Find image files, and ensure label files are paired by prefix
         # NB: the following code is written such that pairs are found in a
@@ -222,8 +227,9 @@ class TrainValPairs(object):
         matches = [(re_img.search(f.stem), re_lbl.search(f.stem), f)
                    for f in png_files]
         matches = [('img', im, f) if im else ('lbl', lm, f)
-                   for im, lm, f in matches
-                   if im or lm]
+                       for im, lm, f in matches
+                       if im or lm]
+
         # Group by path and prefix (i.e., excluding suffix):
         prefix = lambda x: str(x[2].parent) + x[1].group(1)
         first = lambda x: x[0]
@@ -232,9 +238,15 @@ class TrainValPairs(object):
             for t, ims in groupby(sorted(p, key=first), key=first)
         }
                    for _, p in groupby(matches, key=prefix)]
-        pairs = [(p['img'][0][2], p['lbl'][0][2])
+
+        if not only_outlines: # replace imgs with img if only using outlines
+            pairs = [(p['img'][0][2], p['lbl'][0][2])
                  for p in grouped
                  if len(p.get('img', [])) == 1 and len(p.get('lbl', [])) == 1]
+        else:
+            pairs = [(p['img'][0][2], p['img'][0][2])
+                 for p in grouped
+                 if len(p.get('img', [])) == 1]
 
         # Ensure that we only add pairs that are not already present
         existing = set(self.training + self.validation)

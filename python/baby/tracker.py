@@ -103,6 +103,9 @@ class Tracker:
         :n3darray: ndarray (ncells_prev, ncells_new, nfeats) containing a
         cell-wise substraction of the features in the input ndarrays.
         '''
+        if not (new_feats.any() and prev_feats.any()):
+            return np.array([])
+
         nnew = len(new_feats)
         noutfeats = len(self.outfeats)
 
@@ -156,6 +159,10 @@ class Tracker:
 
         
     def predict_proba_from_ndarray(self, array_3d, boolean=False):
+
+        if not array_3d.any():
+            return np.array([])
+
         predict_fun = self.ctrack_model.predict if boolean else self.ctrack_model.predict_proba
 
         orig_shape = array_3d.shape[:2]
