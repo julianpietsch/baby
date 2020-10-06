@@ -135,7 +135,7 @@ class TrackBenchmarker:
         correct = flt_test==flt_new
         if len(local_indices) > 2:
             error_list = tp_list[~correct]
-        error_cid = test_df.iloc[1:]['cellLabels'].explode()[~correct].values
+        error_cid = test_df.iloc[1:]['cellLabels'].explode().dropna()[~correct].values
         frac_correct = np.mean(correct)
 
         print("Fraction of correct predictions", frac_correct)
@@ -161,9 +161,15 @@ class TrackBenchmarker:
                 nerrs[(thresh, nstepsback)] = []
                 for address in self.traps_loc:
                     fraction, errors = self.compare_traps(*address)
-                    all_errs[(thresh, nstepsback)] += errors
-                    frac_errs[(thresh, nstepsback)] += fraction
-                    nerrs[(thresh, nstepsback)] += len(errors)
+                    if len(errors):
+                        all_errs[(thresh, nstepsback)].append(errors)
+                        frac_errs[(thresh, nstepsback)].append(fraction)
+                        nerrs[(thresh, nstepsback)].append(len(errors))
+                    else:
+                        nerrs[(thresh, nstepsback)].append(0)
+                        frac_errs[(thresh, nstepsback)].append(1.0)
+                        
+                    
 
         return (frac_errs, all_errs, nerrs)
 

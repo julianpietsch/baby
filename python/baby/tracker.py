@@ -206,14 +206,14 @@ class Tracker:
             new_feats = self.calc_feats_from_mask(new_img)
 
         if new_feats.any():
-            if prev_feats:
+            if np.any([len(prev_feat) for prev_feat in prev_feats]):
                 counts = Counter([lbl for lbl_set in prev_lbls for lbl in lbl_set])
                 lbls_order = list(counts.keys())
                 probs = np.full(
                     (len(lbls_order), self.nstepsback, len(new_feats)), np.nan)
       
                 for i, (lblset, prev_feat) in enumerate(zip(prev_lbls, prev_feats)):
-                    if prev_feat.any():
+                    if len(prev_feat):
                         feats_3darray = self.calc_feat_ndarray(
                             prev_feat, new_feats)
 
