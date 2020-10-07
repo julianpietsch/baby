@@ -45,8 +45,12 @@ class Tracker:
         self.ctrack_model = ctrack_model
 
         if feats2use is None:
+            # feats2use = ('area', 'minor_axis_length',
+            #               'major_axis_length', 'convex_area', 'bbox_area')
+            # Including centroid
             feats2use = ('centroid', 'area', 'minor_axis_length',
-                          'major_axis_length', 'convex_area')
+                          'major_axis_length', 'convex_area', 'euler_number',
+                         'eccentricity')
         self.feats2use = feats2use
 
         if ba_feats is None:
@@ -56,15 +60,18 @@ class Tracker:
         self.outfeats = list(
             regionprops_table(np.diag((1, 0)),
                               properties=self.feats2use).keys())
-        self.a_ind = self.outfeats.index('area')
-        self.ma_ind = self.outfeats.index('minor_axis_length')
+        if 'area' in self.feats2use:
+            self.a_ind = self.outfeats.index('area')
+        if 'minor_axis_length' in self.feats2use:
+            self.ma_ind = self.outfeats.index('minor_axis_length')
 
         self.xtrafeats = ('distance', )
+        # self.xtrafeats = ()
 
         if nstepsback is None:
-            self.nstepsback = 2
+            self.nstepsback = 5
         if ctrack_thresh is None:
-            self.ctrack_thresh = 0.75
+            self.ctrack_thresh = 0.7
         if red_fun is None:
             self.red_fun = np.nanmax
 

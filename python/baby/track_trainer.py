@@ -192,7 +192,7 @@ class TrackTrainer(Tracker):
                                     class_weight='balanced')
 
         param_grid = {
-            'n_estimators': [4, 6, 9],
+            'n_estimators': [5, 15, 30, 60, 100],
             'max_features': ['auto', 'sqrt', 'log2'],
             'max_depth': [2, 3],
             'class_weight': [None, 'balanced', 'balanced_subsample']

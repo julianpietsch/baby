@@ -116,7 +116,6 @@ class TrackBenchmarker:
                     for cell in pos_cells
                 ]
                 local_indices[i] += local_assignment
-        print(local_indices, new, orig)
 
         # Flatten
         if len(local_indices) > 2: #TODO check why this stopped working
@@ -185,10 +184,12 @@ class TrackBenchmarker:
         from matplotlib import pyplot as plt
         import seaborn as sns
 
-        ax = sns.barplot(x='variable_0', y='value', data=frac_df)
+        # ax = sns.barplot(x='variable_0', y='value', data=frac_df)
+        ax = sns.barplot(x='variable_1', y='value', hue='variable_0', data=frac_df);
         ax.set(xlabel='Backtrace depth',
                ylabel='Fraction of correct assignments',
                ylim=(0.9, 1))
+        plt.legend(title="Threshold")
         plt.savefig('tracker_benchmark_btdepth.png')
         plt.show()
     
