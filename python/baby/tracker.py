@@ -49,8 +49,7 @@ class Tracker:
             #               'major_axis_length', 'convex_area', 'bbox_area')
             # Including centroid
             feats2use = ('centroid', 'area', 'minor_axis_length',
-                          'major_axis_length', 'convex_area', 'euler_number',
-                         'eccentricity')
+                          'major_axis_length', 'convex_area')
         self.feats2use = feats2use
 
         if ba_feats is None:
