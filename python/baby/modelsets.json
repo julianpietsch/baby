@@ -7,8 +7,8 @@
     "default_image_size": [117, 117]
   },
   "evolve_brightfield_60x_5z": {
-    "morph_model_file": "I5_evolve_unet_4s_20200630.hdf5",
-    "flattener_file": "flattener_60x_evolve_20200630.json",
+    "morph_model_file": "I5_evolve_unet_4s_20201001.hdf5",
+    "flattener_file": "flattener_60x_evolve_20201001.json",
     "celltrack_model_file": "ctrack_randomforest_20200513.pkl",
     "budassign_model_file": "baby_randomforest_20190906.pkl",
     "default_image_size": [81, 81]
