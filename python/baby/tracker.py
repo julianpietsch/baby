@@ -3,7 +3,8 @@
 from collections import Counter
 import pickle
 import numpy as np
-from skimage.measure import regionprops_table
+from skimage.measure import regionprops_table 
+from skimage.transform import resize
 from skimage.draw import polygon
 import os
 
@@ -27,7 +28,8 @@ class Tracker:
                  feats2use=None,
                  ba_feats=None,
                  ctrack_thresh=None,
-                 nstepsback=None):
+                 nstepsback=None,
+                 red_fun=None):
 
         if ba_model is None:
             ba_model_file = os.path.join(models_path, 'baby_randomforest_20190906.pkl')
@@ -37,12 +39,15 @@ class Tracker:
 
         if ctrack_model is None:
             ctrack_model_file = os.path.join(models_path,
-                                      'ctrack_randomforest_20200513.pkl')
+                                      'ctrack_randomforest_20200903.pkl')
             with open(ctrack_model_file, 'rb') as file_to_load:
                 ctrack_model = pickle.load(file_to_load)
         self.ctrack_model = ctrack_model
 
         if feats2use is None:
+            # feats2use = ('area', 'minor_axis_length',
+            #               'major_axis_length', 'convex_area', 'bbox_area')
+            # Including centroid
             feats2use = ('centroid', 'area', 'minor_axis_length',
                           'major_axis_length', 'convex_area')
         self.feats2use = feats2use
@@ -54,32 +59,43 @@ class Tracker:
         self.outfeats = list(
             regionprops_table(np.diag((1, 0)),
                               properties=self.feats2use).keys())
-        self.a_ind = self.outfeats.index('area')
-        self.ma_ind = self.outfeats.index('minor_axis_length')
+        if 'area' in self.feats2use:
+            self.a_ind = self.outfeats.index('area')
+        if 'minor_axis_length' in self.feats2use:
+            self.ma_ind = self.outfeats.index('minor_axis_length')
 
         self.xtrafeats = ('distance', )
+        # self.xtrafeats = ()
 
         if nstepsback is None:
-            self.nstepsback = 2
+            self.nstepsback = 5
         if ctrack_thresh is None:
-            self.ctrack_thresh = 0.75
+            self.ctrack_thresh = 0.7
+        if red_fun is None:
+            self.red_fun = np.nanmax
 
-    def calc_feats_from_masks(self, masks, feats2use=None):
+    def calc_feats_from_mask(self, masks, feats2use=None):
         '''
         Calculate feature ndarray from ndarray of cell masks
         ---
         input
-        :masks: ndarray (ncells, x_size, y_size), typically dtype bool
-        :feats2use: tuple of property names for regionprops_table
+        :masks: ndarray (x_size, y_size, ncells), typically dtype bool
 
         output
         :n2darray: ndarray (ncells, nfeats)
         '''
-        return np.array([[
-                feat[0] for feat in regionprops_table(
-                    mask.astype('int'),
-                    properties=feats2use or self.feats2use).values()
-            ] for mask in masks])
+        feats=[]
+        if masks.sum():
+            for i in range(masks.shape[2]):
+                # Double conversion to prevent values from being floored to zero
+                resized_mask = resize(masks[..., i], (100, 100)).astype(bool).astype(int)
+                cell_feats = []
+                for feat in regionprops_table(resized_mask,
+                        properties=feats2use or self.feats2use).values():
+                    cell_feats.append(feat[0])
+                feats.append(cell_feats)
+
+        return np.array(feats)
 
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
@@ -93,6 +109,9 @@ class Tracker:
         :n3darray: ndarray (ncells_prev, ncells_new, nfeats) containing a
         cell-wise substraction of the features in the input ndarrays.
         '''
+        if not (new_feats.any() and prev_feats.any()):
+            return np.array([])
+
         nnew = len(new_feats)
         noutfeats = len(self.outfeats)
 
@@ -112,6 +131,57 @@ class Tracker:
 
         return n3darray
 
+    def predict_from_imgpair(self, img1, img2):
+        ''' Generate predictions for two images. Useful to produce statistics.
+        '''
+        feats1 = self.calc_feats_from_mask(img1)
+        feats2 = self.calc_feats_from_mask(img2)
+
+        feats_3darray = self.calc_feat_ndarray(feats1, feats2)
+
+        pred_matrix_bool = self.predict_proba_from_ndarray(feats_3darray, boolean=True)
+
+        return pred_matrix_bool
+
+    def get_truth_matrix_from_pair(self, pair):
+        '''
+        Requires self.meta
+
+        args:
+        :pair: tuple of size 4 (experimentID, position, trap (tp1, tp2))
+
+        output
+
+       :truth_mat: boolean ndarray of shape (ncells(tp1) x ncells(tp2)
+        links cells in tp1 to cells in tp2
+        '''
+        
+        clabs1 = self.meta.loc[pair[:3] + (pair[3][0], ), 'cellLabels']
+        clabs2 = self.meta.loc[pair[:3] + (pair[3][1], ), 'cellLabels']
+
+        truth_mat = gen_boolmat_from_clabs(clabs1, clabs2)
+
+        return truth_mat
+
+        
+    def predict_proba_from_ndarray(self, array_3d, boolean=False):
+
+        if not array_3d.any():
+            return np.array([])
+
+        predict_fun = self.ctrack_model.predict if boolean else self.ctrack_model.predict_proba
+
+        orig_shape = array_3d.shape[:2]
+
+        # Flatten for predictions and then reshape back into matrix
+        pred_list = np.array([
+            val[1] for val in predict_fun(array_3d.reshape(
+                -1, array_3d.shape[2]))
+        ])
+        pred_matrix = pred_list.reshape(orig_shape)
+
+        return pred_matrix
+
     def get_new_lbls(self,
                      new_img,
                      prev_lbls,
@@ -123,7 +193,7 @@ class Tracker:
 
         ----
         input
-        :new_img: ndarray (ncells, len, width) containing the cell outlines
+        :new_img: ndarray (len, width, ncells) containing the cell outlines
         :max_lbl: int indicating the last assigned cell label
         :prev_feats: list of ndarrays of size (ncells x nfeatures)
         containing the features of previous timepoints
@@ -139,45 +209,30 @@ class Tracker:
 
         '''
         if new_feats is None:
-            new_feats = self.calc_feats_from_masks(new_img)
+            new_feats = self.calc_feats_from_mask(new_img)
 
         if new_feats.any():
-            if prev_feats:
+            if np.any([len(prev_feat) for prev_feat in prev_feats]):
                 counts = Counter([lbl for lbl_set in prev_lbls for lbl in lbl_set])
                 lbls_order = list(counts.keys())
-                max_prob = np.zeros(
-                    (len(lbls_order), len(new_feats)), dtype=float)
-
+                probs = np.full(
+                    (len(lbls_order), self.nstepsback, len(new_feats)), np.nan)
+      
                 for i, (lblset, prev_feat) in enumerate(zip(prev_lbls, prev_feats)):
-                    if prev_feat.any():
+                    if len(prev_feat):
                         feats_3darray = self.calc_feat_ndarray(
                             prev_feat, new_feats)
-                        orig_shape = feats_3darray.shape[:2]
 
-                        # Flatten for predictions and then reshape back into matrix
-                        pred_list = np.array([
-                            val[1] for val in self.ctrack_model.predict_proba(
-                                feats_3darray.reshape(-1, feats_3darray.shape[
-                                    2]))
-                        ])
-                        pred_matrix = pred_list.reshape(orig_shape)
-                        # print('cumprob', cum_prob)
-                        # print('lbls order', lbls_order)
-                        # print('lennfeats', len(new_feats))
-                        # print('predmat', pred_matrix)
-                        # print('prevlbls', prev_lbls)
+                        pred_matrix = self.predict_proba_from_ndarray(feats_3darray)
 
                         for j,lbl in enumerate(lblset):
-                            # cum_prob[lbls_order.index(lbl), :] = cum_prob[
-                            #     lbls_order.index(lbl), :] + pred_matrix[j,:]
-                            max_prob[lbls_order.index(lbl), :] = np.maximum(
-                               max_prob[lbls_order.index(lbl), :], pred_matrix[j,:])
+                            probs[lbls_order.index(lbl), i, :] = pred_matrix[j,:]
 
-                # avg_prob = cum_prob / np.array(list(counts.values()))[:, None]
-                new_lbls = self.assign_lbls(max_prob, lbls_order)
+                new_lbls = self.assign_lbls(probs, lbls_order)
                 new_cells_pos = new_lbls==0
                 new_max = max_lbl + sum(new_cells_pos)
                 new_lbls[new_cells_pos] = [*range(max_lbl+1, new_max+1)]
+                 
                 # ensure that label output is consistently a list
                 new_lbls = new_lbls.tolist()
 
@@ -189,27 +244,31 @@ class Tracker:
             return ([], [], max_lbl)
         return (new_lbls, new_feats, new_max)
 
-    def assign_lbls(self, pred_matrix, prev_lbls):
-        '''Assign labels using a prediction matrix of nxm where n is the number
-        of cells in the previous image and m in the new image. It assigns the
+    def assign_lbls(self, pred_3darray, prev_lbls, red_fun=None):
+        '''Assign labels using a prediction matrix of nxmxl where n is the number
+        of cells in the previous image, m the number of steps back considered
+        and l in the new image. It assigns the
         number zero if it doesn't find the cell.
-        :pred_matrix: Probability n x m matrix obtained as an output of rforest
-        :prev_labels: List of cell labels for previous timepoint to be compared.
         ---
         input
 
-        :pred_matrix: Matrix with probabilities of the corresponding two cells
-        being the same.
-        :prev_lbls: List or ndarray of ints representing the cell labels in
-        the previous tp.
+        :pred_3darray: Probability n x m x l array obtained as an output of rforest
+        :prev_labels: List of cell labels for previous timepoint to be compared.
+        :red_fun: Function used to collapse the previous timepoints into one.
+            If none provided it uses maximum and ignores np.nans.
 
         output
 
         :new_lbls: ndarray of newly assigned labels obtained, new cells as
         zero.
         '''
+        if red_fun is None:
+            red_fun = self.red_fun
 
-        new_lbls = np.zeros(pred_matrix.shape[1], dtype=int)
+        new_lbls = np.zeros(pred_3darray.shape[2], dtype=int)  
+
+        pred_matrix = np.apply_along_axis(red_fun, 1, pred_3darray)
+
 
         # We remove any possible conflict by taking the maximum vals
         if pred_matrix.any():
@@ -242,7 +301,7 @@ class Tracker:
         '''
 
         if feats is None:
-            feats = self.calc_feats_from_masks(masks, feats2use=self.ba_feats)
+            feats = self.calc_feats_from_mask(masks, feats2use=self.ba_feats)
         elif len(feats) != len(masks):
             raise Exception('number of features must match number of masks')
 
@@ -331,7 +390,9 @@ class Tracker:
                       return_baprobs=False):
         '''
         Calculate features and track cells and budassignments
+
         input
+
         :masks: 3d ndarray (ncells, size_x, size_y) containing cell masks
         :p_budneck: 2d ndarray (size_x, size_y) giving the probability that a
             pixel corresponds to a bud neck
@@ -344,6 +405,7 @@ class Tracker:
             in the returned output
 
         returns a dict consisting of
+
         :cell_label: list of int, the tracked global ID for each cell mask
         :state: the updated state to be used in a subsequent step
         :mother_assign: (optional) list of int, specifying the assigned mother
@@ -360,7 +422,7 @@ class Tracker:
         prev_feats = state.get('prev_feats', [])
 
         # Get features for cells at this time point
-        feats = self.calc_feats_from_masks(masks)
+        feats = self.calc_feats_from_mask(masks)
 
         lastn_lbls = cell_lbls[-self.nstepsback:]
         lastn_feats = prev_feats[-self.nstepsback:]
@@ -436,3 +498,17 @@ class Tracker:
             output['p_bud_assign'] = ba_probs.tolist()
 
         return output
+
+# def decay(array, c=0.5):
+#     '''Calculates the average using a decay function p/(a*t) where
+#     'p' is the probability of two cells being the same, 't' the timestep
+#     and 'a' a chosen coefficient
+#     :array: List of probabilities
+#     :c: Scaling coefficient
+#     '''
+#     result = 0
+#     for t, p in enumerate(array):
+#         if not np.isnan(p):
+#             result += p / (t * c)
+#     return result
+

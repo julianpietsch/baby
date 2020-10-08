@@ -55,7 +55,7 @@ class BudTrainer:
                  val_data=None, train_agg=None, val_agg=None, train=None, val=None):
         super().__init__()
         self.indices = ['experimentID', 'position', 'trap', 'tp']
-        self.meta = meta.set_index(self.indices)
+        self.meta = meta.set_index(self.indices, drop=False)
         self.data = data
         self.traps = data.traps
         self.feats2use = ['centroid', 'area',

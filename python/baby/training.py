@@ -487,16 +487,31 @@ class BabyTrainer(object):
                                        custom_objects=custom_objects)
         return self._opt_cnn
 
+    @property
     def track_trainer(self):
         if not hasattr(self, '_track_trainer'):
-            self._track_trainer = TrackTrainer(self.data._metadata, self.data)
-            return self._track_trainer
+            self._track_trainer = TrackTrainer(self.data._metadata, data=self.data)
+        return self._track_trainer
 
     @property
     def bud_trainer(self):
         if not hasattr(self, '_track_trainer'):
             self._bud_trainer = BudTrainer(self.data._metadata, self.data)
-            return self._bud_trainer
+        return self._bud_trainer
+
+    def split_train_val(self):
+        '''
+        Splits the data into a training and validation sets
+        using the metadata's info
+        '''
+
+        df = self.data.metadata
+        dft = df.loc[df['train_val'] == 'training']
+        dfv = df.loc[df['train_val'] == 'validation']
+        self.data.training = list(
+        np.array(self.data.training)[dft['list_index']])
+        self.data.validation = list(
+        np.array(self.data.validation)[dfv['list_index']])
 
     def _get_grouped_sss(self):
         group_best_iou = lambda x: x.loc[x['iou'].idxmax(), :]

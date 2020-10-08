@@ -3,11 +3,13 @@ import numpy as np
 import pandas as pd
 import pickle
 
-from .tracker import Tracker
 from .io import load_tiled_image
+from .tracker import Tracker
+from .tracker_benchmark import TrackBenchmarker
 
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops_table
+from skimage.transform import resize
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 
@@ -17,83 +19,101 @@ class TrackTrainer(Tracker):
     :traps: Dataframe with cleaned trap locations and their continuous tps
     '''
 
-    def __init__(self, meta, data=None, masks=None):
+    def __init__(self, meta, data=None, masks=None, val_masks = None):
         super().__init__()
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
-        self.meta = meta.set_index(self.indices)
         self.data = data
         self.traps = data.traps
+        # if val_masks is None:
+        #     self.val_masks = [load_tiled_image(mask)[0] for
+        #                       bf, mask  in self.data.validation]
+        self.meta = data._metadata_tp
+        self.process_metadata()
         if masks is None:
-            self.masks= [load_tiled_image(mask)[0] for
-                         bf, mask  in self.data.training]
+            self.masks= [load_tiled_image(fname)[0] for
+                         fname  in self.meta['filename']]
         self.process_traps()
-        self.gen_train()
 
-    # def get_img_feats(self, img_array):
-    #     props_df = pd.DataFrame([
-    #         regionprops_table(img, properties=self.feats2use, cache=True)
-    #         for img in img_array
-    #     ]).applymap(lambda x: x[0])
+    def verify_mask_df_integrity(masks, df):
+        nlayers=[mask.shape[2] for mask in masks]
+        ncells = [len(x) for x in df['cellLabels'].values]
 
-    #     return props_df
+        for x,(i,j) in enumerate(zip(nlayers, ncells)):
+            if i!=j:
+                print(x)
+
+    def process_metadata(self):
+        '''
+        Process all traps (run on finished experiments), combine results with location df and drop
+        unused columns.
+        '''
+        
+        self.meta = self.meta[~self.meta.index.duplicated(keep='first')]
+        self.traps = self.traps.explode('cont')
+        self.traps['tp'] = self.traps['cont']
+        self.traps.set_index('tp', inplace=True, append=True)
+        self.clean_indices = self.traps.index
+
+        self.meta = self.meta.loc(axis=0)[self.clean_indices]
+        self.meta['ncells'] = [len(i) for i in self.meta['cellLabels'].values]
 
     def gen_train(self):
         '''
         Generates the data for training using all the loaded images.
         '''
 
-        traps = np.unique([ind[:3] for ind in self.traps.index], axis=0)
+        traps = np.unique([ind[:self.indices.index('trap')+1] for ind in self.traps.index], axis=0)
         traps = [(ind[0], *map(int, ind[1:])) for ind in traps] # str->int conversion
         traps = *map(
             tuple, traps),
 
-        train = *map(self.gen_train_from_trap, traps),
+        train = []
+        for trap in traps: # fill the training dataset with traps' tuples
+            trapsets = self.gen_train_from_trap(trap) 
+            if trapsets:
+                train.append(trapsets)
         self.train = np.concatenate(train)
 
     def gen_train_from_pair(self, pair_loc):
         subdf = self.meta[['list_index', 'cellLabels']].loc(axis=0)[pair_loc]
 
+        if not subdf['cellLabels'].all():
+            return None
+
         truemat = np.equal.outer(*subdf['cellLabels'].values).reshape(-1)
-        propsmat = self.df_calc_feat_matrix(pair_loc).reshape(-1, self.nfeats)
+        propsmat = self.df_calc_feat_matrix(pair_loc).reshape(
+            -1, self.nfeats) 
 
         return [x for x in zip(truemat, propsmat)]
 
     def process_traps(self):
         '''
-        Process all traps (run for finished experiments), combine results with location df and drop
-        unused columns.
-
         Generates a region_proprieties DataFrame
         '''
 
         nindex = []
         props_list = []
-
-        # Clean up duplicates and non-continuous timepoints
-        self.meta = self.meta[~self.meta.index.duplicated(keep='first')]
-        self.traps = self.traps.explode('cont')
-        self.traps['tp'] = self.traps['cont']
-        self.traps.set_index('tp', inplace=True, append=True)
-        clean_indices = self.traps.index
-
+        i=0
         for ind, (index,
-                  lbl) in zip(clean_indices,
-                               self.meta.loc[clean_indices][['list_index', 'cellLabels']].values):
+                  lbl) in zip(self.meta.index, enumerate(
+                               self.meta['cellLabels'].values)):
             try:
                 assert (len(lbl)==self.masks[index].shape[2]) | (len(lbl)==0) #check nlabels and ncells agree
             except AssertionError:
-                print('nlabels and img mismatch in row:')
-                print(self.meta.iloc[index])
+                print('nlabels and img mismatch in row: ')
 
             trapfeats = [
-                regionprops_table(self.masks[index][..., i].astype('int'),
+                regionprops_table(resize(self.masks[index][..., i],
+                                         (100, 100)).astype('bool').astype('int'),
                                   properties=self.feats2use)  #
                 for i in range(len(lbl))
             ]
+
             for cell, feats in zip(lbl, trapfeats):
                 nindex.append(ind + (cell, ))
                 props_list.append(feats)
+            i+=1
 
         out_dict = {key: [] for key in props_list[0].keys()}
         nindex = pd.MultiIndex.from_tuples(nindex, names=self.cindices)
@@ -107,15 +127,22 @@ class TrackTrainer(Tracker):
 
     def gen_train_from_trap(self, trap_loc):
         subdf = self.meta[['list_index', 'cellLabels'
-                             ]].loc(axis=0)[trap_loc].sort_values('tp')
+                             ]].loc(axis=0)[trap_loc]
         pairs = [
             trap_loc + tuple((pair, ))
             for pair in zip(subdf.index[:-1], subdf.index[1:])
         ]
 
-        res_tuples = [
-            tup for pair in pairs for tup in self.gen_train_from_pair(pair)
-        ]
+        res_tuples = []
+        for pair in pairs: # linearise the resulting tuples
+            pair_trainset = self.gen_train_from_pair(pair)
+            if pair_trainset:
+                for tup in pair_trainset:
+                    res_tuples.append(tup)
+
+        # res_tuples = [
+        #     tup for pair in pairs for tup in self.gen_train_from_pair(pair)
+        # ]
 
         return res_tuples
 
@@ -129,6 +156,10 @@ class TrackTrainer(Tracker):
             df = self.rprops
 
         subdf = df.loc(axis=0)[pair_loc]
+
+        if pair_loc[2]== 11 and pair_loc[3]==(1,2): #debugging
+            print(subdf)
+
         group_props = subdf.groupby('tp')
         group_sizes = group_props.size().to_list()
 
@@ -149,7 +180,8 @@ class TrackTrainer(Tracker):
                     n3darray[..., self.out_feats.index('centroid-1')]**2)
 
             # Add here any other calculation to use it as a feature
-        return n3darray  # Removed globids
+
+        return n3darray  
 
     def explore_hyperparams(self):
 
@@ -160,7 +192,7 @@ class TrackTrainer(Tracker):
                                     class_weight='balanced')
 
         param_grid = {
-            'n_estimators': [4, 6, 9],
+            'n_estimators': [5, 15, 30, 60, 100],
             'max_features': ['auto', 'sqrt', 'log2'],
             'max_depth': [2, 3],
             'class_weight': [None, 'balanced', 'balanced_subsample']
@@ -180,7 +212,25 @@ class TrackTrainer(Tracker):
 
     def save_model(self, filename):
         f = open(filename, 'wb')
-        pickle.dump(track_trainer.rf.best_estimator_)
+        pickle.dump(self.rf.best_estimator_, f)
+
+    @property
+    def benchmarker(self):
+        '''
+        Create a benchmarker instance to test the newly calculated model
+
+        requires
+        :self.rf:
+        :self.meta:
+
+        returns
+        :self._benchmarker:
+        
+        '''
+        if not hasattr(self, '_benchmarker'):
+            val_meta = self.meta.loc[self.meta['train_val'] == 'validation']
+            self._benchmarker = TrackBenchmarker(val_meta, self.rf)
+        return self._benchmarker
 
 
 class BudTrainer:
@@ -193,7 +243,6 @@ class BudTrainer:
     def __init__(self, meta, data=None, masks=None, props=None ):
         super().__init__()
         self.indices = ['experimentID', 'position', 'trap', 'tp']
-        self.meta = meta.set_index(self.indices)
         self.data = data
         self.traps = data.traps
         self.feats2use = ['centroid', 'area',
@@ -252,7 +301,7 @@ class BudTrainer:
             props1 = regionprops_table(outline1, coordinates='rc')[0]
         if props2 is None:
             props2 = regionprops_table(outline2, coordinates='rc')[0]
-           
+
         centroid_1 = self.get_centroid(props1)
         centroid_2 = self.get_centroid(props2)
         centroid_dist = get_distance(centroid_1, centroid_2)
@@ -292,7 +341,7 @@ class BudTrainer:
         return output
 
         #TODO implement rectangle calculation
-       
+
     def get_centroid(self, props):
         return (props[self.outfeats.index('centroid-0')],
                   props[self.outfeats.index('centroid-1')])
@@ -327,7 +376,7 @@ class BudTrainer:
 
     def save_model(self, filename):
         f = open(filename, 'wb')
-        pickle.dump(track_trainer._rf.best_estimator_)
+        pickle.dump(track_trainer._rf.best_estimator_, f)
 
 def get_distance(point1, point2):
     return(np.sqrt(np.sum(np.array([point1[i]-point2[i] for i in [0,1]])**2)))
@@ -340,3 +389,4 @@ def get_ground_truth(cell_labels, buds):
             truth[cell_labels.index(bud), i] = True
 
     return truth
+
