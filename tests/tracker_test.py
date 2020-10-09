@@ -54,7 +54,11 @@ def evolve60env(modelsets, image_dir):
         impair = impairs[k]
         cnn_out = raw_norm(*impair['preds']).transpose((2, 0, 1))
         seg_output = segmenter.segment(cnn_out, refine_outlines=True)
-        masks = seg_output.masks
+        _0xy = (0,) + cnn_out.shape[1:3]
+        if len(seg_output.masks) > 0:
+            masks = np.stack(seg_output.masks)
+        else:
+            masks = np.zeros(_0xy, dtype='bool')
         trkin.append(TrackerEnv(masks, cnn_out[i_budneck], cnn_out[i_bud]))
 
     # Load the celltrack and budassign models
