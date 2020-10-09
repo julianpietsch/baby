@@ -26,6 +26,7 @@ class Tracker:
                  ctrack_model=None,
                  ba_model=None,
                  feats2use=None,
+                 xtrafeats=None,
                  ba_feats=None,
                  ctrack_thresh=None,
                  nstepsback=None,
@@ -39,18 +40,15 @@ class Tracker:
 
         if ctrack_model is None:
             ctrack_model_file = os.path.join(models_path,
-                                      'ctrack_randomforest_20200903.pkl')
+                                      'ctrack_randomforest_20201006.pkl')
             with open(ctrack_model_file, 'rb') as file_to_load:
                 ctrack_model = pickle.load(file_to_load)
         self.ctrack_model = ctrack_model
 
         if feats2use is None:
-            # feats2use = ('area', 'minor_axis_length',
-            #               'major_axis_length', 'convex_area', 'bbox_area')
-            # Including centroid
-            feats2use = ('centroid', 'area', 'minor_axis_length',
-                          'major_axis_length', 'convex_area')
+            feats2use, xtrafeats = self.get_feats2use()
         self.feats2use = feats2use
+        self.xtrafeats = xtrafeats
 
         if ba_feats is None:
             ba_feats = ('centroid', 'area', 'minor_axis_length')
@@ -64,8 +62,6 @@ class Tracker:
         if 'minor_axis_length' in self.feats2use:
             self.ma_ind = self.outfeats.index('minor_axis_length')
 
-        self.xtrafeats = ('distance', )
-        # self.xtrafeats = ()
 
         if nstepsback is None:
             self.nstepsback = 5
@@ -498,6 +494,23 @@ class Tracker:
             output['p_bud_assign'] = ba_probs.tolist()
 
         return output
+
+    def get_feats2use(self):
+        model_nfeats = len(self.ctrack_model.feature_importances_)
+        return(switch_case_nfeats(model_nfeats))
+
+        
+def switch_case_nfeats(nfeats):
+    # Returns a list of main and extra feats based on the number of feats
+    main_feats = {5 : [(
+            'area', 'minor_axis_length', 'major_axis_length', 'convex_area',
+        'bbox_area'), ()],
+                  
+            # Including centroid
+            7 : [('centroid', 'area', 'minor_axis_length',
+                          'major_axis_length', 'convex_area'), ('distance',)]}
+
+    return(main_feats.get(nfeats, []))
 
 # def decay(array, c=0.5):
 #     '''Calculates the average using a decay function p/(a*t) where

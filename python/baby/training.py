@@ -493,6 +493,12 @@ class BabyTrainer(object):
             self._track_trainer = TrackTrainer(self.data._metadata, data=self.data)
         return self._track_trainer
 
+    @track_trainer.setter
+    def track_trainer(self, all_feats2use=None):
+        self._track_trainer = TrackTrainer(self.data._metadata, data=self.data,
+                                           all_feats2use = all_feats2use)
+        
+
     @property
     def bud_trainer(self):
         if not hasattr(self, '_track_trainer'):

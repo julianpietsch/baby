@@ -19,8 +19,15 @@ class TrackTrainer(Tracker):
     :traps: Dataframe with cleaned trap locations and their continuous tps
     '''
 
-    def __init__(self, meta, data=None, masks=None, val_masks = None):
-        super().__init__()
+    def __init__(self, meta, data=None, masks=None,
+                 val_masks = None, all_feats2use=None):
+
+        if all_feats2use is None:
+            feats2use, xtrafeats = (None, None)
+        else:
+            feats2use, xtrafeats = all_feats2use
+            
+        super().__init__(feats2use = feats2use, xtrafeats = xtrafeats)
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
         self.data = data
@@ -229,7 +236,7 @@ class TrackTrainer(Tracker):
         '''
         if not hasattr(self, '_benchmarker'):
             val_meta = self.meta.loc[self.meta['train_val'] == 'validation']
-            self._benchmarker = TrackBenchmarker(val_meta, self.rf)
+            self._benchmarker = TrackBenchmarker(val_meta, self.rf.best_estimator_)
         return self._benchmarker
 
 
