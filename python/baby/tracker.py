@@ -4,11 +4,10 @@ from collections import Counter
 import pickle
 import numpy as np
 from skimage.measure import regionprops_table 
-from skimage.transform import resize
 from skimage.draw import polygon
 import os
 
-models_path = os.path.join(os.path.dirname(__file__), '..', '..', 'models')
+models_path = os.path.join(os.path.dirname(__file__), 'models')
 
 class Tracker:
     '''
@@ -70,7 +69,7 @@ class Tracker:
         if red_fun is None:
             self.red_fun = np.nanmax
 
-    def calc_feats_from_mask(self, masks, feats2use=None):
+    def calc_feats_from_mask(self, masks, feats2use=None, norm=True):
         '''
         Calculate feature ndarray from ndarray of cell masks
         ---
@@ -84,15 +83,39 @@ class Tracker:
         if masks.sum():
             for mask in masks:
                 # Double conversion to prevent values from being floored to zero
-                resized_mask = resize(mask, (100, 100)).astype(bool).astype(int)
                 cell_feats = []
-                for feat in regionprops_table(resized_mask,
+                for feat in regionprops_table(mask,
                         properties=feats2use or self.feats2use).values():
                     cell_feats.append(feat[0])
+
+                if norm:
+                    cell_feats = self.norm_feats(cell_feats, mask)
+
                 feats.append(cell_feats)
 
         return np.array(feats)
 
+    def norm_feats(self, feats, mask):
+        xsize, ysize = mask.shape
+        area = xsize * ysize
+
+        if 'centroid' in self.feats2use:
+            feats[self.outfeats.index('centroid-0')] /= xsize
+            feats[self.outfeats.index('centroid-1')] /= ysize
+        
+        if 'area' in self.feats2use:
+            feats[self.outfeats.index('area')] /= xsize * ysize
+            
+        if 'convex_area' in self.feats2use:
+            feats[self.outfeats.index('convex_area')] /= xsize * ysize
+            
+        if 'bbox_area' in self.feats2use:
+            feats[self.outfeats.index('bbox_area')] /= xsize * ysize
+
+        # atm not normalising minor/major axes
+
+        return feats
+         
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
         Calculate feature ndarray using two ndarrays of features.

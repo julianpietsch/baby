@@ -53,6 +53,8 @@ class TrackBenchmarker:
                     self._masks[i][..., j] = \
                     binary_fill_holes(self._masks[i][..., j])
 
+            self._masks = [np.moveaxis(mask, 2, 0) for mask in self._masks]
+
         return self._masks
 
     def predict_lbls_from_tpimgs(self, tp_img_tuple):
