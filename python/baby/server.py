@@ -9,8 +9,9 @@ from concurrent.futures import ThreadPoolExecutor
 import gc
 import time
 import json
-from os.path import dirname, join
+from os.path import dirname, join, isfile
 from uuid import uuid4
+import logging
 from functools import reduce
 from operator import mul
 import numpy as np
@@ -35,6 +36,8 @@ MAX_IMG_SIZE = 100 * 1024 * 1024  # allows for raw image sizes up to 100 MB
 
 DIMS_ERROR_MSG = '"dims" must be a length 4 integer array: [ntraps, width, height, depth]'
 
+LOG_FILE = 'baby-phone.log'
+ERR_DUMP_DIR = 'baby-phone-errors'
 
 ### Helper functions and classes ###
 
@@ -134,7 +137,8 @@ class TaskMaster(object):
         print('Starting new runner for model "{}"...'.format(model_name))
 
         baby = BabyBrain(**modelsets[model_name],
-                         session=self.tf_session, graph=self.tf_graph)
+                         session=self.tf_session, graph=self.tf_graph,
+                         suppress_errors=True, error_dump_dir=ERR_DUMP_DIR)
 
         if self.runners.get(model_name) == 'pending':
             with self._lock:
@@ -384,12 +388,19 @@ async def get_segmentation(request):
     # Format pred output for JSON response (NB: pred is shallow copy from
     # taskmaster, so in-place editing of dicts is ok):
     for p in pred:
+        # - Custom data transformations -
+        if 'edgemasks' in p:
+            # Convert edge masks to lists of x and y coords
+            p["edgemasks"] = [[(x + 1).tolist() for x in np.where(m)]
+                                  for m in p["edgemasks"]]
+
+        # - Generic data transformations -
         for k, v in p.items():
-            if k == 'edgemasks':
-                # Convert edge masks to lists of x and y coords
-                p[k] = [[x + 1 for x in np.where(m)] for m in v]
             if isinstance(v, np.ndarray):
                 p[k] = None # heavy ndarrays must be obtained via other routes
+            else: # Many seem to be numpy arrays in lists of lists
+                p[k] = [m.tolist() if isinstance(m, np.ndarray) else m for m
+                        in v]
 
     return web.json_response(pred)
 
@@ -399,7 +410,7 @@ app.add_routes(routes)
 app['TaskMaster'] = TaskMaster()
 app['Executor'] = ThreadPoolExecutor(2)
 
-if __name__ == '__main__':
+def main():
     import tensorflow as tf
 
     tf_version = tuple(int(v) for v in tf.version.VERSION.split('.'))
@@ -431,5 +442,14 @@ if __name__ == '__main__':
                 tf.version.VERSION
             )
         )
+
+    # Log to log file if it exists
+    if isfile(LOG_FILE):
+        lfh = logging.FileHandler(LOG_FILE)
+        lfh.setLevel(logging.INFO)
+        lff = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        lfh.setFormatter(lff)
+        logging.getLogger().addHandler(lfh)
 
     web.run_app(app, port=5101)

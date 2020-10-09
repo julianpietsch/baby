@@ -75,16 +75,16 @@ class Tracker:
         Calculate feature ndarray from ndarray of cell masks
         ---
         input
-        :masks: ndarray (x_size, y_size, ncells), typically dtype bool
+        :masks: ndarray (ncells, x_size, y_size), typically dtype bool
 
         output
         :n2darray: ndarray (ncells, nfeats)
         '''
         feats=[]
         if masks.sum():
-            for i in range(masks.shape[2]):
+            for mask in masks:
                 # Double conversion to prevent values from being floored to zero
-                resized_mask = resize(masks[..., i], (100, 100)).astype(bool).astype(int)
+                resized_mask = resize(mask, (100, 100)).astype(bool).astype(int)
                 cell_feats = []
                 for feat in regionprops_table(resized_mask,
                         properties=feats2use or self.feats2use).values():
@@ -162,7 +162,7 @@ class Tracker:
         
     def predict_proba_from_ndarray(self, array_3d, boolean=False):
 
-        if not array_3d.any():
+        if array_3d.size == 0:
             return np.array([])
 
         predict_fun = self.ctrack_model.predict if boolean else self.ctrack_model.predict_proba
