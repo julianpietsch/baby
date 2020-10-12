@@ -20,14 +20,17 @@ class TrackTrainer(Tracker):
     '''
 
     def __init__(self, meta, data=None, masks=None,
-                 val_masks = None, all_feats2use=None):
+                 val_masks = None, all_feats2use=None,
+                 px_size=None):
 
         if all_feats2use is None:
             feats2use, xtrafeats = (None, None)
         else:
             feats2use, xtrafeats = all_feats2use
             
-        super().__init__(feats2use = feats2use, xtrafeats = xtrafeats)
+        super().__init__(feats2use = feats2use, xtrafeats = xtrafeats,
+                         px_size=px_size)
+
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
         self.data = data
@@ -153,7 +156,7 @@ class TrackTrainer(Tracker):
 
         return res_tuples
 
-    def df_calc_feat_matrix(self, pair_loc, df=None):
+    def df_calc_feat_matrix(self, pair_loc, norm=True, px_size=None, df=None):
         '''
         Takes an indexer (list) with pos-trap and tuple of two tps to be
         compared and returns the feature comparison matrix of their cells
@@ -161,6 +164,9 @@ class TrackTrainer(Tracker):
 
         if df is None:
             df = self.rprops
+
+        if px_size is None:
+            px_size = self.px_size
 
         subdf = df.loc(axis=0)[pair_loc]
 
@@ -173,22 +179,30 @@ class TrackTrainer(Tracker):
         self.out_feats = subdf.columns.to_list()
         self.nfeats = len(self.out_feats) + len(self.xtrafeats)
         # Array to pour the calculations and get cellxcell feature vectors
-        n3darray = np.empty(*[group_sizes + [self.nfeats]])
+        array_3d = np.empty(*[group_sizes + [self.nfeats]])
 
         for i, feat in enumerate(self.out_feats):
-            n3darray[..., i] = np.subtract.outer(
+            array_3d[..., i] = np.subtract.outer(
                 *group_props[feat].apply(list).to_list())
+
+        if norm: # normalise features
+            ncells1, ncells2, noutfeats = array_3d.shape
+            for i in range(ncells1):
+                for j in range(ncells2):
+                    array_3d[i,j,:noutfeats] = \
+                    self.norm_feats(array_3d[i,j,:noutfeats], px_size=px_size)
+            
 
         # Calculate extra features
         for i, feat in enumerate(self.xtrafeats, len(self.out_feats)):
             if feat == 'distance':
-                n3darray[..., i] = np.sqrt(
-                    n3darray[..., self.out_feats.index('centroid-0')]**2 +
-                    n3darray[..., self.out_feats.index('centroid-1')]**2)
+                array_3d[..., i] = np.sqrt(
+                    array_3d[..., self.out_feats.index('centroid-0')]**2 +
+                    array_3d[..., self.out_feats.index('centroid-1')]**2)
 
             # Add here any other calculation to use it as a feature
 
-        return n3darray  
+        return array_3d  
 
     def explore_hyperparams(self):
 

@@ -19,6 +19,8 @@ class Tracker:
     :ba_model: sklearn.ensemble.RandomForestClassifier object.
     :nstepsback: int Number of timepoints to go back
     :ctrac_thresh: float Cut-off value to assume a cell is not new
+
+    
     '''
 
     def __init__(self,
@@ -28,6 +30,7 @@ class Tracker:
                  xtrafeats=None,
                  ba_feats=None,
                  ctrack_thresh=None,
+                 px_size=None,
                  nstepsback=None,
                  red_fun=None):
 
@@ -39,7 +42,7 @@ class Tracker:
 
         if ctrack_model is None:
             ctrack_model_file = os.path.join(models_path,
-                                      'ctrack_randomforest_20201008.pkl')
+                                      'ctrack_randomforest_20201012.pkl')
             with open(ctrack_model_file, 'rb') as file_to_load:
                 ctrack_model = pickle.load(file_to_load)
         self.ctrack_model = ctrack_model
@@ -61,24 +64,38 @@ class Tracker:
         if 'minor_axis_length' in self.feats2use:
             self.ma_ind = self.outfeats.index('minor_axis_length')
 
+        if px_size is None:
+            self.px_size = 0.263
 
         if nstepsback is None:
             self.nstepsback = 5
+
         if ctrack_thresh is None:
             self.ctrack_thresh = 0.7
+
         if red_fun is None:
             self.red_fun = np.nanmax
 
-    def calc_feats_from_mask(self, masks, feats2use=None, norm=True):
+    def calc_feats_from_mask(self, masks, feats2use=None, norm=True,
+                             px_size=None):
         '''
         Calculate feature ndarray from ndarray of cell masks
         ---
         input
-        :masks: ndarray (ncells, x_size, y_size), typically dtype bool
 
-        output
-        :n2darray: ndarray (ncells, nfeats)
+        :masks: ndarray (ncells, x_size, y_size), typically dtype bool
+        :feats2use: list of strings with the feature properties to extract.
+            If it is None it uses the ones set in self.feats2use.
+        :norm: bool, if True normalises mask to a defined px_size.
+        :px_size: float, used to normalise the images.
+
+        returns
+
+        (ncells, nfeats) ndarray of features for input masks
         '''
+        if px_size is None:
+            px_size = self.px_size
+
         feats=[]
         if masks.sum():
             for mask in masks:
@@ -89,30 +106,42 @@ class Tracker:
                     cell_feats.append(feat[0])
 
                 if norm:
-                    cell_feats = self.norm_feats(cell_feats, mask)
+                    cell_feats = self.norm_feats(cell_feats, px_size)# or self.px_size)
 
                 feats.append(cell_feats)
 
         return np.array(feats)
 
-    def norm_feats(self, feats, mask):
-        xsize, ysize = mask.shape
-        area = xsize * ysize
+    def norm_feats(self, feats, px_size):
+        '''
+        input
+
+        :feats: list of float, extracted features obtained from regionprops_table
+        :px_size: Value used to normalise the images.
+
+        returns
+        normalised list of feature values
+        '''
+        area = px_size**2
 
         if 'centroid' in self.feats2use:
-            feats[self.outfeats.index('centroid-0')] /= xsize
-            feats[self.outfeats.index('centroid-1')] /= ysize
+            feats[self.outfeats.index('centroid-0')] /= px_size
+            feats[self.outfeats.index('centroid-1')] /= px_size
         
         if 'area' in self.feats2use:
-            feats[self.outfeats.index('area')] /= xsize * ysize
+            feats[self.outfeats.index('area')] /= area
             
         if 'convex_area' in self.feats2use:
-            feats[self.outfeats.index('convex_area')] /= xsize * ysize
+            feats[self.outfeats.index('convex_area')] /= area
             
         if 'bbox_area' in self.feats2use:
-            feats[self.outfeats.index('bbox_area')] /= xsize * ysize
+            feats[self.outfeats.index('bbox_area')] /= area
 
-        # atm not normalising minor/major axes
+        if 'minor_axis_length' in self.feats2use:
+            feats[self.outfeats.index('minor_axis_length')] /= px_size
+
+        if 'major_axis_length' in self.feats2use:
+            feats[self.outfeats.index('major_axis_length')] /= px_size
 
         return feats
          
@@ -120,13 +149,16 @@ class Tracker:
         '''
         Calculate feature ndarray using two ndarrays of features.
         ---
+
         input
+
         :prev_feats: ndarray (ncells, nfeats) of timepoint 1
         :new_feats: ndarray (ncells, nfeats) of timepoint 2
 
-        output
+        returns
+
         :n3darray: ndarray (ncells_prev, ncells_new, nfeats) containing a
-        cell-wise substraction of the features in the input ndarrays.
+            cell-wise substraction of the features in the input ndarrays.
         '''
         if not (new_feats.any() and prev_feats.any()):
             return np.array([])
@@ -152,6 +184,15 @@ class Tracker:
 
     def predict_from_imgpair(self, img1, img2):
         ''' Generate predictions for two images. Useful to produce statistics.
+
+        input
+
+        :img1: (nxm) ndarray containing a single cell
+        :img2: (nxm) ndarray containing a single cell
+
+        returns
+
+        tracking prediction matrix resultant of input images' comparison
         '''
         feats1 = self.calc_feats_from_mask(img1)
         feats2 = self.calc_feats_from_mask(img2)
@@ -166,13 +207,13 @@ class Tracker:
         '''
         Requires self.meta
 
-        args:
+        input
         :pair: tuple of size 4 (experimentID, position, trap (tp1, tp2))
 
-        output
+        returns
 
        :truth_mat: boolean ndarray of shape (ncells(tp1) x ncells(tp2)
-        links cells in tp1 to cells in tp2
+            links cells in tp1 to cells in tp2
         '''
         
         clabs1 = self.meta.loc[pair[:3] + (pair[3][0], ), 'cellLabels']
@@ -184,6 +225,19 @@ class Tracker:
 
         
     def predict_proba_from_ndarray(self, array_3d, boolean=False):
+        '''
+
+        input
+
+        :array_3d: (ncells_tp1, ncells_tp2, out_feats) ndarray
+        :boolean: bool, if False returns probability, if True returns prediction
+
+        returns
+
+        (ncells_tp1, ncells_tp2) ndarray with probabilities or prediction
+            of cell identities depending on "boolean" arg.
+
+        '''
 
         if array_3d.size == 0:
             return np.array([])
@@ -211,7 +265,9 @@ class Tracker:
         Core function to calculate the new cell labels.
 
         ----
+
         input
+
         :new_img: ndarray (len, width, ncells) containing the cell outlines
         :max_lbl: int indicating the last assigned cell label
         :prev_feats: list of ndarrays of size (ncells x nfeatures)
@@ -221,7 +277,8 @@ class Tracker:
         :new_feats: (optional) Directly give a feature ndarray. It ignores
             new_img if given.
 
-        output
+        returns
+
         :new_lbls: list of labels assigned to new timepoint
         :new_feats: list of ndarrays containing the updated features
         :new_max: updated max cell label assigned
@@ -276,7 +333,7 @@ class Tracker:
         :red_fun: Function used to collapse the previous timepoints into one.
             If none provided it uses maximum and ignores np.nans.
 
-        output
+        returns
 
         :new_lbls: ndarray of newly assigned labels obtained, new cells as
         zero.
@@ -306,7 +363,9 @@ class Tracker:
     def calc_mother_bud_stats(self, p_budneck, p_bud, masks, feats=None):
         '''
         ---
+
         input
+
         :p_budneck: 2d ndarray (size_x, size_y) giving the probability that a
             pixel corresponds to a bud neck
         :p_bud: 2d ndarray (size_x, size_y) giving the probability that a pixel
@@ -314,7 +373,8 @@ class Tracker:
         :masks: 3d ndarray (ncells, size_x, size_y)
         :feats: ndarray (ncells, nfeats)
 
-        output
+        returns
+
         :n2darray: 2d ndarray (ncells, ncells) giving probability that a cell
             (row) is a mother to another cell (column)
         '''
@@ -378,10 +438,13 @@ class Tracker:
         '''
         Draw a rectangle in the budneck of cells
         ---
+
         input
+
         feats: 2d ndarray (ncells, nfeats)
 
-        output:
+        returns
+
         r_points: 2d ndarray (2,4) with the coordinates of the rectangle corner
 
         '''
@@ -419,7 +482,7 @@ class Tracker:
             corresponds to a bud
         :state: running state for the tracker, or None for initialisation
         :assign_mothers: whether to include mother assignments in the returned
-            output
+            returns
         :return_baprobs: whether to include bud assignment probability matrix
             in the returned output
 
@@ -519,12 +582,24 @@ class Tracker:
         return output
 
     def get_feats2use(self):
+        '''
+        Return feats to be used from loaded ctrack_model
+        '''
+
         model_nfeats = len(self.ctrack_model.feature_importances_)
         return(switch_case_nfeats(model_nfeats))
 
         
 def switch_case_nfeats(nfeats):
-    # Returns a list of main and extra feats based on the number of feats
+    '''
+    Convenience TEMPORAL function to determine whether to use distance/location
+    as a feature for tracking or not (nfeats=5 for no distance, 7 for distance)
+    input
+    number of feats
+
+    returns
+    list of main and extra feats based on the number of feats
+    '''
     main_feats = {5 : [(
             'area', 'minor_axis_length', 'major_axis_length', 'convex_area',
         'bbox_area'), ()],
@@ -534,17 +609,4 @@ def switch_case_nfeats(nfeats):
                           'major_axis_length', 'convex_area'), ('distance',)]}
 
     return(main_feats.get(nfeats, []))
-
-# def decay(array, c=0.5):
-#     '''Calculates the average using a decay function p/(a*t) where
-#     'p' is the probability of two cells being the same, 't' the timestep
-#     and 'a' a chosen coefficient
-#     :array: List of probabilities
-#     :c: Scaling coefficient
-#     '''
-#     result = 0
-#     for t, p in enumerate(array):
-#         if not np.isnan(p):
-#             result += p / (t * c)
-#     return result
 
