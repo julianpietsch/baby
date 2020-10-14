@@ -72,6 +72,7 @@ class BabyBrain(object):
                  flattener_file=None,
                  celltrack_model_file=None,
                  budassign_model_file=None,
+                 pixel_size=0.263,
                  default_image_size=None,
                  params=default_params,
                  session=None,
@@ -150,13 +151,16 @@ class BabyBrain(object):
                                                return_coords=True,
                                                **self.params)
 
+        self.pixel_size = pixel_size
+
         # Load tracker models and initialise Tracker
         with open(celltrack_model_file, 'rb') as f:
             celltrack_model = pickle.load(f)
         with open(budassign_model_file, 'rb') as f:
             budassign_model = pickle.load(f)
         self.tracker = Tracker(ctrack_model=celltrack_model,
-                               ba_model=budassign_model)
+                               ba_model=budassign_model,
+                               px_size=pixel_size)
 
         # Run prediction on mock image to load model for prediction
         _, x, y, z = self.morph_model.input.shape

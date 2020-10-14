@@ -22,7 +22,8 @@ from tensorflow.python.keras.callbacks import (ModelCheckpoint, TensorBoard,
 from tensorflow.python.keras.models import load_model
 
 from .utils import (get_name, EncodableNamedTuple, find_file,
-                    as_python_object, jsonify, schedule_steps)
+                    as_python_object, jsonify, schedule_steps, batch_iterator,
+                    split_batch_pred)
 from .errors import BadParam, BadFile, BadType, BadProcess
 from .io import TrainValPairs
 from .preprocessing import (robust_norm, seg_norm, SegmentationFlattening,
@@ -85,6 +86,7 @@ class BabyTrainerParameters(NamedTuple):
     smoothing_sigma_model_file: str = 'smoothing_sigma_model.json'
     flattener_stats_file: str = 'flattener_stats.json'
     flattener_file: str = 'flattener.json'
+    mother_bud_props_file: str = 'mother_bud_props.csv'
     cnn_set: Tuple[str, ...] = ('msd_d80', 'unet_4s')
     cnn_fn: Union[None, str] = None
     batch_size: int = 8
@@ -92,6 +94,17 @@ class BabyTrainerParameters(NamedTuple):
     xy_out: int = 80
     target_pixel_size: float = 0.263
     substacks: Union[None, int] = None
+
+
+class SegExample(NamedTuple):
+    """CNN output paired with target segmented outlines and info
+
+    Used for optimising segmentation hyperparameters and for training bud
+    assigment models
+    """
+    pred: np.ndarray
+    target: np.ndarray
+    info: dict
 
 
 class BabyTrainer(object):
@@ -235,15 +248,15 @@ class BabyTrainer(object):
 
         ncol = len(img_batch)
         nrow = len(target_names) + 1
-        fig = plt.figure(figsize=(3*ncol, 3*nrow))
+        fig = plt.figure(figsize=(3 * ncol, 3 * nrow))
         for b, (bf, seg) in enumerate(zip(img_batch, lbl_batch)):
-            plt.subplot(nrow, ncol, b+0*ncol+1)
-            plt.imshow(bf[:,:,0], cmap='gray')
-            plt.imshow(colour_segstack(seg[:,:,edge_inds]))
+            plt.subplot(nrow, ncol, b + 0 * ncol + 1)
+            plt.imshow(bf[:, :, 0], cmap='gray')
+            plt.imshow(colour_segstack(seg[:, :, edge_inds]))
 
             for i, name in enumerate(target_names):
-                plt.subplot(nrow, ncol, b+(i+1)*ncol+1)
-                plt.imshow(seg[:,:,i], cmap='gray')
+                plt.subplot(nrow, ncol, b + (i + 1) * ncol + 1)
+                plt.imshow(seg[:, :, i], cmap='gray')
                 plt.title(name)
 
         fig.savefig(self.save_dir / '{}_generator_sample.png'.format(
@@ -327,7 +340,7 @@ class BabyTrainer(object):
         fs_file = self.save_dir / fs_file
         with open(fs_file, 'wt') as f:
             json.dump({'train': fs_train, 'val': fs_val}, f)
-        self._fs = None # trigger reload of property
+        self._fs = None  # trigger reload of property
 
     @property
     def flattener_stats(self):
@@ -335,8 +348,7 @@ class BabyTrainer(object):
             fs_file = self.parameters.flattener_stats_file
             fs_file = self.save_dir / fs_file
             if not fs_file.exists():
-                raise BadProcess(
-                    'flattener stats have not been generated')
+                raise BadProcess('flattener stats have not been generated')
             with open(fs_file, 'rt') as f:
                 self._fs = json.load(f)
         return TrainValProperty(self._fs.get('train', {}),
@@ -481,43 +493,62 @@ class BabyTrainer(object):
             opt_file = opt_dir / OPT_WEIGHTS_FILE
             if not opt_file.exists():
                 raise BadProcess(
-                    'Optimised model for {} model is missing'.format(
+                    'Optimised CNN for {} model is missing'.format(
                         opt_dir.name))
             self._opt_cnn = load_model(str(opt_file),
                                        custom_objects=custom_objects)
         return self._opt_cnn
 
     @property
+    def seg_examples(self):
+
+        def seg_example_aug(img, lbl):
+            # Assume that the label preprocessing function also returns info
+            _, info = lbl
+            # In this case, always prefer the validation augmenter
+            return tuple(*self.aug.val(img, lbl), info)
+
+        def example_generator(dgen):
+            opt_cnn = self.cnn_opt
+            b_iter = batch_iterator(list(range(dgen.n_pairs)),
+                                    batch_size=dgen.batch_size)
+            for b_inds in b_iter:
+                batch = [
+                    dgen.get_by_index(b, aug=seg_example_aug) for b in b_inds
+                ]
+                preds = split_batch_pred(
+                    opt_cnn.predict(np.stack([img for img, _, _ in batch])))
+                for pred, (_, lbl, info) in zip(preds, batch):
+                    yield SegExample(pred, lbl.transpose(2, 0, 1), info)
+
+        return TrainValProperty(example_generator(self.gen.train),
+                                example_generator(self.gen.val))
+
+    @property
     def track_trainer(self):
         if not hasattr(self, '_track_trainer'):
-            self._track_trainer = TrackTrainer(self.data._metadata, data=self.data)
+            self._track_trainer = TrackTrainer(self.data._metadata,
+                                               data=self.data)
         return self._track_trainer
 
     @track_trainer.setter
     def track_trainer(self, all_feats2use=None):
-        self._track_trainer = TrackTrainer(self.data._metadata, data=self.data,
-                                           all_feats2use = all_feats2use)
-        
+        self._track_trainer = TrackTrainer(self.data._metadata,
+                                           data=self.data,
+                                           all_feats2use=all_feats2use)
 
     @property
     def bud_trainer(self):
-        if not hasattr(self, '_track_trainer'):
-            self._bud_trainer = BudTrainer(self.data._metadata, self.data)
+        props_file = self.save_dir / self.parameters.mother_bud_props_file
+        if not hasattr(self, '_bud_trainer'):
+            self._bud_trainer = BudTrainer(
+                props_file=props_file,
+                px_size=self.parameters.target_pixel_size)
         return self._bud_trainer
 
-    def split_train_val(self):
-        '''
-        Splits the data into a training and validation sets
-        using the metadata's info
-        '''
-
-        df = self.data.metadata
-        dft = df.loc[df['train_val'] == 'training']
-        dfv = df.loc[df['train_val'] == 'validation']
-        self.data.training = list(
-        np.array(self.data.training)[dft['list_index']])
-        self.data.validation = list(
-        np.array(self.data.validation)[dfv['list_index']])
+    def generate_bud_stats(self):
+        self.bud_trainer.generate_property_table(self.seg_examples,
+                                                 self.flattener)
 
     def _get_grouped_sss(self):
         group_best_iou = lambda x: x.loc[x['iou'].idxmax(), :]
@@ -592,7 +623,11 @@ class BabyTrainer(object):
 
         fig.savefig(self.save_dir / 'fitted_smoothing_sigma_model.png')
 
-    def fit_flattener(self, nbins=30, min_size=10, pad_frac=0.03, bud_max=200):
+    def fit_flattener(self,
+                      nbins=30,
+                      min_size=10,
+                      pad_frac=0.03,
+                      bud_max=200):
         if pad_frac > 0.25 or pad_frac < 0:
             raise BadParam('"pad_frac" must be between 0 and 0.2')
 
@@ -601,7 +636,8 @@ class BabyTrainer(object):
         erosion_sizes = self.flattener_stats.train.get('erosion_sizes', [])
         if len(overlapping) == 0 or len(erosion_sizes) == 0 or \
                 len(list(zip(*erosion_sizes))) != len(overlapping):
-            raise BadProcess('"flattener_stats.json" file appears to be corrupted')
+            raise BadProcess(
+                '"flattener_stats.json" file appears to be corrupted')
 
         o_noerode = overlapping[0]
         x, y, _ = zip(*o_noerode)
@@ -612,8 +648,8 @@ class BabyTrainer(object):
         o_maxerode = _best_overlapping(overlapping, erosion_sizes, min_size)
         split0, w0 = _find_best_fgroup_split(o_maxerode, edges, pad=pad)
 
-        ogL, ogH = zip(*[_group_overlapping(o, split0, pad=pad) for o in
-            overlapping])
+        ogL, ogH = zip(
+            *[_group_overlapping(o, split0, pad=pad) for o in overlapping])
         szgL, szgH = _group_sizes(erosion_sizes, split0, pad=pad)
 
         ogL = _best_overlapping(ogL, szgL, min_size)
@@ -645,8 +681,9 @@ class BabyTrainer(object):
         flattener = SegmentationFlattening()
 
         flattener.addGroup('small', upper=int(np.round(splits[0] + pad)))
-        flattener.addGroup('medium', lower=int(np.round(splits[0] - pad)),
-                upper=int(np.round(splits[1] + pad)))
+        flattener.addGroup('medium',
+                           lower=int(np.round(splits[0] - pad)),
+                           upper=int(np.round(splits[1] + pad)))
         flattener.addGroup('large', lower=int(np.round(splits[1] - pad)))
         flattener.addGroup('buds', upper=bud_max, budonly=True)
 
@@ -674,7 +711,11 @@ class BabyTrainer(object):
                 x, y, w = zip(*os)
             else:
                 x, y, w = 3 * [[]]
-            ax.hist2d(x, y, bins=30, weights=w, range=[[0, max_size], [0, max_size]])
+            ax.hist2d(x,
+                      y,
+                      bins=30,
+                      weights=w,
+                      range=[[0, max_size], [0, max_size]])
             ax.plot((0, max_size), (0, max_size), 'r')
             ax.set_title('nerosions = {:d}'.format(e))
         fig.savefig(self.save_dir / 'flattener_stats.png')
@@ -948,8 +989,7 @@ def _group_overlapping(os, thresh, pad=0):
 
 def _best_overlapping(overlapping, erosion_sizes, min_size):
     sz_erosions = list(zip(*erosion_sizes))
-    e_invalid = [any([c < min_size for c in e]) for e in
-            sz_erosions[:0:-1]]
+    e_invalid = [any([c < min_size for c in e]) for e in sz_erosions[:0:-1]]
     o_valid = [o for o, e in zip(overlapping[:0:-1], e_invalid) if not e]
     o_valid += [overlapping[0]]
     return o_valid[0]
@@ -967,6 +1007,7 @@ def _find_best_fgroup_split(os, edges, pad=0):
         _sum_group_overlapping(os, thresh, pad=pad) for thresh in edges
     ]
     return min(zip(edges, overlaps), key=lambda x: sum(x[1]))
+
 
 def _best_nerode(szg, min_size):
     ne = [

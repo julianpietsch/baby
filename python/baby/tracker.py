@@ -28,7 +28,6 @@ class Tracker:
                  ba_model=None,
                  feats2use=None,
                  xtrafeats=None,
-                 ba_feats=None,
                  ctrack_thresh=None,
                  px_size=None,
                  nstepsback=None,
@@ -52,9 +51,7 @@ class Tracker:
         self.feats2use = feats2use
         self.xtrafeats = xtrafeats
 
-        if ba_feats is None:
-            ba_feats = ('centroid', 'area', 'minor_axis_length')
-        self.ba_feats = ba_feats
+        self.ba_feat_names = ('p_bud', 'size_ratio', 'p_budneck', 'adjacency')
 
         self.outfeats = list(
             regionprops_table(np.diag((1, 0)),
@@ -65,16 +62,20 @@ class Tracker:
             self.ma_ind = self.outfeats.index('minor_axis_length')
 
         if px_size is None:
-            self.px_size = 0.263
+            px_size = 0.263
+        self.px_size = px_size
 
         if nstepsback is None:
-            self.nstepsback = 5
+            nstepsback = 5
+        self.nstepsback = nstepsback
 
         if ctrack_thresh is None:
-            self.ctrack_thresh = 0.7
+            ctrack_thresh = 0.7
+        self.ctrack_thresh = ctrack_thresh
 
         if red_fun is None:
-            self.red_fun = np.nanmax
+            red_fun = np.nanmax
+        self.red_fun = red_fun
 
     def calc_feats_from_mask(self, masks, feats2use=None, norm=True,
                              px_size=None):
@@ -99,9 +100,8 @@ class Tracker:
         feats=[]
         if masks.sum():
             for mask in masks:
-                # Double conversion to prevent values from being floored to zero
                 cell_feats = []
-                for feat in regionprops_table(mask,
+                for feat in regionprops_table(mask.astype(int),
                         properties=feats2use or self.feats2use).values():
                     cell_feats.append(feat[0])
 
@@ -375,12 +375,13 @@ class Tracker:
 
         returns
 
-        :n2darray: 2d ndarray (ncells, ncells) giving probability that a cell
-            (row) is a mother to another cell (column)
+        :n2darray: 2d ndarray (ncells x ncells, n_ba_feat_names) specifying,
+            for each pair of cells in the masks array, the features used for
+            mother-bud pair prediction (as per 'ba_feat_names')
         '''
 
         if feats is None:
-            feats = self.calc_feats_from_mask(masks, feats2use=self.ba_feats)
+            feats = self.calc_feats_from_mask(masks)
         elif len(feats) != len(masks):
             raise Exception('number of features must match number of masks')
 
@@ -390,7 +391,6 @@ class Tracker:
         p_budneck_mat = np.zeros((ncells, ncells))
         size_ratio_mat = np.zeros((ncells, ncells))
         adjacency_mat = np.zeros((ncells, ncells))
-
 
         for m in range(ncells):
             for d in range(ncells):
@@ -420,10 +420,34 @@ class Tracker:
                                               | masks[d]) & r_im) / np.sum(
                                                   r_im)
 
-        mb_stats = np.hstack([
+        return np.hstack([
             s.flatten()[:, np.newaxis]
             for s in (p_bud_mat, size_ratio_mat, p_budneck_mat, adjacency_mat)
         ])
+
+    def predict_mother_bud(self, p_budneck, p_bud, masks, feats=None):
+        '''
+        ---
+
+        input
+
+        :p_budneck: 2d ndarray (size_x, size_y) giving the probability that a
+            pixel corresponds to a bud neck
+        :p_bud: 2d ndarray (size_x, size_y) giving the probability that a pixel
+            corresponds to a bud
+        :masks: 3d ndarray (ncells, size_x, size_y)
+        :feats: ndarray (ncells, nfeats)
+
+        returns
+
+        :n2darray: 2d ndarray (ncells, ncells) giving probability that a cell
+            (row) is a mother to another cell (column)
+        '''
+
+        ncells = len(masks)
+
+        mb_stats = self.calc_mother_bud_stats(
+                p_budneck, p_bud, masks, feats=None)
 
         good_stats = ~np.isnan(mb_stats).any(axis=1)
         ba_probs = np.nan * np.ones(ncells**2)
@@ -493,7 +517,7 @@ class Tracker:
         :mother_assign: (optional) list of int, specifying the assigned mother
             for each cell
         :p_bud_assign: (optional) matrix (list of lists of floats), bud assignment
-            probability matrix from `calc_mother_bud_stats`
+            probability matrix from `predict_mother_bud`
         '''
 
         if state is None:
@@ -533,7 +557,7 @@ class Tracker:
 
         # Update lineage state variables
         if len(masks) > 0 and new_lbls:
-            ba_probs = self.calc_mother_bud_stats(p_budneck, p_bud, masks,
+            ba_probs = self.predict_mother_bud(p_budneck, p_bud, masks,
                                                   feats)
             lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
             lifetime[lblinds] += 1

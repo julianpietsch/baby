@@ -81,14 +81,21 @@ class ImageLabel(Sequence):
         Nsamples = len(self.paths)
         self.ordering = np.random.choice(Nsamples, Nsamples, replace=False)
 
-    def get_by_index(self, i):
+    @property
+    def n_pairs(self):
+        return len(self.paths)
+
+    def get_by_index(self, i, aug=None):
         if self.in_memory:
             img, lbl = self.images[i]
         else:
             img, lbl = [ppf(*load_tiled_image(im)) for ppf, im
                         in zip(self.preprocess, self.paths[i])]
 
-        return self.aug(img, lbl)
+        if aug is None:
+            return self.aug(img, lbl)
+        else:
+            return aug(img, lbl)
 
     def __getitem__(self, idx):
         Nbatch = self.batch_size

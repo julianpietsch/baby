@@ -2,10 +2,14 @@
 import numpy as np
 import pandas as pd
 import pickle
+from pathlib import Path
+from itertools import repeat, chain
 
 from .io import load_tiled_image
 from .tracker import Tracker
 from .tracker_benchmark import TrackBenchmarker
+from .training import TrainValProperty
+from .errors import BadProcess, BadParam
 
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops_table
@@ -254,130 +258,97 @@ class TrackTrainer(Tracker):
         return self._benchmarker
 
 
-class BudTrainer:
+class BudTrainer(Tracker):
     '''
-    :masks: List of ndarrays with the cell outlines
-    :data:  Data obtained from the TrainPairVal class
-    :rprops: List of list of regionprops for each cell
+    :props_file: File where generated property table will be saved
+    :kwargs: Additional arguments passed onto the parent Tracker; `px_size` is
+        especially useful.
     '''
 
-    def __init__(self, meta, data=None, masks=None, props=None ):
-        super().__init__()
-        self.indices = ['experimentID', 'position', 'trap', 'tp']
-        self.data = data
-        self.traps = data.traps
-        self.feats2use = ['centroid', 'area',
-                          'major_axis_length', 'minor_axis_length']
-        self.outfeats = list(
-            regionprops_table(np.diag((1, 0)),
-                              properties=self.feats2use).keys())
-        self.rf_input = ['centroid_distance', 'area_ratio', 'shared_area',
-                         'overlap_rel_loc', 'overlap_major_ax', 'overlap_minor_ax']
-        if masks is None:
-            self.masks= [load_tiled_image(mask)[0] for
-                         bf, mask  in self.data.training]
-        if props is None:
-            self.props = []
-            for mask, lbls in zip(self.masks, self.meta['cellLabels']):
-                props_mat = np.zeros((len(lbls), len(self.outfeats)), dtype=float)
-                if lbls:
-                    for i in range(mask.shape[2]):
-                        props_mat[i] = [prop[0] for prop in regionprops_table(
-                            mask[..., i].astype('int'),
-                            properties=self.feats2use).values()]
-                self.props.append(props_mat)
+    def __init__(self, props_file=None, **kwargs):
+        super().__init__(**kwargs)
+        # NB: we inherit self.ba_feat_names from Tracker class
+        self.props_file = props_file
 
     @property
-    def train(self):
-        if not hasattr(self, '_train'):
-            train = []
-            all_lbls, all_buds = zip(*self.meta[['cellLabels', 'buds']].values)
-            for mask, props, lbls, buds in zip(
-                    self.masks, self.props, all_lbls, all_buds):
-                if lbls and buds:
-                    feat_matrix = self.calc_feat_matrix(mask, props).reshape(-1,
-                                                                             len(self.rf_input))
-                    truth = get_ground_truth(lbls, buds).reshape(-1)
+    def props_file(self):
+        return getattr(self, '_props_file')
 
-                    for train_item in zip(truth, feat_matrix):
-                        train.append(train_item)
+    @props_file.setter
+    def props_file(self, filename):
+        if filename is not None:
+            self._props_file = Path(filename)
 
-            self._train = train
-        return self._train
+    @property
+    def props(self):
+        if not getattr(self, '_props'):
+            if self.props_file and self.props_file.is_file():
+                self.props = pd.read_csv(self.props_file)
+            else:
+                raise BadProcess(
+                        'The property table has not yet been generated')
+        return self._props
 
-    def calc_feat_matrix(self, mask, props):
-        ncells = mask.shape[2]
-        feat_matrix = np.zeros((ncells, ncells, len(self.rf_input)),dtype=float)
+    @props.setter
+    def props(self, props):
+        props = DataFrame(props)
+        required_cols = self.ba_feat_names + ('is_mb_pair', 'validation')
+        if not all(c in props for c in required_cols):
+            raise BadParam(
+                '"props" does not have all required columns: {}'.format(
+                    ', '.join(required_cols)))
+        self._props = props
+        if self.props_file:
+            props.to_csv(self.props_file)
 
-        for i in range(ncells):
-            for j in range(ncells):
-                feat_matrix[i,j] = self.calc_comparison(mask[i], mask[j],
-                                                        props[i], props[j])
+    def generate_property_table(self, data, flattener, val_data=None):
+        '''Generates properties table that gets used for training
 
-        return feat_matrix
+        :data: List or generator of `baby.training.SegExample` tuples
+        :flattener: Instance of a `baby.preprocessing.SegmentationFlattening`
+            object describing the targets of the CNN in data
+        '''
+        tnames = flattener.names()
+        i_budneck = tnames.index('bud_neck')
+        bud_target = 'sml_fill' if 'sml_fill' in tnames else 'sml_inte'
+        i_bud = tnames.index(bud_target)
 
-
-    def calc_comparison(self, outline1, outline2, props1=None, props2=None):
-        if props1 is None:
-            props1 = regionprops_table(outline1, coordinates='rc')[0]
-        if props2 is None:
-            props2 = regionprops_table(outline2, coordinates='rc')[0]
-
-        centroid_1 = self.get_centroid(props1)
-        centroid_2 = self.get_centroid(props2)
-        centroid_dist = get_distance(centroid_1, centroid_2)
-
-
-        area1 = self.get_area(props1)
-        area2 =  self.get_area(props2)
-        area_ratio = area1/area2
-
-        # Calculate values of the small cell
-        small_props = props1 if area1<area2 else props2
-        small_centroid = self.get_centroid(small_props)
-        small_minor_ax = self.get_minor_ax(small_props)
-        small_major_ax = self.get_major_ax(small_props)
-
-        # Calculate features for the overlap
-        overlap = outline1 & outline2
-        if np.sum(overlap) > 0:
-            overlap_props = [feat[0] for feat in regionprops_table(overlap, properties =
-                                              ['centroid', 'area', 'major_axis_length',
-                                               'minor_axis_length']).values()]
-
-            overlap_centroid = self.get_centroid(overlap_props)
-            overlap_area = self.get_area(overlap_props)
-            overlap_major_ax = self.get_major_ax(overlap_props)
-            overlap_minor_ax = self.get_minor_ax(overlap_props)
-
-            overlap_rel_loc = get_distance(overlap_centroid, small_centroid) / centroid_dist
+        if val_data is not None:
+            data = TrainValProperty(data, val_data)
+        if isinstance(data, TrainValProperty):
+            data = chain(zip(repeat(False), data.train),
+                         zip(repeat(True), data.val))
         else:
-            overlap_area=0
-            overlap_rel_loc=400
-            overlap_major_ax=0
-            overlap_minor_ax=0
+            data = zip(repeat(None), data)
 
-        output = (centroid_dist, area_ratio, overlap_area,
-               overlap_rel_loc, overlap_major_ax, overlap_minor_ax)
-        return output
+        p_list = []
+        for is_val, seg_example in data:
+            if len(seg_example.target) < 2:
+                continue
+            mb_stats = self.calc_mother_bud_stats(seg_example.pred[i_budneck],
+                    seg_example.pred[i_bud], seg_example.target)
+            mb_stats = mb_stats[~np.isnan(mb_stats).any(axis=1), :]
+            p = pd.DataFrame(mb_stats, columns=self.ba_feat_names)
+            p['validation'] = is_val
+            cell_labels = seg_example.info.get('cellLabels', []) or []
+            if type(cell_labels) is int:
+                cell_labels = [cell_labels]
+            buds = seg_example.info.get('buds', []) or []
+            if type(buds) is int:
+                buds = [buds]
+            p['is_mb_pair'] = get_ground_truth(cell_labels, buds).flatten()
+            p_list.append(p)
 
-        #TODO implement rectangle calculation
+        props = pd.concat(p_list)
+        # TODO: should search for any None values in validation column and
+        # assign a train-validation split to those rows
 
-    def get_centroid(self, props):
-        return (props[self.outfeats.index('centroid-0')],
-                  props[self.outfeats.index('centroid-1')])
-    def get_area(self, rprops):
-        return rprops[self.outfeats.index('area')]
-
-    def get_major_ax(self, rprops):
-        return rprops[self.outfeats.index('major_axis_length')]
-
-    def get_minor_ax(self, rprops):
-        return rprops[self.outfeats.index('minor_axis_length')]
+        self.props = props # also saves
 
     def explore_hyperparams(self):
+        data = self.props.loc[~self.props['validation'], self.ba_feat_names]
+        truth = self.props.loc[~self.props['validation'], 'is_mb_pair']
 
-        truth, data = *zip(*self.train),
         rf = RandomForestClassifier(n_estimators=15,
                                     criterion='gini',
                                     max_depth=3,
@@ -397,7 +368,7 @@ class BudTrainer:
 
     def save_model(self, filename):
         f = open(filename, 'wb')
-        pickle.dump(track_trainer._rf.best_estimator_, f)
+        pickle.dump(self._rf.best_estimator_, f)
 
 def get_distance(point1, point2):
     return(np.sqrt(np.sum(np.array([point1[i]-point2[i] for i in [0,1]])**2)))
