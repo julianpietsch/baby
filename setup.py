@@ -22,8 +22,8 @@ setup(
                       'pandas',
                       'scikit-image',
                       'scikit-learn',
-                      'tensorflow',
                       'tqdm',
+                      'tensorflow>=1.14',
                       'imageio',
                       'pillow',
                       'matplotlib']

@@ -9,8 +9,9 @@ from concurrent.futures import ThreadPoolExecutor
 import gc
 import time
 import json
-from os.path import dirname, join
+from os.path import dirname, join, isfile
 from uuid import uuid4
+import logging
 from functools import reduce
 from operator import mul
 import numpy as np
@@ -35,6 +36,8 @@ MAX_IMG_SIZE = 100 * 1024 * 1024  # allows for raw image sizes up to 100 MB
 
 DIMS_ERROR_MSG = '"dims" must be a length 4 integer array: [ntraps, width, height, depth]'
 
+LOG_FILE = 'baby-phone.log'
+ERR_DUMP_DIR = 'baby-phone-errors'
 
 ### Helper functions and classes ###
 
@@ -134,7 +137,8 @@ class TaskMaster(object):
         print('Starting new runner for model "{}"...'.format(model_name))
 
         baby = BabyBrain(**modelsets[model_name],
-                         session=self.tf_session, graph=self.tf_graph)
+                         session=self.tf_session, graph=self.tf_graph,
+                         suppress_errors=True, error_dump_dir=ERR_DUMP_DIR)
 
         if self.runners.get(model_name) == 'pending':
             with self._lock:
@@ -438,5 +442,14 @@ def main():
                 tf.version.VERSION
             )
         )
+
+    # Log to log file if it exists
+    if isfile(LOG_FILE):
+        lfh = logging.FileHandler(LOG_FILE)
+        lfh.setLevel(logging.INFO)
+        lff = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        lfh.setFormatter(lff)
+        logging.getLogger().addHandler(lfh)
 
     web.run_app(app, port=5101)
