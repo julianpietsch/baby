@@ -23,7 +23,7 @@ from tensorflow.python.keras.models import load_model
 
 from .utils import (get_name, EncodableNamedTuple, find_file,
                     as_python_object, jsonify, schedule_steps, batch_iterator,
-                    split_batch_pred)
+                    split_batch_pred, TrainValProperty)
 from .errors import BadParam, BadFile, BadType, BadProcess
 from .io import TrainValPairs
 from .preprocessing import (robust_norm, seg_norm, SegmentationFlattening,
@@ -70,11 +70,6 @@ def fix_tf_rtx_gpu_bug():
             raise Exception(
                 'Unsupported version of tensorflow encountered ({})'.format(
                     tf.version.VERSION))
-
-
-class TrainValProperty(NamedTuple):
-    train: Any
-    val: Any
 
 
 @EncodableNamedTuple
@@ -501,12 +496,24 @@ class BabyTrainer(object):
 
     @property
     def seg_examples(self):
+        p = self.parameters
+        a = ScalingAugmenter(self.smoothing_sigma_model,
+                             lambda lbl, _: lbl,
+                             xy_out=p.xy_out,
+                             target_pixel_size=p.target_pixel_size,
+                             substacks=p.substacks,
+                             p_noop=1,
+                             probs={
+                                 'vshift': 0.25,
+                                 'hshift': 0.25
+                             })
 
         def seg_example_aug(img, lbl):
             # Assume that the label preprocessing function also returns info
             _, info = lbl
+            img, lbl = a(img, lbl)
             # In this case, always prefer the validation augmenter
-            return tuple(*self.aug.val(img, lbl), info)
+            return img, lbl > 0, info
 
         def example_generator(dgen):
             opt_cnn = self.cnn_opt

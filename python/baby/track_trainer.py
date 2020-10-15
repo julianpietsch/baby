@@ -8,7 +8,7 @@ from itertools import repeat, chain
 from .io import load_tiled_image
 from .tracker import Tracker
 from .tracker_benchmark import TrackBenchmarker
-from .training import TrainValProperty
+from .utils import TrainValProperty
 from .errors import BadProcess, BadParam
 
 from scipy.ndimage import binary_fill_holes
@@ -291,7 +291,7 @@ class BudTrainer(Tracker):
 
     @props.setter
     def props(self, props):
-        props = DataFrame(props)
+        props = pd.DataFrame(props)
         required_cols = self.ba_feat_names + ('is_mb_pair', 'validation')
         if not all(c in props for c in required_cols):
             raise BadParam(
@@ -327,7 +327,6 @@ class BudTrainer(Tracker):
                 continue
             mb_stats = self.calc_mother_bud_stats(seg_example.pred[i_budneck],
                     seg_example.pred[i_bud], seg_example.target)
-            mb_stats = mb_stats[~np.isnan(mb_stats).any(axis=1), :]
             p = pd.DataFrame(mb_stats, columns=self.ba_feat_names)
             p['validation'] = is_val
             cell_labels = seg_example.info.get('cellLabels', []) or []
@@ -337,6 +336,7 @@ class BudTrainer(Tracker):
             if type(buds) is int:
                 buds = [buds]
             p['is_mb_pair'] = get_ground_truth(cell_labels, buds).flatten()
+            p = p.loc[~np.isnan(mb_stats).any(axis=1), :]
             p_list.append(p)
 
         props = pd.concat(p_list)

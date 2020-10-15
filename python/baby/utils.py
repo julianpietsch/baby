@@ -1,6 +1,7 @@
 import time
 import json
 from pathlib import Path
+from typing import NamedTuple, Any
 from importlib import import_module
 import numpy as np
 
@@ -107,3 +108,8 @@ def schedule_steps(epoch, steps):
             return step[0]
     print("Setting learning rate to {}".format(steps[-1][0]))
     return steps[-1][0]
+
+
+class TrainValProperty(NamedTuple):
+    train: Any
+    val: Any
