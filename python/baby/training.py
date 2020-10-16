@@ -82,6 +82,7 @@ class BabyTrainerParameters(NamedTuple):
     flattener_stats_file: str = 'flattener_stats.json'
     flattener_file: str = 'flattener.json'
     mother_bud_props_file: str = 'mother_bud_props.csv'
+    mother_bud_model_file: str = 'mother_bud_model.pkl'
     cnn_set: Tuple[str, ...] = ('msd_d80', 'unet_4s')
     cnn_fn: Union[None, str] = None
     batch_size: int = 8
@@ -815,6 +816,11 @@ class BabyTrainer(object):
         if save:
             fig.savefig(self.save_dir / 'histories_{}.png'.format(key))
             plt.close(fig)
+
+    def fit_bud_model(self):
+        self.bud_trainer.explore_hyperparams()
+        model_file = self.save_dir / self.parameters.mother_bud_model_file
+        self.bud_trainer.save_model(model_file)
 
     def fit_seg_params(self):
         pass

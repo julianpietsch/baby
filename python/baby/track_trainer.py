@@ -4,6 +4,8 @@ import pandas as pd
 import pickle
 from pathlib import Path
 from itertools import repeat, chain
+from warnings import warn
+from tqdm import trange
 
 from .io import load_tiled_image
 from .tracker import Tracker
@@ -16,6 +18,7 @@ from skimage.measure import regionprops_table
 from skimage.transform import resize
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
+from sklearn import metrics
 
 class TrackTrainer(Tracker):
     '''
@@ -281,7 +284,7 @@ class BudTrainer(Tracker):
 
     @property
     def props(self):
-        if not getattr(self, '_props'):
+        if getattr(self, '_props', None) is None:
             if self.props_file and self.props_file.is_file():
                 self.props = pd.read_csv(self.props_file)
             else:
@@ -336,10 +339,18 @@ class BudTrainer(Tracker):
             if type(buds) is int:
                 buds = [buds]
             p['is_mb_pair'] = get_ground_truth(cell_labels, buds).flatten()
-            p = p.loc[~np.isnan(mb_stats).any(axis=1), :]
+            nanrows = np.isnan(mb_stats).any(axis=1)
+            if (p['is_mb_pair'] & nanrows).any():
+                id_keys = ('experimentID', 'position', 'trap', 'tp')
+                info = seg_example.info
+                img_id = ' / '.join(
+                        [k + ': ' + str(info[k]) for k in id_keys if k in info])
+                warn('Mother-bud pairs omitted due to feature NaNs')
+                print('Mother-bud pair omitted in "{}"'.format(img_id))
+            p = p.loc[~nanrows, :]
             p_list.append(p)
 
-        props = pd.concat(p_list)
+        props = pd.concat(p_list, ignore_index=True)
         # TODO: should search for any None values in validation column and
         # assign a train-validation split to those rows
 
@@ -355,16 +366,41 @@ class BudTrainer(Tracker):
                                     class_weight='balanced')
 
         param_grid = {
-            'n_estimators': [6, 50, 100],
+            'n_estimators': [6, 15, 50, 100],
             'max_features': ['auto', 'sqrt', 'log2'],
             'max_depth': [2, 3, 4],
             'class_weight': [None, 'balanced', 'balanced_subsample']
         }
+        scoring = ['accuracy', 'balanced_accuracy', 'precision',
+                   'recall', 'f1'] 
 
-        self._rf = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5)
+        def get_balanced_best_index(cv_results_):
+            '''Find a model balancing F1 score and speed'''
+            df = pd.DataFrame(cv_results_)
+            best_score = df.iloc[df.mean_test_f1.idxmax(), :]
+            thresh = best_score.mean_test_f1 - 0.1 * best_score.std_test_f1
+            return df.loc[df.mean_test_f1 > thresh, 'mean_score_time'].idxmin()
+
+        self._rf = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5,
+                scoring=scoring, refit='f1')
         self._rf.fit(data, truth)
-        print(self._rf.best_score_, self._rf.best_params_)
-        return self._rf.best_estimator_
+
+        df = pd.DataFrame(self._rf.cv_results_)
+        disp_cols = [c for c in df.columns if c.startswith('mean_')
+                     or c.startswith('param_')]
+        print(df.loc[self._rf.best_index_, disp_cols])
+
+        print('\nValidation performance:')
+        best_rf = self._rf.best_estimator_
+        valdata = self.props.loc[self.props['validation'], self.ba_feat_names]
+        valtruth = self.props.loc[self.props['validation'], 'is_mb_pair']
+        preds = best_rf.predict(valdata)
+        print('Accuracy:', metrics.accuracy_score(valtruth, preds))
+        print('Precision:', metrics.precision_score(valtruth, preds))
+        print('Recall:', metrics.recall_score(valtruth, preds))
+        print('F1 score:', metrics.f1_score(valtruth, preds))
+
+        return best_rf
 
     def save_model(self, filename):
         f = open(filename, 'wb')

@@ -3,7 +3,7 @@
     "morph_model_file": "I5_prime_unet_4s_20200630.hdf5",
     "flattener_file": "flattener_60x_prime_20200630.json",
     "celltrack_model_file": "ctrack_randomforest_20201012.pkl",
-    "budassign_model_file": "baby_randomforest_20190906.pkl",
+    "budassign_model_file": "mb_model_20201016.pkl",
     "pixel_size": 0.182,
     "default_image_size": [117, 117]
   },
@@ -11,7 +11,7 @@
     "morph_model_file": "I5_evolve_unet_4s_20201001.hdf5",
     "flattener_file": "flattener_60x_evolve_20201001.json",
     "celltrack_model_file": "ctrack_randomforest_20201012.pkl",
-    "budassign_model_file": "baby_randomforest_20190906.pkl",
+    "budassign_model_file": "mb_model_20201016.pkl",
     "pixel_size": 0.263,
     "default_image_size": [81, 81]
   },
@@ -19,7 +19,7 @@
     "morph_model_file": "I1_prime_unet_4s_20200630.hdf5",
     "flattener_file": "flattener_60x_prime_20200630.json",
     "celltrack_model_file": "ctrack_randomforest_20201012.pkl",
-    "budassign_model_file": "baby_randomforest_20190906.pkl",
+    "budassign_model_file": "mb_model_20201016.pkl",
     "pixel_size": 0.182,
     "default_image_size": [117, 117]
   },
@@ -27,7 +27,7 @@
     "morph_model_file": "I1_evolve_unet_4s_20200630.hdf5",
     "flattener_file": "flattener_60x_prime_20200630.json",
     "celltrack_model_file": "ctrack_randomforest_20201012.pkl",
-    "budassign_model_file": "baby_randomforest_20190906.pkl",
+    "budassign_model_file": "mb_model_20201016.pkl",
     "pixel_size": 0.263,
     "default_image_size": [81, 81]
   },
@@ -35,7 +35,7 @@
     "morph_model_file": "I3_prime_unet_4s_20200903.hdf5",
     "flattener_file": "flattener_60x_prime_20200630.json",
     "celltrack_model_file": "ctrack_randomforest_20201012.pkl",
-    "budassign_model_file": "baby_randomforest_20190906.pkl",
+    "budassign_model_file": "mb_model_20201016.pkl",
     "pixel_size": 0.182,
     "default_image_size": [117, 117]
   },
@@ -43,7 +43,7 @@
     "morph_model_file": "I3_evolve_unet_4s_20200903.hdf5",
     "flattener_file": "flattener_60x_prime_20200630.json",
     "celltrack_model_file": "ctrack_randomforest_20201012.pkl",
-    "budassign_model_file": "baby_randomforest_20190906.pkl",
+    "budassign_model_file": "mb_model_20201016.pkl",
     "pixel_size": 0.263,
     "default_image_size": [81, 81]
   }

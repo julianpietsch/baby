@@ -51,7 +51,8 @@ class Tracker:
         self.feats2use = feats2use
         self.xtrafeats = xtrafeats
 
-        self.ba_feat_names = ('p_bud', 'size_ratio', 'p_budneck', 'adjacency')
+        self.ba_feat_names = ('p_bud', 'size_ratio', 'p_budneck',
+                'budneck_ratio', 'adjacency')
 
         self.outfeats = list(
             regionprops_table(np.diag((1, 0)),
@@ -373,6 +374,8 @@ class Tracker:
         :masks: 3d ndarray (ncells, size_x, size_y)
         :feats: ndarray (ncells, nfeats)
 
+        NB: ASSUMES FEATS HAVE ALREADY BEEN NORMALISED!
+
         returns
 
         :n2darray: 2d ndarray (ncells x ncells, n_ba_feat_names) specifying,
@@ -387,25 +390,32 @@ class Tracker:
 
         ncells = len(masks)
 
-        p_bud_mat = np.zeros((ncells, ncells))
-        p_budneck_mat = np.zeros((ncells, ncells))
-        size_ratio_mat = np.zeros((ncells, ncells))
-        adjacency_mat = np.zeros((ncells, ncells))
+        # Entries will be NaN unless validly specified below
+        p_bud_mat = np.nan * np.ones((ncells, ncells))
+        p_budneck_mat = np.nan * np.ones((ncells, ncells))
+        budneck_ratio_mat = np.nan * np.ones((ncells, ncells))
+        size_ratio_mat = np.nan * np.ones((ncells, ncells))
+        adjacency_mat = np.nan * np.ones((ncells, ncells))
 
         for m in range(ncells):
             for d in range(ncells):
                 if m == d:
+                    # Mother-bud pairs can only be between different cells
                     continue
 
                 p_bud_mat[m, d] = np.mean(p_bud[masks[d].astype('bool')])
 
-                size_ratio_mat[m, d] = feats[m, self.a_ind] / feats[d,
-                                                                    self.a_ind]
+                a_i = self.a_ind
+                size_ratio_mat[m, d] = feats[m, a_i] / feats[d, a_i]
 
                 # Draw rectangle
                 r_points = self.get_rpoints(feats, d, m)
                 rr, cc = polygon(r_points[0, :], r_points[1, :],
                                  p_budneck.shape)
+                if len(rr) == 0:
+                    # Rectangles with zero size are not informative
+                    continue
+
                 r_im = np.zeros(p_budneck.shape, dtype='bool')
                 r_im[rr, cc] = True
 
@@ -415,14 +425,19 @@ class Tracker:
                 pbn = pbn[pbn > 0.2]
                 p_budneck_mat[m, d] = np.mean(pbn) if len(pbn) > 0 else 0
 
+                # Normalise number of bud-neck positive pixels by the scale of
+                # the bud (a value proportional to circumference):
+                raw_circumf_est = np.sqrt(feats[d, a_i]) * self.px_size
+                budneck_ratio_mat[m, d] = pbn.sum() / raw_circumf_est
+
                 # Adjacency is the proportion of the joining rectangle that overlaps the mother daughter union
-                adjacency_mat[m, d] = np.sum((masks[m]
-                                              | masks[d]) & r_im) / np.sum(
-                                                  r_im)
+                md_union = masks[m] | masks[d]
+                adjacency_mat[m, d] = np.sum(md_union & r_im) / np.sum(r_im)
 
         return np.hstack([
             s.flatten()[:, np.newaxis]
-            for s in (p_bud_mat, size_ratio_mat, p_budneck_mat, adjacency_mat)
+            for s in (p_bud_mat, size_ratio_mat, p_budneck_mat,
+                budneck_ratio_mat, adjacency_mat)
         ])
 
     def predict_mother_bud(self, p_budneck, p_bud, masks, feats=None):
@@ -463,6 +478,8 @@ class Tracker:
         Draw a rectangle in the budneck of cells
         ---
 
+        NB: ASSUMES FEATS HAVE ALREADY BEEN NORMALISED!
+
         input
 
         feats: 2d ndarray (ncells, nfeats)
@@ -472,10 +489,13 @@ class Tracker:
         r_points: 2d ndarray (2,4) with the coordinates of the rectangle corner
 
         '''
+
+        # Get un-normalised features for m-d pair
+        m_centre = feats[m, :2] * self.px_size
+        d_centre = feats[d, :2] * self.px_size
+        r_width = np.max((2, feats[d, self.ma_ind] * self.px_size * 0.25))
+
         # Draw connecting rectangle
-        m_centre = feats[m, :2]
-        d_centre = feats[d, :2]
-        r_width = np.max((2, feats[d, self.ma_ind] * 0.25))
         r_hvec = d_centre - m_centre
         r_wvec = np.matmul(np.array([[0, -1], [1, 0]]), r_hvec)
         r_wvec = r_width * r_wvec / np.linalg.norm(r_wvec)
