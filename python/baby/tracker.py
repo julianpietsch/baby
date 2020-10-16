@@ -582,9 +582,9 @@ class Tracker:
             lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
             lifetime[lblinds] += 1
             p_is_mother[lblinds] = np.maximum(p_is_mother[lblinds],
-                                              ba_probs.sum(1))
+                                              np.nansum(ba_probs, 1))
             p_was_bud[lblinds] = np.maximum(p_was_bud[lblinds],
-                                            ba_probs.max(0))
+                                            np.nanmax(ba_probs, 0))
             ba_cum[np.ix_(
                 lblinds,
                 lblinds)] += ba_probs * (1 - p_is_mother[lblinds][None, ])
