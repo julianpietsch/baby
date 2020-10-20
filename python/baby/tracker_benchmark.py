@@ -17,8 +17,8 @@ class TrackBenchmarker:
     def __init__(self, meta, model):
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
-        self.meta = meta
-        self.meta['cont_list_index'] = [i for i in range(len(self.meta))]
+        self.meta = meta.copy()
+        self.meta['cont_list_index'] = *range(len(self.meta)),
         self.tracker = CellTracker(model = model)
         self.nstepsback = self.tracker.nstepsback
         self.traps_loc
@@ -99,7 +99,7 @@ class TrackBenchmarker:
         print("Testing trap {}, {}, {}".format(exp,pos,trap))
         new_cids = self.predict_set(exp, pos, trap)
 
-        test_df = self.meta.loc(axis=0)[(exp, pos, trap)]
+        test_df = self.meta.loc(axis=0)[(exp, pos, trap)].copy()
         test_df['pred_cellLabels'] = new_cids
 
         orig = test_df['cellLabels'].values
