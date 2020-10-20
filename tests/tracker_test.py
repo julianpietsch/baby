@@ -9,7 +9,7 @@ from baby.brain import default_params
 from baby.io import load_paired_images
 from baby.morph_thresh_seg import MorphSegGrouped
 from baby.preprocessing import raw_norm, SegmentationFlattening
-from baby.tracker import Tracker
+from baby.tracker import CellTracker
 
 MODEL_DIR = baby.model_path()
 
@@ -70,7 +70,7 @@ def evolve60env(modelsets, image_dir):
         bam = pickle.load(f)
 
     # Set up a tracker for this model set
-    tracker = Tracker(ctrack_model=ctm, ba_model=bam)
+    tracker = CellTracker(ctrack_model=ctm, ba_model=bam)
 
     return tracker, trkin
 

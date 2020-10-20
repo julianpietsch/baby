@@ -15,7 +15,7 @@ from tensorflow.keras import backend as K
 
 from .losses import bce_dice_loss, dice_loss, dice_coeff
 from .segmentation import morph_seg_grouped
-from .tracker import Tracker
+from .tracker import CellTracker
 from .preprocessing import robust_norm, SegmentationFlattening
 from .utils import batch_iterator, split_batch_pred
 from .morph_thresh_seg import MorphSegGrouped, SegmentationOutput
@@ -158,7 +158,7 @@ class BabyBrain(object):
             celltrack_model = pickle.load(f)
         with open(budassign_model_file, 'rb') as f:
             budassign_model = pickle.load(f)
-        self.tracker = Tracker(ctrack_model=celltrack_model,
+        self.tracker = CellTracker(ctrack_model=celltrack_model,
                                ba_model=budassign_model,
                                px_size=pixel_size)
 

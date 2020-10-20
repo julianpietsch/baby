@@ -8,7 +8,7 @@ from warnings import warn
 from tqdm import trange
 
 from .io import load_tiled_image
-from .tracker import Tracker
+from .tracker import CellTracker
 from .tracker_benchmark import TrackBenchmarker
 from .utils import TrainValProperty
 from .errors import BadProcess, BadParam
@@ -20,7 +20,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn import metrics
 
-class TrackTrainer(Tracker):
+class TrackTrainer(CellTracker):
     '''
     :meta: Metadata Dataframe
     :traps: Dataframe with cleaned trap locations and their continuous tps
@@ -261,7 +261,7 @@ class TrackTrainer(Tracker):
         return self._benchmarker
 
 
-class BudTrainer(Tracker):
+class BudTrainer(CellTracker):
     '''
     :props_file: File where generated property table will be saved
     :kwargs: Additional arguments passed onto the parent Tracker; `px_size` is

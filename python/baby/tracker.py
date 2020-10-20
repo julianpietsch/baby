@@ -1,82 +1,38 @@
-''' Tracker class to perform cell tracking inside baby.
+#!/usr/bin/env python
+
 '''
+TrackerCoordinator class to coordinate cell tracking and bud assignment.
+'''
+import os
 from collections import Counter
 import pickle
 import numpy as np
 from skimage.measure import regionprops_table 
 from skimage.draw import polygon
-import os
+from scipy.optimize import linear_sum_assignment
 
-models_path = os.path.join(os.path.dirname(__file__), 'models')
+# models_path = os.path.join(os.path.dirname(__file__), 'models')
+models_path = os.path.join(
+    '/home/alan/Documents/sync_docs/libs/baby/python/baby/models')
 
-class Tracker:
+class FeatureCalculator:
     '''
-    Class used to manage cell tracking.
-
-    Initialization parameters:
-
-    :ctrack_model: sklearn.ensemble.RandomForestClassifier object
-    :ba_model: sklearn.ensemble.RandomForestClassifier object.
-    :nstepsback: int Number of timepoints to go back
-    :ctrac_thresh: float Cut-off value to assume a cell is not new
-
-    
+    Base class for making use of regionprops-based features.
+    If no features are offered it uses most of them.
     '''
-
-    def __init__(self,
-                 ctrack_model=None,
-                 ba_model=None,
-                 feats2use=None,
-                 xtrafeats=None,
-                 ctrack_thresh=None,
-                 px_size=None,
-                 nstepsback=None,
-                 red_fun=None):
-
-        if ba_model is None:
-            ba_model_file = os.path.join(models_path, 'baby_randomforest_20190906.pkl')
-            with open(ba_model_file, 'rb') as file_to_load:
-                ba_model = pickle.load(file_to_load)
-        self.ba_model = ba_model
-
-        if ctrack_model is None:
-            ctrack_model_file = os.path.join(models_path,
-                                      'ctrack_randomforest_20201012.pkl')
-            with open(ctrack_model_file, 'rb') as file_to_load:
-                ctrack_model = pickle.load(file_to_load)
-        self.ctrack_model = ctrack_model
+    def __init__(self, feats2use=None, extra_feats=None, px_size=None):
 
         if feats2use is None:
-            feats2use, xtrafeats = self.get_feats2use()
-        self.feats2use = feats2use
-        self.xtrafeats = xtrafeats
+            feats2use, extra_feats = switch_case_nfeats(7)
+        self.feats2use, self.extra_feats = (feats2use, extra_feats)
 
-        self.ba_feat_names = ('p_bud', 'size_ratio', 'p_budneck',
-                'budneck_ratio', 'adjacency')
+        if px_size is None:
+            px_size = 0.263
+
 
         self.outfeats = list(
             regionprops_table(np.diag((1, 0)),
                               properties=self.feats2use).keys())
-        if 'area' in self.feats2use:
-            self.a_ind = self.outfeats.index('area')
-        if 'minor_axis_length' in self.feats2use:
-            self.ma_ind = self.outfeats.index('minor_axis_length')
-
-        if px_size is None:
-            px_size = 0.263
-        self.px_size = px_size
-
-        if nstepsback is None:
-            nstepsback = 5
-        self.nstepsback = nstepsback
-
-        if ctrack_thresh is None:
-            ctrack_thresh = 0.7
-        self.ctrack_thresh = ctrack_thresh
-
-        if red_fun is None:
-            red_fun = np.nanmax
-        self.red_fun = red_fun
 
     def calc_feats_from_mask(self, masks, feats2use=None, norm=True,
                              px_size=None):
@@ -145,7 +101,66 @@ class Tracker:
             feats[self.outfeats.index('major_axis_length')] /= px_size
 
         return feats
-         
+
+    def get_feats2use(self):
+        '''
+        Return feats to be used from a loaded random forest model rf_model
+        '''
+
+        assert hasattr(self, 'rf_model'), "Random Forest model does not exist"
+
+        model_nfeats = len(self.rf_model.feature_importances_)
+        return(switch_case_nfeats(model_nfeats))
+
+class CellTracker(FeatureCalculator):
+    '''
+    Class used to manage cell tracking.
+
+    Initialization parameters:
+
+    :rf_model: sklearn.ensemble.RandomForestClassifier object
+    :ba_model: sklearn.ensemble.RandomForestClassifier object.
+    :nstepsback: int Number of timepoints to go back
+    :ctrack_thresh: float Cut-off value to assume a cell is not new
+    '''
+    def __init__(self,
+                 feats2use,
+                 rf_model=None,
+                 ctrack_thresh=None,
+                 nstepsback=None,
+                 red_fun=None,
+                 **kwargs):
+        super().__init__(feats2use, **kwargs)
+
+    def __init__(self,
+                 feats2use,
+                 rf_model=None,
+                 ctrack_thresh=None,
+                 nstepsback=None,
+                 red_fun=None,
+                 **kwargs):
+        super().__init__(feats2use, **kwargs)
+
+        if rf_model is None:
+            rf_model_file = os.path.join(models_path,
+                                      'ctrack_randomforest_20201012.pkl')
+            with open(rf_model_file, 'rb') as file_to_load:
+                rf_model = pickle.load(file_to_load)
+        self.rf_model = rf_model
+
+
+        if nstepsback is None:
+            self.nstepsback = 5
+        self.nstepsback = nstepsback
+
+        if ctrack_thresh is None:
+            ctrack_thresh = 0.7
+        self.ctrack_thresh = ctrack_thresh
+
+        if red_fun is None:
+            red_fun = np.nanmax
+        self.red_fun = red_fun
+
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
         Calculate feature ndarray using two ndarrays of features.
@@ -183,48 +198,40 @@ class Tracker:
 
         return n3darray
 
-    def predict_from_imgpair(self, img1, img2):
-        ''' Generate predictions for two images. Useful to produce statistics.
-
+    def assign_lbls(self, pred_3darray, prev_lbls, alg='orig', red_fun=None):
+        '''Assign labels using a prediction matrix of nxmxl where n is the number
+        of cells in the previous image, m the number of steps back considered
+        and l in the new image. It assigns the
+        number zero if it doesn't find the cell.
+        ---
         input
 
-        :img1: (nxm) ndarray containing a single cell
-        :img2: (nxm) ndarray containing a single cell
+        :pred_3darray: Probability n x m x l array obtained as an output of rforest
+        :prev_labels: List of cell labels for previous timepoint to be compared.
+        :alg: str of the algorithm to use: 'orig' for basic search, 'jv'
+            for Jonker-Volgenant
+        :red_fun: Function used to collapse the previous timepoints into one.
+            If none provided it uses maximum and ignores np.nans.
 
         returns
 
-        tracking prediction matrix resultant of input images' comparison
+        :new_lbls: ndarray of newly assigned labels obtained, new cells as
+        zero.
         '''
-        feats1 = self.calc_feats_from_mask(img1)
-        feats2 = self.calc_feats_from_mask(img2)
+        if red_fun is None:
+            red_fun = self.red_fun
 
-        feats_3darray = self.calc_feat_ndarray(feats1, feats2)
+        new_lbls = np.zeros(pred_3darray.shape[2], dtype=int)  
+        pred_matrix = 1 - np.apply_along_axis(red_fun, 1, pred_3darray)
 
-        pred_matrix_bool = self.predict_proba_from_ndarray(feats_3darray, boolean=True)
+        if pred_matrix.any():
+            # assign available hits
+            for i, j in zip(linear_sum_assignment(pred_matrix)):
+                if 1 - pred_matrix[i, j] > self.ctrack_thresh:
+                    new_lbls[j] = prev_lbls[i]
 
-        return pred_matrix_bool
+        return new_lbls
 
-    def get_truth_matrix_from_pair(self, pair):
-        '''
-        Requires self.meta
-
-        input
-        :pair: tuple of size 4 (experimentID, position, trap (tp1, tp2))
-
-        returns
-
-       :truth_mat: boolean ndarray of shape (ncells(tp1) x ncells(tp2)
-            links cells in tp1 to cells in tp2
-        '''
-        
-        clabs1 = self.meta.loc[pair[:3] + (pair[3][0], ), 'cellLabels']
-        clabs2 = self.meta.loc[pair[:3] + (pair[3][1], ), 'cellLabels']
-
-        truth_mat = gen_boolmat_from_clabs(clabs1, clabs2)
-
-        return truth_mat
-
-        
     def predict_proba_from_ndarray(self, array_3d, boolean=False):
         '''
 
@@ -243,7 +250,7 @@ class Tracker:
         if array_3d.size == 0:
             return np.array([])
 
-        predict_fun = self.ctrack_model.predict if boolean else self.ctrack_model.predict_proba
+        predict_fun = self.rf_model.predict if boolean else self.rf_model.predict_proba
 
         orig_shape = array_3d.shape[:2]
 
@@ -321,191 +328,35 @@ class Tracker:
             return ([], [], max_lbl)
         return (new_lbls, new_feats, new_max)
 
-    def assign_lbls(self, pred_3darray, prev_lbls, red_fun=None):
-        '''Assign labels using a prediction matrix of nxmxl where n is the number
-        of cells in the previous image, m the number of steps back considered
-        and l in the new image. It assigns the
-        number zero if it doesn't find the cell.
-        ---
-        input
+class BudTracker(FeatureCalculator):
+    def __init__(self,
+                 feats2use,
+                 rf_model=None,
+                 **kwargs):
+        super().__init__(feats2use, **kwargs)
+         
+class TrackerMaestro(FeatureCalculator):
+    '''
+    Coordinates the data transmission from CellTracker to BudTracker to
+    reduce number of calls to regionprops function.
 
-        :pred_3darray: Probability n x m x l array obtained as an output of rforest
-        :prev_labels: List of cell labels for previous timepoint to be compared.
-        :red_fun: Function used to collapse the previous timepoints into one.
-            If none provided it uses maximum and ignores np.nans.
+    input
+    :ctrack_args: dict with arguments to pass on to CellTracker constructor
+        if None it passes all the features to use
+    :btrack_args: dict with arguments to pass on to BudTracker constructor
+        if None it passes all the features to use
+    :**kwargs: additional arguments passed to FeatureCalculator constructor
+    '''
+    def __init__(self, ctrack_args=None, btrack_args=None,
+                 **kwargs):
+        super().__init__(**kwargs)
+        if ctrack_args is None:
+            ctrack_args = {'feats2use' : self.feats2use}
+        self.cell_tracker = CellTracker(**ctrack_args)
 
-        returns
-
-        :new_lbls: ndarray of newly assigned labels obtained, new cells as
-        zero.
-        '''
-        if red_fun is None:
-            red_fun = self.red_fun
-
-        new_lbls = np.zeros(pred_3darray.shape[2], dtype=int)  
-
-        pred_matrix = np.apply_along_axis(red_fun, 1, pred_3darray)
-
-
-        # We remove any possible conflict by taking the maximum vals
-        if pred_matrix.any():
-            clean_mat = np.zeros(pred_matrix.shape)
-            for j, i in enumerate(pred_matrix.argmax(0)):
-                clean_mat[i, j] = pred_matrix[i, j]
-
-            # assign available hits
-            for i, j in enumerate(clean_mat.argmax(1)):
-                if pred_matrix[i, j] > self.ctrack_thresh:
-                    new_lbls[j] = prev_lbls[i]
-
-        return new_lbls
-
-    ### Assign mother-
-    def calc_mother_bud_stats(self, p_budneck, p_bud, masks, feats=None):
-        '''
-        ---
-
-        input
-
-        :p_budneck: 2d ndarray (size_x, size_y) giving the probability that a
-            pixel corresponds to a bud neck
-        :p_bud: 2d ndarray (size_x, size_y) giving the probability that a pixel
-            corresponds to a bud
-        :masks: 3d ndarray (ncells, size_x, size_y)
-        :feats: ndarray (ncells, nfeats)
-
-        NB: ASSUMES FEATS HAVE ALREADY BEEN NORMALISED!
-
-        returns
-
-        :n2darray: 2d ndarray (ncells x ncells, n_ba_feat_names) specifying,
-            for each pair of cells in the masks array, the features used for
-            mother-bud pair prediction (as per 'ba_feat_names')
-        '''
-
-        if feats is None:
-            feats = self.calc_feats_from_mask(masks)
-        elif len(feats) != len(masks):
-            raise Exception('number of features must match number of masks')
-
-        ncells = len(masks)
-
-        # Entries will be NaN unless validly specified below
-        p_bud_mat = np.nan * np.ones((ncells, ncells))
-        p_budneck_mat = np.nan * np.ones((ncells, ncells))
-        budneck_ratio_mat = np.nan * np.ones((ncells, ncells))
-        size_ratio_mat = np.nan * np.ones((ncells, ncells))
-        adjacency_mat = np.nan * np.ones((ncells, ncells))
-
-        for m in range(ncells):
-            for d in range(ncells):
-                if m == d:
-                    # Mother-bud pairs can only be between different cells
-                    continue
-
-                p_bud_mat[m, d] = np.mean(p_bud[masks[d].astype('bool')])
-
-                a_i = self.a_ind
-                size_ratio_mat[m, d] = feats[m, a_i] / feats[d, a_i]
-
-                # Draw rectangle
-                r_points = self.get_rpoints(feats, d, m)
-                rr, cc = polygon(r_points[0, :], r_points[1, :],
-                                 p_budneck.shape)
-                if len(rr) == 0:
-                    # Rectangles with zero size are not informative
-                    continue
-
-                r_im = np.zeros(p_budneck.shape, dtype='bool')
-                r_im[rr, cc] = True
-
-                # Calculate the mean of bud neck probabilities greater than some threshold
-                pbn = p_budneck[r_im].flatten()
-
-                pbn = pbn[pbn > 0.2]
-                p_budneck_mat[m, d] = np.mean(pbn) if len(pbn) > 0 else 0
-
-                # Normalise number of bud-neck positive pixels by the scale of
-                # the bud (a value proportional to circumference):
-                raw_circumf_est = np.sqrt(feats[d, a_i]) * self.px_size
-                budneck_ratio_mat[m, d] = pbn.sum() / raw_circumf_est
-
-                # Adjacency is the proportion of the joining rectangle that overlaps the mother daughter union
-                md_union = masks[m] | masks[d]
-                adjacency_mat[m, d] = np.sum(md_union & r_im) / np.sum(r_im)
-
-        return np.hstack([
-            s.flatten()[:, np.newaxis]
-            for s in (p_bud_mat, size_ratio_mat, p_budneck_mat,
-                budneck_ratio_mat, adjacency_mat)
-        ])
-
-    def predict_mother_bud(self, p_budneck, p_bud, masks, feats=None):
-        '''
-        ---
-
-        input
-
-        :p_budneck: 2d ndarray (size_x, size_y) giving the probability that a
-            pixel corresponds to a bud neck
-        :p_bud: 2d ndarray (size_x, size_y) giving the probability that a pixel
-            corresponds to a bud
-        :masks: 3d ndarray (ncells, size_x, size_y)
-        :feats: ndarray (ncells, nfeats)
-
-        returns
-
-        :n2darray: 2d ndarray (ncells, ncells) giving probability that a cell
-            (row) is a mother to another cell (column)
-        '''
-
-        ncells = len(masks)
-
-        mb_stats = self.calc_mother_bud_stats(
-                p_budneck, p_bud, masks, feats=None)
-
-        good_stats = ~np.isnan(mb_stats).any(axis=1)
-        ba_probs = np.nan * np.ones(ncells**2)
-        if good_stats.any():
-            ba_probs[good_stats] = self.ba_model.predict_proba(
-                mb_stats[good_stats, :])[:, 1]
-        ba_probs = ba_probs.reshape((ncells, ) * 2)
-
-        return ba_probs
-
-    def get_rpoints(self, feats, d, m):
-        '''
-        Draw a rectangle in the budneck of cells
-        ---
-
-        NB: ASSUMES FEATS HAVE ALREADY BEEN NORMALISED!
-
-        input
-
-        feats: 2d ndarray (ncells, nfeats)
-
-        returns
-
-        r_points: 2d ndarray (2,4) with the coordinates of the rectangle corner
-
-        '''
-
-        # Get un-normalised features for m-d pair
-        m_centre = feats[m, :2] * self.px_size
-        d_centre = feats[d, :2] * self.px_size
-        r_width = np.max((2, feats[d, self.ma_ind] * self.px_size * 0.25))
-
-        # Draw connecting rectangle
-        r_hvec = d_centre - m_centre
-        r_wvec = np.matmul(np.array([[0, -1], [1, 0]]), r_hvec)
-        r_wvec = r_width * r_wvec / np.linalg.norm(r_wvec)
-        r_points = np.zeros((2, 4))
-        r_points[:, 0] = m_centre - 0.5 * r_wvec
-        r_points[:, 1] = r_points[:, 0] + r_hvec
-        r_points[:, 2] = r_points[:, 1] + r_wvec
-        r_points[:, 3] = r_points[:, 2] - r_hvec
-
-        return r_points
+        if btrack_args is None:
+            btrack_args = {'feats2use' : self.feats2use}
+        # self.bud_tracker = BudTracker(**btrack_args)
 
     def step_trackers(self,
                       masks,
@@ -625,15 +476,9 @@ class Tracker:
 
         return output
 
-    def get_feats2use(self):
-        '''
-        Return feats to be used from loaded ctrack_model
-        '''
-
-        model_nfeats = len(self.ctrack_model.feature_importances_)
-        return(switch_case_nfeats(model_nfeats))
-
         
+# Helper functions
+
 def switch_case_nfeats(nfeats):
     '''
     Convenience TEMPORAL function to determine whether to use distance/location
@@ -653,4 +498,3 @@ def switch_case_nfeats(nfeats):
                           'major_axis_length', 'convex_area'), ('distance',)]}
 
     return(main_feats.get(nfeats, []))
-
