@@ -8,7 +8,7 @@ from warnings import warn
 from tqdm import trange
 
 from .io import load_tiled_image
-from .tracker import CellTracker
+from .tracker import CellTracker, MasterTracker
 from .tracker_benchmark import TrackBenchmarker
 from .utils import TrainValProperty
 from .errors import BadProcess, BadParam
@@ -31,11 +31,15 @@ class TrackTrainer(CellTracker):
                  px_size=None):
 
         if all_feats2use is None:
-            feats2use, xtrafeats = (None, None)
+            feats2use, extra_feats = (None, None)
         else:
-            feats2use, xtrafeats = all_feats2use
+            feats2use, extra_feats = all_feats2use
+
+        if px_size is None:
+            px_size = 0.263
+        self.px_size = px_size
             
-        super().__init__(feats2use = feats2use, xtrafeats = xtrafeats,
+        super().__init__(feats2use = feats2use, extra_feats = extra_feats,
                          px_size=px_size)
 
         self.indices = ['experimentID', 'position', 'trap', 'tp']
@@ -184,7 +188,7 @@ class TrackTrainer(CellTracker):
         group_sizes = group_props.size().to_list()
 
         self.out_feats = subdf.columns.to_list()
-        self.nfeats = len(self.out_feats) + len(self.xtrafeats)
+        self.nfeats = len(self.out_feats) + len(self.extra_feats)
         # Array to pour the calculations and get cellxcell feature vectors
         array_3d = np.empty(*[group_sizes + [self.nfeats]])
 
@@ -201,7 +205,7 @@ class TrackTrainer(CellTracker):
             
 
         # Calculate extra features
-        for i, feat in enumerate(self.xtrafeats, len(self.out_feats)):
+        for i, feat in enumerate(self.extra_feats, len(self.out_feats)):
             if feat == 'distance':
                 array_3d[..., i] = np.sqrt(
                     array_3d[..., self.out_feats.index('centroid-0')]**2 +
@@ -261,7 +265,7 @@ class TrackTrainer(CellTracker):
         return self._benchmarker
 
 
-class BudTrainer(CellTracker):
+class BudTrainer(MasterTracker):
     '''
     :props_file: File where generated property table will be saved
     :kwargs: Additional arguments passed onto the parent Tracker; `px_size` is

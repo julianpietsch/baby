@@ -19,7 +19,7 @@ class TrackBenchmarker:
         self.cindices =  self.indices + ['cellLabels']
         self.meta = meta
         self.meta['cont_list_index'] = [i for i in range(len(self.meta))]
-        self.tracker = CellTracker(ctrack_model = model)
+        self.tracker = CellTracker(model = model)
         self.nstepsback = self.tracker.nstepsback
         self.traps_loc
         # self.test = self.predict_set(*self.traps_loc[0])
