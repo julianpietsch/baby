@@ -327,18 +327,30 @@ class BudTrainer(Tracker):
         p_list = []
         for is_val, seg_example in data:
             if len(seg_example.target) < 2:
+                # Skip if no pairs are present
                 continue
             mb_stats = self.calc_mother_bud_stats(seg_example.pred[i_budneck],
                     seg_example.pred[i_bud], seg_example.target)
             p = pd.DataFrame(mb_stats, columns=self.ba_feat_names)
             p['validation'] = is_val
+
+            # "cellLabels" specifies the label for each mask
             cell_labels = seg_example.info.get('cellLabels', []) or []
             if type(cell_labels) is int:
                 cell_labels = [cell_labels]
+            # "buds" specifies the label of the bud for each mask
             buds = seg_example.info.get('buds', []) or []
             if type(buds) is int:
                 buds = [buds]
-            p['is_mb_pair'] = get_ground_truth(cell_labels, buds).flatten()
+
+            # Build a ground truth matrix identifying mother-bud pairs
+            ncells = len(seg_example.target)
+            is_mb_pair = np.zeros((ncells, ncells), dtype=bool)
+            bud_inds = [cell_labels.index(b) for b in buds if b > 0]
+            is_mb_pair[np.flatnonzero(buds), bud_inds] = True
+            p['is_mb_pair'] = is_mb_pair.flatten()
+
+            # Ignore any rows containing NaNs
             nanrows = np.isnan(mb_stats).any(axis=1)
             if (p['is_mb_pair'] & nanrows).any():
                 id_keys = ('experimentID', 'position', 'trap', 'tp')

@@ -7,6 +7,8 @@ from skimage.measure import regionprops_table
 from skimage.draw import polygon
 import os
 
+from .errors import BadOutput
+
 models_path = os.path.join(os.path.dirname(__file__), 'models')
 
 class Tracker:
@@ -465,7 +467,9 @@ class Tracker:
                 p_budneck, p_bud, masks, feats=None)
 
         good_stats = ~np.isnan(mb_stats).any(axis=1)
-        ba_probs = np.nan * np.ones(ncells**2)
+        # Assume probability of bud assignment for any rows that are NaN will
+        # be zero
+        ba_probs = np.zeros(ncells**2)
         if good_stats.any():
             ba_probs[good_stats] = self.ba_model.predict_proba(
                 mb_stats[good_stats, :])[:, 1]
@@ -576,15 +580,15 @@ class Tracker:
         ba_cum = state.get('ba_cum', init['ba_cum'])
 
         # Update lineage state variables
-        if len(masks) > 0 and new_lbls:
+        if len(masks) > 0 and len(new_lbls) > 0:
             ba_probs = self.predict_mother_bud(p_budneck, p_bud, masks,
                                                   feats)
             lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
             lifetime[lblinds] += 1
             p_is_mother[lblinds] = np.maximum(p_is_mother[lblinds],
-                                              np.nansum(ba_probs, 1))
+                                              ba_probs.sum(1))
             p_was_bud[lblinds] = np.maximum(p_was_bud[lblinds],
-                                            np.nanmax(ba_probs, 0))
+                                            ba_probs.max(0))
             ba_cum[np.ix_(
                 lblinds,
                 lblinds)] += ba_probs * (1 - p_is_mother[lblinds][None, ])
@@ -617,6 +621,9 @@ class Tracker:
                 ma[~isbud] = 0  # 0 indicates no assignment (lbls indexed from 1)
             else:
                 ma = np.zeros(0)
+
+            if np.any(ma == np.arange(1, len(ma) + 1)):
+                raise BadOutput('Bud has been assigned as mother to itself')
 
             output['mother_assign'] = ma.tolist()
 

@@ -43,23 +43,28 @@ def evolve60env(modelsets, image_dir):
     segmenter = MorphSegGrouped(flattener, return_masks=True, **params)
 
     # Load CNN outputs
-    impairs = load_paired_images(image_dir.glob('evolve_testF_tp*.png'),
+    impairs = load_paired_images(image_dir.glob('evolve_test[FG]_tp*.png'),
                                  typeA='preds')
     assert len(impairs) > 0
-    tpkeys = sorted(impairs.keys())
+    tpkeys = (sorted([k for k in impairs.keys() if
+        k.startswith('evolve_testF')]),
+        sorted([k for k in impairs.keys() if
+            k.startswith('evolve_testG')]))
 
     # Segment and add to list of input data
-    trkin = []
-    for k in tpkeys:
-        impair = impairs[k]
-        cnn_out = raw_norm(*impair['preds']).transpose((2, 0, 1))
-        seg_output = segmenter.segment(cnn_out, refine_outlines=True)
-        _0xy = (0,) + cnn_out.shape[1:3]
-        if len(seg_output.masks) > 0:
-            masks = np.stack(seg_output.masks)
-        else:
-            masks = np.zeros(_0xy, dtype='bool')
-        trkin.append(TrackerEnv(masks, cnn_out[i_budneck], cnn_out[i_bud]))
+    trks = ([], [])
+    for i in range(len(tpkeys)):
+        for k in tpkeys[i]:
+            impair = impairs[k]
+            cnn_out = raw_norm(*impair['preds']).transpose((2, 0, 1))
+            seg_output = segmenter.segment(cnn_out, refine_outlines=True)
+            _0xy = (0,) + cnn_out.shape[1:3]
+            if len(seg_output.masks) > 0:
+                masks = np.stack(seg_output.masks)
+            else:
+                masks = np.zeros(_0xy, dtype='bool')
+            trks[i].append(TrackerEnv(masks, cnn_out[i_budneck], cnn_out[i_bud]))
+    trkF, trkG = trks
 
     # Load the celltrack and budassign models
     ctm_file = resolve_file(mset['celltrack_model_file'])
@@ -72,11 +77,11 @@ def evolve60env(modelsets, image_dir):
     # Set up a tracker for this model set
     tracker = Tracker(ctrack_model=ctm, ba_model=bam)
 
-    return tracker, trkin
+    return tracker, trkF, trkG
 
 
 def test_bad_track(evolve60env):
-    tracker, input_args = evolve60env
+    tracker, input_args, _ = evolve60env
     nstepsback = 2
     state = {}
     for masks, p_budneck, p_bud in input_args:
@@ -95,7 +100,7 @@ def test_bad_track(evolve60env):
                 [lbl for lbl_set in prev_lbls for lbl in lbl_set])
             print(counts)
             lbls_order = list(counts.keys())
-            max_prob = np.zeros((len(lbls_order), len(features)), dtype=float)
+            max_prob = np.zeros((len(lbls_order), 1, len(features)), dtype=float)
             new_lbls = tracker.assign_lbls(max_prob, lbls_order)
             assert len(new_lbls) == ncells
         else:
@@ -116,3 +121,33 @@ def test_bad_track(evolve60env):
         tracking = tracker.step_trackers(masks, p_budneck, p_bud, state=state)
         assert len(tracking['cell_label']) == ncells
         state = tracking['state']
+
+
+def test_bud_assignment(evolve60env):
+    tracker, _, trkG = evolve60env
+    mother_lbl = None
+    bud_lbl = None
+    state = {}
+    for tp, (masks, p_budneck, p_bud) in enumerate(trkG):
+        assert len(masks) == 2
+
+        tracking = tracker.step_trackers(masks, p_budneck, p_bud, state=state,
+                assign_mothers=True, return_baprobs=True)
+        state = tracking['state']
+        print(tracking['p_bud_assign'])
+
+        assert len(tracking['cell_label']) == 2
+        mother_ind = masks.sum((1,2)).argmax()
+        bud_ind = 1 - mother_ind
+        if not mother_lbl:
+            mother_lbl = tracking['cell_label'][mother_ind]
+        if not bud_lbl:
+            bud_lbl = tracking['cell_label'][bud_ind]
+
+        print(tracking['mother_assign'])
+
+        if tp < 2:
+            assert mother_lbl not in tracking['mother_assign']
+        else:
+            assert mother_lbl in tracking['mother_assign']
+            assert tracking['mother_assign'][bud_lbl-1]
