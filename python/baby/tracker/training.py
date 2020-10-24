@@ -7,11 +7,11 @@ from itertools import repeat, chain
 from warnings import warn
 from tqdm import trange
 
-from .io import load_tiled_image
-from .tracker import CellTracker, BudTracker
-from .tracker_benchmark import TrackBenchmarker
-from .utils import TrainValProperty
-from .errors import BadProcess, BadParam
+from baby.io import load_tiled_image
+from baby.tracker.core import CellTracker, BudTracker
+from baby.tracker.benchmark import CellBenchmarker
+from baby.utils import TrainValProperty
+from baby.errors import BadProcess, BadParam
 
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops_table
@@ -20,7 +20,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn import metrics
 
-class TrackTrainer(CellTracker):
+class CellTrainer(CellTracker):
     '''
     :meta: Metadata Dataframe
     :traps: Dataframe with cleaned trap locations and their continuous tps
@@ -261,8 +261,9 @@ class TrackTrainer(CellTracker):
         '''
         if not hasattr(self, '_benchmarker'):
             val_meta = self.meta.loc[self.meta['train_val'] == 'validation']
-            self._benchmarker = TrackBenchmarker(val_meta, self.rf.best_estimator_)
+            self._benchmarker = CellBenchmarker(val_meta, self.rf.best_estimator_)
         return self._benchmarker
+
 
 
 class BudTrainer(BudTracker):
@@ -410,8 +411,7 @@ class BudTrainer(BudTracker):
         f = open(filename, 'wb')
         pickle.dump(self._rf.best_estimator_, f)
 
-def get_distance(point1, point2):
-    return(np.sqrt(np.sum(np.array([point1[i]-point2[i] for i in [0,1]])**2)))
+
 
 def get_ground_truth(cell_labels, buds):
     ncells = len(cell_labels)
@@ -421,4 +421,3 @@ def get_ground_truth(cell_labels, buds):
             truth[cell_labels.index(bud), i] = True
 
     return truth
-

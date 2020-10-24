@@ -36,7 +36,7 @@ from .losses import bce_dice_loss, dice_coeff
 from . import models
 from .segmentation import (binary_edge, mask_iou, squareconn,
                            morph_radial_thresh_fit, draw_radial)
-from .track_trainer import TrackTrainer, BudTrainer
+from baby.tracker.training import CellTrainer, BudTrainer
 # from bud_test import BudTrainer
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
@@ -535,13 +535,13 @@ class BabyTrainer(object):
     @property
     def track_trainer(self):
         if not hasattr(self, '_track_trainer'):
-            self._track_trainer = TrackTrainer(self.data._metadata,
+            self._track_trainer = CellTrainer(self.data._metadata,
                                                data=self.data)
         return self._track_trainer
 
     @track_trainer.setter
     def track_trainer(self, all_feats2use=None):
-        self._track_trainer = TrackTrainer(self.data._metadata,
+        self._track_trainer = CellTrainer(self.data._metadata,
                                            data=self.data,
                                            all_feats2use=all_feats2use)
 

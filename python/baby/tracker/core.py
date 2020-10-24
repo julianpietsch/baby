@@ -11,9 +11,7 @@ from skimage.measure import regionprops_table
 from skimage.draw import polygon
 from scipy.optimize import linear_sum_assignment
 
-# models_path = os.path.join(os.path.dirname(__file__), 'models')
-models_path = os.path.join(
-    '/home/alan/Documents/sync_docs/libs/baby/python/baby/models')
+models_path = os.path.join(os.path.dirname(__file__), '../models')
 
 class FeatureCalculator:
     '''

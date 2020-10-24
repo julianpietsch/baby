@@ -15,7 +15,7 @@ from tensorflow.keras import backend as K
 
 from .losses import bce_dice_loss, dice_loss, dice_coeff
 from .segmentation import morph_seg_grouped
-from .tracker import CellTracker
+from .tracker.core import CellTracker
 from .preprocessing import robust_norm, SegmentationFlattening
 from .utils import batch_iterator, split_batch_pred
 from .morph_thresh_seg import MorphSegGrouped, SegmentationOutput

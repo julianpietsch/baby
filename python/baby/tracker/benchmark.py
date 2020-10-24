@@ -2,13 +2,13 @@ import numpy as np
 import pickle
 import pandas as pd
 
-from baby.tracker import CellTracker
+from baby.tracker.core import CellTracker
 from baby.io import load_tiled_image
 
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops_table
 
-class TrackBenchmarker:
+class CellBenchmarker: #TODO Simplify this by inheritance
     '''
     Takes a metadata dataframe and a model and estimates the prediction in a trap-wise manner.
 

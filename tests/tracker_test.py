@@ -9,7 +9,7 @@ from baby.brain import default_params
 from baby.io import load_paired_images
 from baby.morph_thresh_seg import MorphSegGrouped
 from baby.preprocessing import raw_norm, SegmentationFlattening
-from baby.tracker import CellTracker
+from baby.tracker.core import CellTracker
 
 MODEL_DIR = baby.model_path()
 
