@@ -8,7 +8,7 @@ from warnings import warn
 from tqdm import trange
 
 from .io import load_tiled_image
-from .tracker import CellTracker, MasterTracker
+from .tracker import CellTracker, BudTracker
 from .tracker_benchmark import TrackBenchmarker
 from .utils import TrainValProperty
 from .errors import BadProcess, BadParam
@@ -265,7 +265,7 @@ class TrackTrainer(CellTracker):
         return self._benchmarker
 
 
-class BudTrainer(MasterTracker):
+class BudTrainer(BudTracker):
     '''
     :props_file: File where generated property table will be saved
     :kwargs: Additional arguments passed onto the parent Tracker; `px_size` is
@@ -274,7 +274,7 @@ class BudTrainer(MasterTracker):
 
     def __init__(self, props_file=None, **kwargs):
         super().__init__(**kwargs)
-        # NB: we inherit self.ba_feat_names from Tracker class
+        # NB: we inherit self.feats2use from CellTracker class
         self.props_file = props_file
 
     @property
@@ -299,7 +299,7 @@ class BudTrainer(MasterTracker):
     @props.setter
     def props(self, props):
         props = pd.DataFrame(props)
-        required_cols = self.ba_feat_names + ('is_mb_pair', 'validation')
+        required_cols = self.feats2use + ('is_mb_pair', 'validation')
         if not all(c in props for c in required_cols):
             raise BadParam(
                 '"props" does not have all required columns: {}'.format(
@@ -334,7 +334,7 @@ class BudTrainer(MasterTracker):
                 continue
             mb_stats = self.calc_mother_bud_stats(seg_example.pred[i_budneck],
                     seg_example.pred[i_bud], seg_example.target)
-            p = pd.DataFrame(mb_stats, columns=self.ba_feat_names)
+            p = pd.DataFrame(mb_stats, columns=self.feats2use)
             p['validation'] = is_val
             cell_labels = seg_example.info.get('cellLabels', []) or []
             if type(cell_labels) is int:
@@ -361,7 +361,7 @@ class BudTrainer(MasterTracker):
         self.props = props # also saves
 
     def explore_hyperparams(self):
-        data = self.props.loc[~self.props['validation'], self.ba_feat_names]
+        data = self.props.loc[~self.props['validation'], self.feats2use]
         truth = self.props.loc[~self.props['validation'], 'is_mb_pair']
 
         rf = RandomForestClassifier(n_estimators=15,
@@ -396,7 +396,7 @@ class BudTrainer(MasterTracker):
 
         print('\nValidation performance:')
         best_rf = self._rf.best_estimator_
-        valdata = self.props.loc[self.props['validation'], self.ba_feat_names]
+        valdata = self.props.loc[self.props['validation'], self.feats2use]
         valtruth = self.props.loc[self.props['validation'], 'is_mb_pair']
         preds = best_rf.predict(valdata)
         print('Accuracy:', metrics.accuracy_score(valtruth, preds))

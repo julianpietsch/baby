@@ -324,10 +324,16 @@ class CellTracker(FeatureCalculator):
 
 class BudTracker(FeatureCalculator):
     def __init__(self,
-                 feats2use,
+                 feats2use=None,
                  rf_model=None,
                  **kwargs):
+        if feats2use is None:
+            feats2use, _ = switch_case_nfeats(7)
         super().__init__(feats2use, **kwargs)
+
+        self.a_ind = self.outfeats.index('area')
+        self.ma_ind = self.outfeats.index('minor_axis_length')
+
 
     ### Assign mother-
     def calc_mother_bud_stats(self, p_budneck, p_bud, masks, feats=None):
@@ -347,9 +353,9 @@ class BudTracker(FeatureCalculator):
 
         returns
 
-        :n2darray: 2d ndarray (ncells x ncells, n_ba_feat_names) specifying,
+        :n2darray: 2d ndarray (ncells x ncells, n_feats) specifying,
             for each pair of cells in the masks array, the features used for
-            mother-bud pair prediction (as per 'ba_feat_names')
+            mother-bud pair prediction (as per 'feats2use')
         '''
 
         if feats is None:
@@ -497,7 +503,7 @@ class MasterTracker(FeatureCalculator):
 
         if btrack_args is None:
             btrack_args = {'feats2use' : self.feats2use}
-        # self.bud_tracker = BudTracker(**btrack_args)
+        self.bud_tracker = BudTracker(**btrack_args)
 
     def step_trackers(self,
                       masks,
