@@ -118,18 +118,27 @@ class CellTracker(FeatureCalculator):
     :thresh: float Cut-off value to assume a cell is not new
     '''
     def __init__(self,
+                 feats2use=None,
+                 extra_feats=None,
                  model=None,
                  thresh=None,
                  nstepsback=None,
                  red_fun=None,
                  **kwargs):
 
-        if model is None:
-            model = self.load_model( models_path,
-                                     'ctrack_randomforest_20201012.pkl')
-        self.model = model
+        if extra_feats is None:
+            extra_feats = ()
 
-        feats2use, self.extrafeats = self.get_feats2use()
+        if feats2use is None:
+            if model is None:
+                model = self.load_model( models_path,
+                                         'ctrack_randomforest_20201012.pkl')
+            self.model = model
+
+            feats2use, extra_feats = self.get_feats2use()
+            
+        self.extra_feats = extra_feats
+
         super().__init__(feats2use, **kwargs)
 
         if nstepsback is None:
@@ -329,7 +338,7 @@ class BudTracker(FeatureCalculator):
                 model = pickle.load(file_to_load)
         self.model = model
 
-        feats2use, _ = switch_case_nfeats(7)
+        feats2use = ['area', 'minor_axis_length']
         super().__init__(feats2use, **kwargs)
 
         self.a_ind = self.outfeats.index('area')

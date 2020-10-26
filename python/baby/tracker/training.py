@@ -31,14 +31,13 @@ class CellTrainer(CellTracker):
                  px_size=None):
 
         if all_feats2use is None:
-            feats2use, extra_feats = (None, None)
+            feats2use = ('centroid', 'area', 'minor_axis_length',
+                         'major_axis_length', 'convex_area')
+            extra_feats = ('distance',) 
+
         else:
             feats2use, extra_feats = all_feats2use
 
-        if px_size is None:
-            px_size = 0.263
-        self.px_size = px_size
-            
         super().__init__(feats2use = feats2use, extra_feats = extra_feats,
                          px_size=px_size)
 
