@@ -121,12 +121,12 @@ class CellTracker(FeatureCalculator):
     :rf_model: sklearn.ensemble.RandomForestClassifier object
     :ba_model: sklearn.ensemble.RandomForestClassifier object.
     :nstepsback: int Number of timepoints to go back
-    :ctrack_thresh: float Cut-off value to assume a cell is not new
+    :thresh: float Cut-off value to assume a cell is not new
     '''
     def __init__(self,
                  feats2use=None,
                  rf_model=None,
-                 ctrack_thresh=None,
+                 thresh=None,
                  nstepsback=None,
                  red_fun=None,
                  **kwargs):
@@ -141,12 +141,12 @@ class CellTracker(FeatureCalculator):
 
 
         if nstepsback is None:
-            self.nstepsback = 5
+            nstepsback = 3
         self.nstepsback = nstepsback
 
-        if ctrack_thresh is None:
-            ctrack_thresh = 0.7
-        self.ctrack_thresh = ctrack_thresh
+        if thresh is None:
+            thresh = 0.7
+        self.thresh = thresh
 
         if red_fun is None:
             red_fun = np.nanmax
@@ -189,7 +189,7 @@ class CellTracker(FeatureCalculator):
 
         return n3darray
 
-    def assign_lbls(self, pred_3darray, prev_lbls, alg='orig', red_fun=None):
+    def assign_lbls(self, pred_3darray, prev_lbls, red_fun=None):
         '''Assign labels using a prediction matrix of nxmxl where n is the number
         of cells in the previous image, m the number of steps back considered
         and l in the new image. It assigns the
@@ -199,8 +199,6 @@ class CellTracker(FeatureCalculator):
 
         :pred_3darray: Probability n x m x l array obtained as an output of rforest
         :prev_labels: List of cell labels for previous timepoint to be compared.
-        :alg: str of the algorithm to use: 'orig' for basic search, 'jv'
-            for Jonker-Volgenant
         :red_fun: Function used to collapse the previous timepoints into one.
             If none provided it uses maximum and ignores np.nans.
 
@@ -219,7 +217,7 @@ class CellTracker(FeatureCalculator):
             # assign available hits
             row_ids, col_ids = linear_sum_assignment(-pred_matrix)
             for i,j in zip(row_ids, col_ids):
-                if  pred_matrix[i, j] > self.ctrack_thresh:
+                if  pred_matrix[i, j] > self.thresh:
                     new_lbls[j] = prev_lbls[i]
 
         return new_lbls

@@ -14,13 +14,14 @@ class CellBenchmarker: #TODO Simplify this by inheritance
 
     This class can also produce confusion matrices for a given Tracker and validation dataset.
      '''
-    def __init__(self, meta, model):
+    def __init__(self, meta, model, nstepsback=None):
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
         self.meta = meta.copy()
         self.meta['cont_list_index'] = *range(len(self.meta)),
         self.tracker = CellTracker(model = model)
-        self.nstepsback = self.tracker.nstepsback
+        if nstepsback is None:
+            self.nstepsback = self.tracker.nstepsback
         self.traps_loc
         # self.test = self.predict_set(*self.traps_loc[0])
         # self.calculate_errsum()
