@@ -7,11 +7,11 @@ from itertools import repeat, chain
 from warnings import warn
 from tqdm import trange
 
-from .io import load_tiled_image
-from .tracker import Tracker
-from .tracker_benchmark import TrackBenchmarker
-from .utils import TrainValProperty
-from .errors import BadProcess, BadParam
+from baby.io import load_tiled_image
+from baby.utils import TrainValProperty
+from baby.errors import BadProcess, BadParam
+from .core import CellTracker, BudTracker
+from .benchmark import CellBenchmarker
 
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops_table
@@ -20,7 +20,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn import metrics
 
-class TrackTrainer(Tracker):
+class CellTrainer(CellTracker):
     '''
     :meta: Metadata Dataframe
     :traps: Dataframe with cleaned trap locations and their continuous tps
@@ -31,11 +31,15 @@ class TrackTrainer(Tracker):
                  px_size=None):
 
         if all_feats2use is None:
-            feats2use, xtrafeats = (None, None)
+            feats2use, extra_feats = (None, None)
         else:
-            feats2use, xtrafeats = all_feats2use
+            feats2use, extra_feats = all_feats2use
+
+        if px_size is None:
+            px_size = 0.263
+        self.px_size = px_size
             
-        super().__init__(feats2use = feats2use, xtrafeats = xtrafeats,
+        super().__init__(feats2use = feats2use, extra_feats = extra_feats,
                          px_size=px_size)
 
         self.indices = ['experimentID', 'position', 'trap', 'tp']
@@ -184,7 +188,7 @@ class TrackTrainer(Tracker):
         group_sizes = group_props.size().to_list()
 
         self.out_feats = subdf.columns.to_list()
-        self.nfeats = len(self.out_feats) + len(self.xtrafeats)
+        self.nfeats = len(self.out_feats) + len(self.extra_feats)
         # Array to pour the calculations and get cellxcell feature vectors
         array_3d = np.empty(*[group_sizes + [self.nfeats]])
 
@@ -201,7 +205,7 @@ class TrackTrainer(Tracker):
             
 
         # Calculate extra features
-        for i, feat in enumerate(self.xtrafeats, len(self.out_feats)):
+        for i, feat in enumerate(self.extra_feats, len(self.out_feats)):
             if feat == 'distance':
                 array_3d[..., i] = np.sqrt(
                     array_3d[..., self.out_feats.index('centroid-0')]**2 +
@@ -257,11 +261,12 @@ class TrackTrainer(Tracker):
         '''
         if not hasattr(self, '_benchmarker'):
             val_meta = self.meta.loc[self.meta['train_val'] == 'validation']
-            self._benchmarker = TrackBenchmarker(val_meta, self.rf.best_estimator_)
+            self._benchmarker = CellBenchmarker(val_meta, self.rf.best_estimator_)
         return self._benchmarker
 
 
-class BudTrainer(Tracker):
+
+class BudTrainer(BudTracker):
     '''
     :props_file: File where generated property table will be saved
     :kwargs: Additional arguments passed onto the parent Tracker; `px_size` is
@@ -270,7 +275,7 @@ class BudTrainer(Tracker):
 
     def __init__(self, props_file=None, **kwargs):
         super().__init__(**kwargs)
-        # NB: we inherit self.ba_feat_names from Tracker class
+        # NB: we inherit self.feats2use from CellTracker class
         self.props_file = props_file
 
     @property
@@ -295,7 +300,7 @@ class BudTrainer(Tracker):
     @props.setter
     def props(self, props):
         props = pd.DataFrame(props)
-        required_cols = self.ba_feat_names + ('is_mb_pair', 'validation')
+        required_cols = self.feats2use + ('is_mb_pair', 'validation')
         if not all(c in props for c in required_cols):
             raise BadParam(
                 '"props" does not have all required columns: {}'.format(
@@ -331,7 +336,7 @@ class BudTrainer(Tracker):
                 continue
             mb_stats = self.calc_mother_bud_stats(seg_example.pred[i_budneck],
                     seg_example.pred[i_bud], seg_example.target)
-            p = pd.DataFrame(mb_stats, columns=self.ba_feat_names)
+            p = pd.DataFrame(mb_stats, columns=self.feats2use)
             p['validation'] = is_val
 
             # "cellLabels" specifies the label for each mask
@@ -369,7 +374,7 @@ class BudTrainer(Tracker):
         self.props = props # also saves
 
     def explore_hyperparams(self):
-        data = self.props.loc[~self.props['validation'], self.ba_feat_names]
+        data = self.props.loc[~self.props['validation'], self.feats2use]
         truth = self.props.loc[~self.props['validation'], 'is_mb_pair']
 
         rf = RandomForestClassifier(n_estimators=15,
@@ -404,7 +409,7 @@ class BudTrainer(Tracker):
 
         print('\nValidation performance:')
         best_rf = self._rf.best_estimator_
-        valdata = self.props.loc[self.props['validation'], self.ba_feat_names]
+        valdata = self.props.loc[self.props['validation'], self.feats2use]
         valtruth = self.props.loc[self.props['validation'], 'is_mb_pair']
         preds = best_rf.predict(valdata)
         print('Accuracy:', metrics.accuracy_score(valtruth, preds))
@@ -418,8 +423,7 @@ class BudTrainer(Tracker):
         f = open(filename, 'wb')
         pickle.dump(self._rf.best_estimator_, f)
 
-def get_distance(point1, point2):
-    return(np.sqrt(np.sum(np.array([point1[i]-point2[i] for i in [0,1]])**2)))
+
 
 def get_ground_truth(cell_labels, buds):
     ncells = len(cell_labels)
@@ -429,4 +433,3 @@ def get_ground_truth(cell_labels, buds):
             truth[cell_labels.index(bud), i] = True
 
     return truth
-

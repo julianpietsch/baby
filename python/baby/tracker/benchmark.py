@@ -2,27 +2,26 @@ import numpy as np
 import pickle
 import pandas as pd
 
-from baby.tracker import Tracker
+from baby.tracker.core import CellTracker
 from baby.io import load_tiled_image
-# from .tracker import Tracker
-# from .io import load_tiled_image
 
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops_table
 
-class TrackBenchmarker:
+class CellBenchmarker: #TODO Simplify this by inheritance
     '''
     Takes a metadata dataframe and a model and estimates the prediction in a trap-wise manner.
 
     This class can also produce confusion matrices for a given Tracker and validation dataset.
      '''
-    def __init__(self, meta, model):
+    def __init__(self, meta, model, nstepsback=None):
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
-        self.meta = meta
-        self.meta['cont_list_index'] = [i for i in range(len(self.meta))]
-        self.tracker = Tracker(ctrack_model = model)
-        self.nstepsback = self.tracker.nstepsback
+        self.meta = meta.copy()
+        self.meta['cont_list_index'] = *range(len(self.meta)),
+        self.tracker = CellTracker(model = model)
+        if nstepsback is None:
+            self.nstepsback = self.tracker.nstepsback
         self.traps_loc
         # self.test = self.predict_set(*self.traps_loc[0])
         # self.calculate_errsum()
@@ -101,7 +100,7 @@ class TrackBenchmarker:
         print("Testing trap {}, {}, {}".format(exp,pos,trap))
         new_cids = self.predict_set(exp, pos, trap)
 
-        test_df = self.meta.loc(axis=0)[(exp, pos, trap)]
+        test_df = self.meta.loc(axis=0)[(exp, pos, trap)].copy()
         test_df['pred_cellLabels'] = new_cids
 
         orig = test_df['cellLabels'].values

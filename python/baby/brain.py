@@ -15,7 +15,7 @@ from tensorflow.keras import backend as K
 
 from .losses import bce_dice_loss, dice_loss, dice_coeff
 from .segmentation import morph_seg_grouped
-from .tracker import Tracker
+from .tracker.core import MasterTracker
 from .preprocessing import robust_norm, SegmentationFlattening
 from .utils import batch_iterator, split_batch_pred
 from .morph_thresh_seg import MorphSegGrouped, SegmentationOutput
@@ -158,9 +158,10 @@ class BabyBrain(object):
             celltrack_model = pickle.load(f)
         with open(budassign_model_file, 'rb') as f:
             budassign_model = pickle.load(f)
-        self.tracker = Tracker(ctrack_model=celltrack_model,
-                               ba_model=budassign_model,
-                               px_size=pixel_size)
+        self.tracker = MasterTracker(
+            ctrack_args={'rf_model': celltrack_model},
+            btrack_args={'rf_model': budassign_model},
+            px_size=pixel_size)
 
         # Run prediction on mock image to load model for prediction
         _, x, y, z = self.morph_model.input.shape
@@ -413,7 +414,7 @@ class BabyBrain(object):
                 if (self.error_dump_dir is not None and
                         isdir(self.error_dump_dir)):
                     fprefix = join(self.error_dump_dir, err_id)
-                    masks = seg.get('masks', np.zeros((0,0,0)))
+                    masks = seg.get('masks', np.zeros((0, 0, 0)))
                     if masks.size > 0:
                         save_tiled_image(
                             seg['masks'].transpose((2, 0, 1)).astype('uint8'),

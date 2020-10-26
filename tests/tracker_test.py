@@ -9,7 +9,7 @@ from baby.brain import default_params
 from baby.io import load_paired_images
 from baby.morph_thresh_seg import MorphSegGrouped
 from baby.preprocessing import raw_norm, SegmentationFlattening
-from baby.tracker import Tracker
+from baby.tracker.core import MasterTracker
 
 MODEL_DIR = baby.model_path()
 
@@ -46,10 +46,9 @@ def evolve60env(modelsets, image_dir):
     impairs = load_paired_images(image_dir.glob('evolve_test[FG]_tp*.png'),
                                  typeA='preds')
     assert len(impairs) > 0
-    tpkeys = (sorted([k for k in impairs.keys() if
-        k.startswith('evolve_testF')]),
-        sorted([k for k in impairs.keys() if
-            k.startswith('evolve_testG')]))
+    tpkeys = (sorted([
+        k for k in impairs.keys() if k.startswith('evolve_testF')
+    ]), sorted([k for k in impairs.keys() if k.startswith('evolve_testG')]))
 
     # Segment and add to list of input data
     trks = ([], [])
@@ -63,7 +62,8 @@ def evolve60env(modelsets, image_dir):
                 masks = np.stack(seg_output.masks)
             else:
                 masks = np.zeros(_0xy, dtype='bool')
-            trks[i].append(TrackerEnv(masks, cnn_out[i_budneck], cnn_out[i_bud]))
+            trks[i].append(
+                TrackerEnv(masks, cnn_out[i_budneck], cnn_out[i_bud]))
     trkF, trkG = trks
 
     # Load the celltrack and budassign models
@@ -75,7 +75,9 @@ def evolve60env(modelsets, image_dir):
         bam = pickle.load(f)
 
     # Set up a tracker for this model set
-    tracker = Tracker(ctrack_model=ctm, ba_model=bam)
+    tracker = MasterTracker(ctrack_args={'rf_model': ctm},
+                            btrack_args={'rf_model': bam},
+                            px_size=0.263)
 
     return tracker, trkF, trkG
 
@@ -100,8 +102,9 @@ def test_bad_track(evolve60env):
                 [lbl for lbl_set in prev_lbls for lbl in lbl_set])
             print(counts)
             lbls_order = list(counts.keys())
-            max_prob = np.zeros((len(lbls_order), 1, len(features)), dtype=float)
-            new_lbls = tracker.assign_lbls(max_prob, lbls_order)
+            max_prob = np.zeros((len(lbls_order), 1, len(features)),
+                                dtype=float)
+            new_lbls = tracker.cell_tracker.assign_lbls(max_prob, lbls_order)
             assert len(new_lbls) == ncells
         else:
             new_max = len(features)
@@ -109,7 +112,7 @@ def test_bad_track(evolve60env):
             assert len(new_lbls) == ncells
 
         # Check get_new_lbls method
-        new_lbls, _, _ = tracker.get_new_lbls(None,
+        new_lbls, _, _ = tracker.cell_tracker.get_new_lbls(None,
                                               prev_lbls,
                                               prev_feats,
                                               state.get('max_lbl', 0),
@@ -131,13 +134,17 @@ def test_bud_assignment(evolve60env):
     for tp, (masks, p_budneck, p_bud) in enumerate(trkG):
         assert len(masks) == 2
 
-        tracking = tracker.step_trackers(masks, p_budneck, p_bud, state=state,
-                assign_mothers=True, return_baprobs=True)
+        tracking = tracker.step_trackers(masks,
+                                         p_budneck,
+                                         p_bud,
+                                         state=state,
+                                         assign_mothers=True,
+                                         return_baprobs=True)
         state = tracking['state']
         print(tracking['p_bud_assign'])
 
         assert len(tracking['cell_label']) == 2
-        mother_ind = masks.sum((1,2)).argmax()
+        mother_ind = masks.sum((1, 2)).argmax()
         bud_ind = 1 - mother_ind
         if not mother_lbl:
             mother_lbl = tracking['cell_label'][mother_ind]
@@ -150,4 +157,4 @@ def test_bud_assignment(evolve60env):
             assert mother_lbl not in tracking['mother_assign']
         else:
             assert mother_lbl in tracking['mother_assign']
-            assert tracking['mother_assign'][bud_lbl-1]
+            assert tracking['mother_assign'][bud_lbl - 1]

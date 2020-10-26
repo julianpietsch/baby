@@ -1,84 +1,39 @@
-''' Tracker class to perform cell tracking inside baby.
+#!/usr/bin/env python
+
 '''
+TrackerCoordinator class to coordinate cell tracking and bud assignment.
+'''
+import os
 from collections import Counter
 import pickle
 import numpy as np
-from skimage.measure import regionprops_table 
+from skimage.measure import regionprops_table
 from skimage.draw import polygon
-import os
+from scipy.optimize import linear_sum_assignment
+from baby.errors import BadOutput
 
-from .errors import BadOutput
+models_path = os.path.join(os.path.dirname(__file__), '../models')
 
-models_path = os.path.join(os.path.dirname(__file__), 'models')
-
-class Tracker:
+class FeatureCalculator:
     '''
-    Class used to manage cell tracking.
-
-    Initialization parameters:
-
-    :ctrack_model: sklearn.ensemble.RandomForestClassifier object
-    :ba_model: sklearn.ensemble.RandomForestClassifier object.
-    :nstepsback: int Number of timepoints to go back
-    :ctrac_thresh: float Cut-off value to assume a cell is not new
-
-    
+    Base class for making use of regionprops-based features.
+    If no features are offered it uses most of them.
     '''
-
-    def __init__(self,
-                 ctrack_model=None,
-                 ba_model=None,
-                 feats2use=None,
-                 xtrafeats=None,
-                 ctrack_thresh=None,
-                 px_size=None,
-                 nstepsback=None,
-                 red_fun=None):
-
-        if ba_model is None:
-            ba_model_file = os.path.join(models_path, 'baby_randomforest_20190906.pkl')
-            with open(ba_model_file, 'rb') as file_to_load:
-                ba_model = pickle.load(file_to_load)
-        self.ba_model = ba_model
-
-        if ctrack_model is None:
-            ctrack_model_file = os.path.join(models_path,
-                                      'ctrack_randomforest_20201012.pkl')
-            with open(ctrack_model_file, 'rb') as file_to_load:
-                ctrack_model = pickle.load(file_to_load)
-        self.ctrack_model = ctrack_model
+    def __init__(self, feats2use=None, extra_feats=None,
+                 px_size=None, model=None):
 
         if feats2use is None:
-            feats2use, xtrafeats = self.get_feats2use()
-        self.feats2use = feats2use
-        self.xtrafeats = xtrafeats
-
-        self.ba_feat_names = ('p_bud', 'size_ratio', 'p_budneck',
-                'budneck_ratio', 'adjacency')
-
-        self.outfeats = list(
-            regionprops_table(np.diag((1, 0)),
-                              properties=self.feats2use).keys())
-        if 'area' in self.feats2use:
-            self.a_ind = self.outfeats.index('area')
-        if 'minor_axis_length' in self.feats2use:
-            self.ma_ind = self.outfeats.index('minor_axis_length')
+            feats2use, extra_feats = switch_case_nfeats(7)
+        self.feats2use, self.extra_feats = (feats2use, extra_feats)
 
         if px_size is None:
             px_size = 0.263
         self.px_size = px_size
 
-        if nstepsback is None:
-            nstepsback = 5
-        self.nstepsback = nstepsback
 
-        if ctrack_thresh is None:
-            ctrack_thresh = 0.7
-        self.ctrack_thresh = ctrack_thresh
-
-        if red_fun is None:
-            red_fun = np.nanmax
-        self.red_fun = red_fun
+        self.outfeats = list(
+            regionprops_table(np.diag((1, 0)),
+                              properties=self.feats2use).keys())
 
     def calc_feats_from_mask(self, masks, feats2use=None, norm=True,
                              px_size=None):
@@ -130,13 +85,13 @@ class Tracker:
         if 'centroid' in self.feats2use:
             feats[self.outfeats.index('centroid-0')] /= px_size
             feats[self.outfeats.index('centroid-1')] /= px_size
-        
+
         if 'area' in self.feats2use:
             feats[self.outfeats.index('area')] /= area
-            
+
         if 'convex_area' in self.feats2use:
             feats[self.outfeats.index('convex_area')] /= area
-            
+
         if 'bbox_area' in self.feats2use:
             feats[self.outfeats.index('bbox_area')] /= area
 
@@ -147,7 +102,56 @@ class Tracker:
             feats[self.outfeats.index('major_axis_length')] /= px_size
 
         return feats
-         
+
+    def get_feats2use(self):
+        '''
+        Return feats to be used from a loaded random forest model rf_model
+        '''
+
+        assert hasattr(self, 'rf_model'), "Random Forest model does not exist"
+
+        model_nfeats = len(self.rf_model.feature_importances_)
+        return(switch_case_nfeats(model_nfeats))
+
+class CellTracker(FeatureCalculator):
+    '''
+    Class used to manage cell tracking.
+
+    Initialization parameters:
+
+    :rf_model: sklearn.ensemble.RandomForestClassifier object
+    :nstepsback: int Number of timepoints to go back
+    :thresh: float Cut-off value to assume a cell is not new
+    '''
+    def __init__(self,
+                 feats2use=None,
+                 rf_model=None,
+                 thresh=None,
+                 nstepsback=None,
+                 red_fun=None,
+                 **kwargs):
+        super().__init__(feats2use, **kwargs)
+
+        if rf_model is None:
+            rf_model_file = os.path.join(models_path,
+                                      'ctrack_randomforest_20201012.pkl')
+            with open(rf_model_file, 'rb') as file_to_load:
+                rf_model = pickle.load(file_to_load)
+        self.rf_model = rf_model
+
+
+        if nstepsback is None:
+            nstepsback = 3
+        self.nstepsback = nstepsback
+
+        if thresh is None:
+            thresh = 0.7
+        self.thresh = thresh
+
+        if red_fun is None:
+            red_fun = np.nanmax
+        self.red_fun = red_fun
+
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
         Calculate feature ndarray using two ndarrays of features.
@@ -170,14 +174,14 @@ class Tracker:
         noutfeats = len(self.outfeats)
 
         n3darray = np.empty((len(prev_feats), nnew,
-                             noutfeats + len(self.xtrafeats)))
+                             noutfeats + len(self.extra_feats)))
 
         for i in range(noutfeats):
             n3darray[..., i] = np.subtract.outer(prev_feats[:, i],
                                                  new_feats[:, i])
 
         # Calculate extra features
-        for i, feat in enumerate(self.xtrafeats, noutfeats):
+        for i, feat in enumerate(self.extra_feats, noutfeats):
             if feat == 'distance':
                 # Assume that centroid-0 and centroid-1 are in the first two cols
                 n3darray[..., i] = np.sqrt(
@@ -185,48 +189,39 @@ class Tracker:
 
         return n3darray
 
-    def predict_from_imgpair(self, img1, img2):
-        ''' Generate predictions for two images. Useful to produce statistics.
-
+    def assign_lbls(self, pred_3darray, prev_lbls, red_fun=None):
+        '''Assign labels using a prediction matrix of nxmxl where n is the number
+        of cells in the previous image, m the number of steps back considered
+        and l in the new image. It assigns the
+        number zero if it doesn't find the cell.
+        ---
         input
 
-        :img1: (nxm) ndarray containing a single cell
-        :img2: (nxm) ndarray containing a single cell
+        :pred_3darray: Probability n x m x l array obtained as an output of rforest
+        :prev_labels: List of cell labels for previous timepoint to be compared.
+        :red_fun: Function used to collapse the previous timepoints into one.
+            If none provided it uses maximum and ignores np.nans.
 
         returns
 
-        tracking prediction matrix resultant of input images' comparison
+        :new_lbls: ndarray of newly assigned labels obtained, new cells as
+        zero.
         '''
-        feats1 = self.calc_feats_from_mask(img1)
-        feats2 = self.calc_feats_from_mask(img2)
+        if red_fun is None:
+            red_fun = self.red_fun
 
-        feats_3darray = self.calc_feat_ndarray(feats1, feats2)
+        new_lbls = np.zeros(pred_3darray.shape[2], dtype=int)
+        pred_matrix = np.apply_along_axis(red_fun, 1, pred_3darray)
 
-        pred_matrix_bool = self.predict_proba_from_ndarray(feats_3darray, boolean=True)
+        if pred_matrix.any():
+            # assign available hits
+            row_ids, col_ids = linear_sum_assignment(-pred_matrix)
+            for i,j in zip(row_ids, col_ids):
+                if  pred_matrix[i, j] > self.thresh:
+                    new_lbls[j] = prev_lbls[i]
 
-        return pred_matrix_bool
+        return new_lbls
 
-    def get_truth_matrix_from_pair(self, pair):
-        '''
-        Requires self.meta
-
-        input
-        :pair: tuple of size 4 (experimentID, position, trap (tp1, tp2))
-
-        returns
-
-       :truth_mat: boolean ndarray of shape (ncells(tp1) x ncells(tp2)
-            links cells in tp1 to cells in tp2
-        '''
-        
-        clabs1 = self.meta.loc[pair[:3] + (pair[3][0], ), 'cellLabels']
-        clabs2 = self.meta.loc[pair[:3] + (pair[3][1], ), 'cellLabels']
-
-        truth_mat = gen_boolmat_from_clabs(clabs1, clabs2)
-
-        return truth_mat
-
-        
     def predict_proba_from_ndarray(self, array_3d, boolean=False):
         '''
 
@@ -245,7 +240,7 @@ class Tracker:
         if array_3d.size == 0:
             return np.array([])
 
-        predict_fun = self.ctrack_model.predict if boolean else self.ctrack_model.predict_proba
+        predict_fun = self.rf_model.predict if boolean else self.rf_model.predict_proba
 
         orig_shape = array_3d.shape[:2]
 
@@ -296,7 +291,7 @@ class Tracker:
                 lbls_order = list(counts.keys())
                 probs = np.full(
                     (len(lbls_order), self.nstepsback, len(new_feats)), np.nan)
-      
+
                 for i, (lblset, prev_feat) in enumerate(zip(prev_lbls, prev_feats)):
                     if len(prev_feat):
                         feats_3darray = self.calc_feat_ndarray(
@@ -311,7 +306,7 @@ class Tracker:
                 new_cells_pos = new_lbls==0
                 new_max = max_lbl + sum(new_cells_pos)
                 new_lbls[new_cells_pos] = [*range(max_lbl+1, new_max+1)]
-                 
+
                 # ensure that label output is consistently a list
                 new_lbls = new_lbls.tolist()
 
@@ -323,44 +318,25 @@ class Tracker:
             return ([], [], max_lbl)
         return (new_lbls, new_feats, new_max)
 
-    def assign_lbls(self, pred_3darray, prev_lbls, red_fun=None):
-        '''Assign labels using a prediction matrix of nxmxl where n is the number
-        of cells in the previous image, m the number of steps back considered
-        and l in the new image. It assigns the
-        number zero if it doesn't find the cell.
-        ---
-        input
+class BudTracker(FeatureCalculator):
+    def __init__(self,
+                 feats2use=None,
+                 rf_model=None,
+                 **kwargs):
+        if feats2use is None:
+            feats2use, _ = switch_case_nfeats(7)
+        super().__init__(feats2use, **kwargs)
 
-        :pred_3darray: Probability n x m x l array obtained as an output of rforest
-        :prev_labels: List of cell labels for previous timepoint to be compared.
-        :red_fun: Function used to collapse the previous timepoints into one.
-            If none provided it uses maximum and ignores np.nans.
+        self.a_ind = self.outfeats.index('area')
+        self.ma_ind = self.outfeats.index('minor_axis_length')
 
-        returns
+        if rf_model is None:
+            rf_model_file = os.path.join(models_path,
+                                      'mb_model_20201022.pkl')
+            with open(rf_model_file, 'rb') as file_to_load:
+                rf_model = pickle.load(file_to_load)
+        self.rf_model = rf_model
 
-        :new_lbls: ndarray of newly assigned labels obtained, new cells as
-        zero.
-        '''
-        if red_fun is None:
-            red_fun = self.red_fun
-
-        new_lbls = np.zeros(pred_3darray.shape[2], dtype=int)  
-
-        pred_matrix = np.apply_along_axis(red_fun, 1, pred_3darray)
-
-
-        # We remove any possible conflict by taking the maximum vals
-        if pred_matrix.any():
-            clean_mat = np.zeros(pred_matrix.shape)
-            for j, i in enumerate(pred_matrix.argmax(0)):
-                clean_mat[i, j] = pred_matrix[i, j]
-
-            # assign available hits
-            for i, j in enumerate(clean_mat.argmax(1)):
-                if pred_matrix[i, j] > self.ctrack_thresh:
-                    new_lbls[j] = prev_lbls[i]
-
-        return new_lbls
 
     ### Assign mother-
     def calc_mother_bud_stats(self, p_budneck, p_bud, masks, feats=None):
@@ -380,9 +356,9 @@ class Tracker:
 
         returns
 
-        :n2darray: 2d ndarray (ncells x ncells, n_ba_feat_names) specifying,
+        :n2darray: 2d ndarray (ncells x ncells, n_feats) specifying,
             for each pair of cells in the masks array, the features used for
-            mother-bud pair prediction (as per 'ba_feat_names')
+            mother-bud pair prediction (as per 'feats2use')
         '''
 
         if feats is None:
@@ -471,7 +447,7 @@ class Tracker:
         # be zero
         ba_probs = np.zeros(ncells**2)
         if good_stats.any():
-            ba_probs[good_stats] = self.ba_model.predict_proba(
+            ba_probs[good_stats] = self.rf_model.predict_proba(
                 mb_stats[good_stats, :])[:, 1]
         ba_probs = ba_probs.reshape((ncells, ) * 2)
 
@@ -510,6 +486,32 @@ class Tracker:
         r_points[:, 3] = r_points[:, 2] - r_hvec
 
         return r_points
+
+class MasterTracker(FeatureCalculator):
+    '''
+    Coordinates the data transmission from CellTracker to BudTracker to
+    reduce number of calls to regionprops function.
+
+    input
+    :ctrack_args: dict with arguments to pass on to CellTracker constructor
+        if None it passes all the features to use
+    :btrack_args: dict with arguments to pass on to BudTracker constructor
+        if None it passes all the features to use
+    :**kwargs: additional arguments passed to FeatureCalculator constructor
+    '''
+    def __init__(self, ctrack_args=None, btrack_args=None,
+                 **kwargs):
+        super().__init__(**kwargs)
+        if ctrack_args is None:
+            ctrack_args = {'feats2use' : self.feats2use}
+        self.cell_tracker = CellTracker(**ctrack_args)
+
+        if btrack_args is None:
+            btrack_args = {'feats2use' : self.feats2use}
+        self.bud_tracker = BudTracker(**btrack_args)
+
+        # TODO: make this work for btrack as well
+        self.feats2use = self.cell_tracker.feats2use
 
     def step_trackers(self,
                       masks,
@@ -554,11 +556,12 @@ class Tracker:
         # Get features for cells at this time point
         feats = self.calc_feats_from_mask(masks)
 
-        lastn_lbls = cell_lbls[-self.nstepsback:]
-        lastn_feats = prev_feats[-self.nstepsback:]
+        nstepsback = self.cell_tracker.nstepsback
+        lastn_lbls = cell_lbls[-nstepsback:]
+        lastn_feats = prev_feats[-nstepsback:]
 
-        new_lbls, _, max_lbl = self.get_new_lbls(masks, lastn_lbls,
-                                                 lastn_feats, max_lbl, feats)
+        new_lbls, _, max_lbl = self.cell_tracker.get_new_lbls(
+            masks, lastn_lbls, lastn_feats, max_lbl, feats)
 
         # if necessary, allocate more memory for state vectors/matrices
         init = {
@@ -581,8 +584,8 @@ class Tracker:
 
         # Update lineage state variables
         if len(masks) > 0 and len(new_lbls) > 0:
-            ba_probs = self.predict_mother_bud(p_budneck, p_bud, masks,
-                                                  feats)
+            ba_probs = self.bud_tracker.predict_mother_bud(
+                p_budneck, p_bud, masks, feats)
             lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
             lifetime[lblinds] += 1
             p_is_mother[lblinds] = np.maximum(p_is_mother[lblinds],
@@ -632,15 +635,9 @@ class Tracker:
 
         return output
 
-    def get_feats2use(self):
-        '''
-        Return feats to be used from loaded ctrack_model
-        '''
 
-        model_nfeats = len(self.ctrack_model.feature_importances_)
-        return(switch_case_nfeats(model_nfeats))
+# Helper functions
 
-        
 def switch_case_nfeats(nfeats):
     '''
     Convenience TEMPORAL function to determine whether to use distance/location
@@ -654,10 +651,9 @@ def switch_case_nfeats(nfeats):
     main_feats = {5 : [(
             'area', 'minor_axis_length', 'major_axis_length', 'convex_area',
         'bbox_area'), ()],
-                  
+
             # Including centroid
             7 : [('centroid', 'area', 'minor_axis_length',
                           'major_axis_length', 'convex_area'), ('distance',)]}
 
     return(main_feats.get(nfeats, []))
-
