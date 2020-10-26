@@ -159,8 +159,8 @@ class BabyBrain(object):
         with open(budassign_model_file, 'rb') as f:
             budassign_model = pickle.load(f)
         self.tracker = MasterTracker(
-            ctrack_args={'rf_model': celltrack_model},
-            btrack_args={'rf_model': budassign_model},
+            ctrack_args={'model': celltrack_model},
+            btrack_args={'model': budassign_model},
             px_size=pixel_size)
 
         # Run prediction on mock image to load model for prediction

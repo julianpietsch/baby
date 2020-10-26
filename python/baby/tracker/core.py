@@ -3,7 +3,7 @@
 '''
 TrackerCoordinator class to coordinate cell tracking and bud assignment.
 '''
-import os
+from os.path import join, dirname
 from collections import Counter
 import pickle
 import numpy as np
@@ -12,19 +12,16 @@ from skimage.draw import polygon
 from scipy.optimize import linear_sum_assignment
 from baby.errors import BadOutput
 
-models_path = os.path.join(os.path.dirname(__file__), '../models')
+models_path = join(dirname(__file__), '../models')
 
 class FeatureCalculator:
     '''
     Base class for making use of regionprops-based features.
     If no features are offered it uses most of them.
     '''
-    def __init__(self, feats2use=None, extra_feats=None,
-                 px_size=None, model=None):
+    def __init__(self, feats2use, px_size=None):
 
-        if feats2use is None:
-            feats2use, extra_feats = switch_case_nfeats(7)
-        self.feats2use, self.extra_feats = (feats2use, extra_feats)
+        self.feats2use = feats2use
 
         if px_size is None:
             px_size = 0.263
@@ -34,6 +31,13 @@ class FeatureCalculator:
         self.outfeats = list(
             regionprops_table(np.diag((1, 0)),
                               properties=self.feats2use).keys())
+
+    def load_model(self, path, fname):
+            model_file = join(path, fname)
+            with open(model_file, 'rb') as file_to_load:
+                model = pickle.load(file_to_load)
+
+            return model
 
     def calc_feats_from_mask(self, masks, feats2use=None, norm=True,
                              px_size=None):
@@ -103,54 +107,49 @@ class FeatureCalculator:
 
         return feats
 
-    def get_feats2use(self):
-        '''
-        Return feats to be used from a loaded random forest model rf_model
-        '''
-
-        assert hasattr(self, 'rf_model'), "Random Forest model does not exist"
-
-        model_nfeats = len(self.rf_model.feature_importances_)
-        return(switch_case_nfeats(model_nfeats))
-
 class CellTracker(FeatureCalculator):
     '''
     Class used to manage cell tracking.
 
     Initialization parameters:
 
-    :rf_model: sklearn.ensemble.RandomForestClassifier object
+    :model: sklearn.ensemble.RandomForestClassifier object
     :nstepsback: int Number of timepoints to go back
     :thresh: float Cut-off value to assume a cell is not new
     '''
     def __init__(self,
-                 feats2use=None,
-                 rf_model=None,
+                 model=None,
                  thresh=None,
                  nstepsback=None,
                  red_fun=None,
                  **kwargs):
+
+        if model is None:
+            model = self.load_model( models_path,
+                                     'ctrack_randomforest_20201012.pkl')
+        self.model = model
+
+        feats2use, self.extrafeats = self.get_feats2use()
         super().__init__(feats2use, **kwargs)
-
-        if rf_model is None:
-            rf_model_file = os.path.join(models_path,
-                                      'ctrack_randomforest_20201012.pkl')
-            with open(rf_model_file, 'rb') as file_to_load:
-                rf_model = pickle.load(file_to_load)
-        self.rf_model = rf_model
-
 
         if nstepsback is None:
             nstepsback = 3
         self.nstepsback = nstepsback
 
         if thresh is None:
-            thresh = 0.7
+            thresh = 0.5
         self.thresh = thresh
 
         if red_fun is None:
             red_fun = np.nanmax
         self.red_fun = red_fun
+
+    def get_feats2use(self):
+        '''
+        Return feats to be used from a loaded random forest model model
+        '''
+
+        return(switch_case_nfeats(self.model.n_features_))
 
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
@@ -240,7 +239,7 @@ class CellTracker(FeatureCalculator):
         if array_3d.size == 0:
             return np.array([])
 
-        predict_fun = self.rf_model.predict if boolean else self.rf_model.predict_proba
+        predict_fun = self.model.predict if boolean else self.model.predict_proba
 
         orig_shape = array_3d.shape[:2]
 
@@ -320,22 +319,22 @@ class CellTracker(FeatureCalculator):
 
 class BudTracker(FeatureCalculator):
     def __init__(self,
-                 feats2use=None,
-                 rf_model=None,
+                 model=None,
                  **kwargs):
-        if feats2use is None:
-            feats2use, _ = switch_case_nfeats(7)
+
+        if model is None:
+            model_file = join(models_path,
+                                      'mb_model_20201022.pkl')
+            with open(model_file, 'rb') as file_to_load:
+                model = pickle.load(file_to_load)
+        self.model = model
+
+        feats2use, _ = switch_case_nfeats(7)
         super().__init__(feats2use, **kwargs)
 
         self.a_ind = self.outfeats.index('area')
         self.ma_ind = self.outfeats.index('minor_axis_length')
 
-        if rf_model is None:
-            rf_model_file = os.path.join(models_path,
-                                      'mb_model_20201022.pkl')
-            with open(rf_model_file, 'rb') as file_to_load:
-                rf_model = pickle.load(file_to_load)
-        self.rf_model = rf_model
 
 
     ### Assign mother-
@@ -447,7 +446,7 @@ class BudTracker(FeatureCalculator):
         # be zero
         ba_probs = np.zeros(ncells**2)
         if good_stats.any():
-            ba_probs[good_stats] = self.rf_model.predict_proba(
+            ba_probs[good_stats] = self.model.predict_proba(
                 mb_stats[good_stats, :])[:, 1]
         ba_probs = ba_probs.reshape((ncells, ) * 2)
 
@@ -501,17 +500,18 @@ class MasterTracker(FeatureCalculator):
     '''
     def __init__(self, ctrack_args=None, btrack_args=None,
                  **kwargs):
-        super().__init__(**kwargs)
         if ctrack_args is None:
-            ctrack_args = {'feats2use' : self.feats2use}
+            ctrack_args = {}
         self.cell_tracker = CellTracker(**ctrack_args)
 
         if btrack_args is None:
-            btrack_args = {'feats2use' : self.feats2use}
+            btrack_args = {}
         self.bud_tracker = BudTracker(**btrack_args)
 
-        # TODO: make this work for btrack as well
-        self.feats2use = self.cell_tracker.feats2use
+        feats2use = set(self.cell_tracker.feats2use).union(set(
+                self.bud_tracker.feats2use))
+        super().__init__(feats2use, **kwargs)
+
 
     def step_trackers(self,
                       masks,
@@ -630,7 +630,6 @@ class MasterTracker(FeatureCalculator):
 
             output['mother_assign'] = ma.tolist()
 
-        if return_baprobs:
             output['p_bud_assign'] = ba_probs.tolist()
 
         return output
