@@ -193,7 +193,8 @@ class CellTracker(FeatureCalculator):
             if feat == 'distance':
                 # Assume that centroid-0 and centroid-1 are in the first two cols
                 n3darray[..., i] = np.sqrt(
-                    n3darray[..., 0]**2 + n3darray[..., 1]**2)
+                    n3darray[..., self.outfeats.index('centroid-0')]**2 +
+                    n3darray[..., self.outfeats.index('centroid-1')]**2)
 
         return n3darray
 
@@ -329,6 +330,7 @@ class CellTracker(FeatureCalculator):
 class BudTracker(FeatureCalculator):
     def __init__(self,
                  model=None,
+                 feats2use=None,
                  **kwargs):
 
         if model is None:
@@ -338,7 +340,8 @@ class BudTracker(FeatureCalculator):
                 model = pickle.load(file_to_load)
         self.model = model
 
-        feats2use = ['area', 'minor_axis_length']
+        if feats2use is None:
+            feats2use = ['centroid', 'area', 'minor_axis_length']
         super().__init__(feats2use, **kwargs)
 
         self.a_ind = self.outfeats.index('area')
@@ -448,7 +451,7 @@ class BudTracker(FeatureCalculator):
         ncells = len(masks)
 
         mb_stats = self.calc_mother_bud_stats(
-                p_budneck, p_bud, masks, feats=None)
+                p_budneck, p_bud, masks, feats)
 
         good_stats = ~np.isnan(mb_stats).any(axis=1)
         # Assume probability of bud assignment for any rows that are NaN will
@@ -519,7 +522,12 @@ class MasterTracker(FeatureCalculator):
 
         feats2use = set(self.cell_tracker.feats2use).union(set(
                 self.bud_tracker.feats2use))
+
         super().__init__(feats2use, **kwargs)
+
+        # Extract indices of the relevant features
+        self.ct_idx = [self.outfeats.index(f) for f in self.cell_tracker.outfeats]
+        self.bt_idx = [self.outfeats.index(f) for f in self.bud_tracker.outfeats]
 
 
     def step_trackers(self,
@@ -567,11 +575,12 @@ class MasterTracker(FeatureCalculator):
 
         nstepsback = self.cell_tracker.nstepsback
         lastn_lbls = cell_lbls[-nstepsback:]
-        lastn_feats = prev_feats[-nstepsback:]
+        lastn_feats = [fset[:,self.ct_idx] for fset in prev_feats[-nstepsback:]]
 
         new_lbls, _, max_lbl = self.cell_tracker.get_new_lbls(
-            masks, lastn_lbls, lastn_feats, max_lbl, feats)
+            masks, lastn_lbls, lastn_feats, max_lbl, feats[:,self.ct_idx])
 
+        print("new lbls: ", new_lbls)
         # if necessary, allocate more memory for state vectors/matrices
         init = {
             'lifetime': np.zeros(0),  # vector (>=max_lbl)
@@ -594,7 +603,9 @@ class MasterTracker(FeatureCalculator):
         # Update lineage state variables
         if len(masks) > 0 and len(new_lbls) > 0:
             ba_probs = self.bud_tracker.predict_mother_bud(
-                p_budneck, p_bud, masks, feats)
+                p_budneck, p_bud, masks, feats[:, self.bt_idx])
+            print(feats[:, self.bt_idx])
+            print(self.bud_tracker.outfeats)
             lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
             lifetime[lblinds] += 1
             p_is_mother[lblinds] = np.maximum(p_is_mother[lblinds],

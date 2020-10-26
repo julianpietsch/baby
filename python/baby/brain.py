@@ -95,7 +95,7 @@ class BabyBrain(object):
 
         if celltrack_model_file is None:
             celltrack_model_file = join(models_path,
-                                        'ctrack_randomforest_20200513.pkl')
+                                        'ctrack_randomforest_20201012.pkl')
         elif not isfile(celltrack_model_file):
             celltrack_model_file = join(models_path, celltrack_model_file)
 
