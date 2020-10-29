@@ -29,7 +29,7 @@ DTYPES = {
 SERVER_DIR = dirname(__file__)
 
 MAX_RUNNERS = 3
-MAX_SESSIONS = 5
+MAX_SESSIONS = 20
 SLEEP_TIME = 0.2  # time between threaded checks for data availability
 MAX_ATTEMPTS = 150  # allows for 30s delay before timing out
 MAX_IMG_SIZE = 100 * 1024 * 1024  # allows for raw image sizes up to 100 MB
