@@ -395,13 +395,55 @@ class BabyBrain(object):
                                    refine_outlines=refine_outlines)
 
         for seg, state in zip(segment_gen, tracker_states):
-            tracking = self.tracker.step_trackers(
-                seg['masks'],
-                seg['preds'][i_budneck],
-                seg['preds'][i_bud],
-                state=state,
-                assign_mothers=assign_mothers,
-                return_baprobs=return_baprobs)
+            try:
+                tracking = self.tracker.step_trackers(
+                    seg['masks'],
+                    seg['preds'][i_budneck],
+                    seg['preds'][i_bud],
+                    state=state,
+                    assign_mothers=assign_mothers,
+                    return_baprobs=return_baprobs)
+            except:
+                # Log errors
+                err_id = _generate_error_dump_id()
+                if (self.error_dump_dir is not None and
+                        isdir(self.error_dump_dir)):
+                    fprefix = join(self.error_dump_dir, err_id)
+                    masks = seg.get('masks', np.zeros((0,0,0)))
+                    if masks.size > 0:
+                        save_tiled_image(
+                            seg['masks'].transpose((2, 0, 1)).astype('uint8'),
+                            fprefix + '_masks.png')
+                    save_tiled_image(
+                        np.uint16((2**16 - 1) *
+                                  seg['preds'][i_budneck, :, :, None]),
+                        fprefix + '_budneck_pred.png')
+                    save_tiled_image(
+                        np.uint16(
+                            (2**16 - 1) * seg['preds'][i_bud, :, :, None]),
+                        fprefix + '_bud_pred.png')
+                    with open(fprefix + '_state.pkl', 'wb') as f:
+                        pickle.dump(state, f)
+                if self.suppress_errors:
+                    err_msg = dict(ID=err_id,
+                                   assign_mothers=assign_mothers,
+                                   return_baprobs=return_baprobs)
+                    err_msg = [
+                        '{}: {}'.format(k, v) for k, v in err_msg.items()
+                    ]
+                    err_msg.insert(0, 'Tracking error')
+                    logging.exception('\n'.join(err_msg))
+                    ncells = len(masks)
+                    tracking = {
+                        'cell_label': list(range(ncells)),
+                        'mother_assign': [],
+                        'p_bud_assign': np.zeros((ncells, ncells)).tolist(),
+                        'state': state,
+                    }
+
+                    seg['error'] = 'Tracking error: ' + err_id
+                else:
+                    raise
 
             del seg['preds']
             del seg['masks']
@@ -413,7 +455,10 @@ class BabyBrain(object):
 
             # Use the last added "previous features" in the tracker state to
             # obtain the major and minor ellipsoid axes
-            feats = state['prev_feats'][-1]
+            if state is None:
+                feats = np.zeros((0, len(self.tracker.outfeats)))
+            else:
+                feats = state['prev_feats'][-1]
             ellip_inds = tuple(
                 self.tracker.outfeats.index(p)
                 for p in ('major_axis_length', 'minor_axis_length'))
