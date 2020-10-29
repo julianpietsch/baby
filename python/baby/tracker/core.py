@@ -7,6 +7,7 @@ from os.path import join, dirname
 from collections import Counter
 import pickle
 import numpy as np
+from pathlib import Path, PosixPath
 from skimage.measure import regionprops_table
 from skimage.draw import polygon
 from scipy.optimize import linear_sum_assignment
@@ -86,24 +87,22 @@ class FeatureCalculator:
         '''
         area = px_size**2
 
+        degrees = {'linear': px_size, 'square':area}
+        degrees_feats = {'linear':['minor_axis_length',  'major_axis_length',
+                        'perimeter', 'perimeter_crofton',
+                                 # 'feret_diameter_max',
+                                   'equivalent_diameter'],
+                       'square': ['area', 'convex_area']}
+
         if 'centroid' in self.feats2use:
             feats[self.outfeats.index('centroid-0')] /= px_size
             feats[self.outfeats.index('centroid-1')] /= px_size
 
-        if 'area' in self.feats2use:
-            feats[self.outfeats.index('area')] /= area
 
-        if 'convex_area' in self.feats2use:
-            feats[self.outfeats.index('convex_area')] /= area
-
-        if 'bbox_area' in self.feats2use:
-            feats[self.outfeats.index('bbox_area')] /= area
-
-        if 'minor_axis_length' in self.feats2use:
-            feats[self.outfeats.index('minor_axis_length')] /= px_size
-
-        if 'major_axis_length' in self.feats2use:
-            feats[self.outfeats.index('major_axis_length')] /= px_size
+        for deg, feat_names in degrees_feats.items():
+            for feat_name in feat_names:
+                if feat_name in self.feats2use:
+                    feats[self.outfeats.index(feat_name)] /= degrees[deg]
 
         return feats
 
@@ -129,10 +128,14 @@ class CellTracker(FeatureCalculator):
         if extra_feats is None:
             extra_feats = ()
 
+        if type(model) is str or type(model) is PosixPath: 
+            with open(Path(model), 'rb') as f:
+                model = pickle.load(f)
+
         if feats2use is None:
             if model is None:
                 model = self.load_model( models_path,
-                                         'ctrack_randomforest_20201012.pkl')
+                                         'ct_rf_20201029_7.pkl')
             self.model = model
 
             feats2use, extra_feats = self.get_feats2use()
@@ -667,12 +670,31 @@ def switch_case_nfeats(nfeats):
     returns
     list of main and extra feats based on the number of feats
     '''
-    main_feats = {5 : [(
-            'area', 'minor_axis_length', 'major_axis_length', 'convex_area',
+    main_feats = {
+        4 : [(
+            'area', 'minor_axis_length', 'major_axis_length', 
         'bbox_area'), ()],
-
             # Including centroid
-            7 : [('centroid', 'area', 'minor_axis_length',
-                          'major_axis_length', 'convex_area'), ('distance',)]}
+        7 : [('centroid', 'area', 'minor_axis_length', 'major_axis_length',
+              'perimeter', 'perimeter'), ()],
+            # Including centroid and distance
+        8 : [(
+            'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
+            'bbox_area', 'perimeter'), ('distance',)],
+        12 : [(
+            'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
+            'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
+            'extent',
+            # 'feret_diameter_max', not available in current version
+            'orientation', 'perimeter'), ()],
+            # 'perimeter_crofton'
+        13 : [(
+            'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
+            'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
+            'extent',
+            # 'feret_diameter_max', not available in current version
+            'orientation', 'perimeter',
+        ), ('distance', )]
+    }
 
     return(main_feats.get(nfeats, []))

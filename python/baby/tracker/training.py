@@ -1,10 +1,11 @@
 #!/usr/bin/env python
-import numpy as np
-import pandas as pd
-import pickle
 from pathlib import Path
 from itertools import repeat, chain
+import datetime
 from warnings import warn
+import pickle
+import numpy as np
+import pandas as pd
 from tqdm import trange
 
 from baby.io import load_tiled_image
@@ -224,9 +225,9 @@ class CellTrainer(CellTracker):
                                     class_weight='balanced')
 
         param_grid = {
-            'n_estimators': [5, 15, 30, 60, 100],
+            'n_estimators': [20, 25, 30],
             'max_features': ['auto', 'sqrt', 'log2'],
-            'max_depth': [2, 3],
+            'max_depth': [None, 3, 4, 5],
             'class_weight': [None, 'balanced', 'balanced_subsample']
         }
 
@@ -234,17 +235,15 @@ class CellTrainer(CellTracker):
         self.rf.fit(data, truth)
         print(self.rf.best_score_, self.rf.best_params_)
 
-    def train_model(self):
-        truth, data = *zip(*self.train),
-        self.single_rf = RandomForestClassifier(n_estimators=6,
-                                                n_jobs=1,
-                                                max_depth=2,
-                                                class_weight='balanced')
-        self.single_rf.fit(data, truth)
-
     def save_model(self, filename):
-        f = open(filename, 'wb')
+        date = datetime.date.today().strftime("%Y%m%d")
+        nfeats = str(len(self.outfeats) + len(self.extra_feats))
+        f = open(filename + '_'.join(('ct_rf', date, nfeats)) + '.pkl', 'wb')
         pickle.dump(self.rf.best_estimator_, f)
+
+    def save_self(self, filename):
+        f = open(filename, 'wb')
+        pickle.dump(self, f)
 
     @property
     def benchmarker(self):
