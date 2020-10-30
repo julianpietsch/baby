@@ -120,7 +120,9 @@ class CellTracker(FeatureCalculator):
                  feats2use=None,
                  extra_feats=None,
                  model=None,
-                 thresh=None,
+                 bak_model=None,
+                 low_thresh=None,
+                 up_thresh=None,
                  nstepsback=None,
                  red_fun=None,
                  **kwargs):
@@ -136,7 +138,11 @@ class CellTracker(FeatureCalculator):
             if model is None:
                 model = self.load_model( models_path,
                                          'ct_rf_20201029_7.pkl')
+            if bak_model is None:
+                bak_model = self.load_model( models_path,
+                                         'ct_rf_20201029_8.pkl')
             self.model = model
+            self.bak_model = bak_model
 
             feats2use, extra_feats = self.get_feats2use()
             
@@ -148,9 +154,11 @@ class CellTracker(FeatureCalculator):
             nstepsback = 3
         self.nstepsback = nstepsback
 
-        if thresh is None:
-            thresh = 0.5
-        self.thresh = thresh
+        if low_thresh is None:
+            low_thresh = 0.3
+        if up_thresh is None:
+            up_thresh = 0.7
+        self.low_thresh, self.up_thresh = low_thresh, up_thresh
 
         if red_fun is None:
             red_fun = np.nanmax
@@ -160,8 +168,11 @@ class CellTracker(FeatureCalculator):
         '''
         Return feats to be used from a loaded random forest model model
         '''
+        nfeats = self.model.n_features_
+        nfeats_bak = self.bak_model.n_features_
+        max_nfeats = max((nfeats, nfeats_bak))
 
-        return(switch_case_nfeats(self.model.n_features_))
+        return(switch_case_nfeats(max_nfeats))
 
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
@@ -229,7 +240,7 @@ class CellTracker(FeatureCalculator):
             # assign available hits
             row_ids, col_ids = linear_sum_assignment(-pred_matrix)
             for i,j in zip(row_ids, col_ids):
-                if  pred_matrix[i, j] > self.thresh:
+                if  pred_matrix[i, j] > self.up_thresh:
                     new_lbls[j] = prev_lbls[i]
 
         return new_lbls
@@ -252,16 +263,29 @@ class CellTracker(FeatureCalculator):
         if array_3d.size == 0:
             return np.array([])
 
-        predict_fun = self.model.predict if boolean else self.model.predict_proba
+        predict_fun = self.model.predict if boolean else \
+            self.model.predict_proba
+        bak_pred_fun = self.bak_model.predict if boolean else \
+            self.bak_model.predict_proba
 
         orig_shape = array_3d.shape[:2]
 
         # Flatten for predictions and then reshape back into matrix
-        pred_list = np.array([
-            val[1] for val in predict_fun(array_3d.reshape(
-                -1, array_3d.shape[2]))
-        ])
-        pred_matrix = pred_list.reshape(orig_shape)
+        pred_list = []
+        for vec in array_3d.reshape(-1, array_3d.shape[2]):
+            prob = predict_fun(
+                vec[:self.model.n_features_].reshape(1,-1))[0][1]
+            if self.low_thresh < prob < self.up_thresh:
+                prob = bak_pred_fun(vec[:self.bak_model.n_features_].reshape(
+                1,-1))[0][1] 
+            pred_list.append(prob)
+
+        # pred_list = np.array([
+        #     val[1] for val in predict_fun(array_3d.reshape(
+        #         -1, array_3d.shape[2]))
+        # ])
+
+        pred_matrix = np.array(pred_list).reshape(orig_shape)
 
         return pred_matrix
 
@@ -676,7 +700,7 @@ def switch_case_nfeats(nfeats):
         'bbox_area'), ()],
             # Including centroid
         7 : [('centroid', 'area', 'minor_axis_length', 'major_axis_length',
-              'perimeter', 'perimeter'), ()],
+              'bbox_area', 'perimeter'), ()],
             # Including centroid and distance
         8 : [(
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
@@ -685,16 +709,13 @@ def switch_case_nfeats(nfeats):
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
             'extent',
-            # 'feret_diameter_max', not available in current version
             'orientation', 'perimeter'), ()],
-            # 'perimeter_crofton'
         13 : [(
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
-            'extent',
+            'extent', 'orientation', 'perimeter'), ('distance', )]
             # 'feret_diameter_max', not available in current version
-            'orientation', 'perimeter',
-        ), ('distance', )]
+            # 'perimeter_crofton'
     }
 
     return(main_feats.get(nfeats, []))
