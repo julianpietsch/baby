@@ -13,7 +13,20 @@
     "celltrack_model_file": "ctrack_randomforest_20201012.pkl",
     "budassign_model_file": "mb_model_20201022.pkl",
     "pixel_size": 0.263,
-    "default_image_size": [81, 81]
+    "default_image_size": [81, 81],
+    "params": {
+        "interior_threshold": [0.95, 0.85, 0.5],
+        "nclosing": [1, 0, 0],
+        "nopening": [1, 2, 0],
+        "connectivity": [1, 1, 1],
+        "edge_sub_dilations": [0, 1, 0],
+        "containment_thresh": 0.95,
+        "min_area": 0,
+        "pedge_thresh": [0.0, 0.0063, 0.0007],
+        "group_thresh_expansion": [0.32, 0.32, 0.0],
+        "fit_radial": true,
+        "use_group_thresh": true
+    }
   },
   "prime95b_brightfield_60x_1z": {
     "morph_model_file": "I1_prime_unet_4s_20200630.hdf5",
