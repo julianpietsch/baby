@@ -1,10 +1,11 @@
 #!/usr/bin/env python
-import numpy as np
-import pandas as pd
-import pickle
 from pathlib import Path
 from itertools import repeat, chain
+import datetime
 from warnings import warn
+import pickle
+import numpy as np
+import pandas as pd
 from tqdm import trange
 
 from baby.io import load_tiled_image
@@ -31,14 +32,13 @@ class CellTrainer(CellTracker):
                  px_size=None):
 
         if all_feats2use is None:
-            feats2use, extra_feats = (None, None)
+            feats2use = ('centroid', 'area', 'minor_axis_length',
+                         'major_axis_length', 'convex_area')
+            extra_feats = ('distance',) 
+
         else:
             feats2use, extra_feats = all_feats2use
 
-        if px_size is None:
-            px_size = 0.263
-        self.px_size = px_size
-            
         super().__init__(feats2use = feats2use, extra_feats = extra_feats,
                          px_size=px_size)
 
@@ -120,7 +120,8 @@ class CellTrainer(CellTracker):
                   lbl) in zip(self.meta.index, enumerate(
                                self.meta['cellLabels'].values)):
             try:
-                assert (len(lbl)==self.masks[index].shape[2]) | (len(lbl)==0) #check nlabels and ncells agree
+                #check nlabels and ncells agree
+                assert (len(lbl)==self.masks[index].shape[2]) | (len(lbl)==0) 
             except AssertionError:
                 print('nlabels and img mismatch in row: ')
 
@@ -224,9 +225,9 @@ class CellTrainer(CellTracker):
                                     class_weight='balanced')
 
         param_grid = {
-            'n_estimators': [5, 15, 30, 60, 100],
+            'n_estimators': [20, 25, 30],
             'max_features': ['auto', 'sqrt', 'log2'],
-            'max_depth': [2, 3],
+            'max_depth': [None, 3, 4, 5],
             'class_weight': [None, 'balanced', 'balanced_subsample']
         }
 
@@ -234,17 +235,15 @@ class CellTrainer(CellTracker):
         self.rf.fit(data, truth)
         print(self.rf.best_score_, self.rf.best_params_)
 
-    def train_model(self):
-        truth, data = *zip(*self.train),
-        self.single_rf = RandomForestClassifier(n_estimators=6,
-                                                n_jobs=1,
-                                                max_depth=2,
-                                                class_weight='balanced')
-        self.single_rf.fit(data, truth)
-
     def save_model(self, filename):
-        f = open(filename, 'wb')
+        date = datetime.date.today().strftime("%Y%m%d")
+        nfeats = str(len(self.outfeats) + len(self.extra_feats))
+        f = open(filename + '_'.join(('ct_rf', date, nfeats)) + '.pkl', 'wb')
         pickle.dump(self.rf.best_estimator_, f)
+
+    def save_self(self, filename):
+        f = open(filename, 'wb')
+        pickle.dump(self, f)
 
     @property
     def benchmarker(self):
@@ -277,6 +276,8 @@ class BudTrainer(BudTracker):
         super().__init__(**kwargs)
         # NB: we inherit self.feats2use from CellTracker class
         self.props_file = props_file
+        self.rf_feats = ["p_bud_mat", "size_ratio_mat", "p_budneck_mat",
+                "budneck_ratio_mat", "adjacency_mat"]
 
     @property
     def props_file(self):
@@ -300,7 +301,7 @@ class BudTrainer(BudTracker):
     @props.setter
     def props(self, props):
         props = pd.DataFrame(props)
-        required_cols = self.feats2use + ('is_mb_pair', 'validation')
+        required_cols = self.rf_feats + ['is_mb_pair', 'validation']
         if not all(c in props for c in required_cols):
             raise BadParam(
                 '"props" does not have all required columns: {}'.format(
@@ -336,7 +337,7 @@ class BudTrainer(BudTracker):
                 continue
             mb_stats = self.calc_mother_bud_stats(seg_example.pred[i_budneck],
                     seg_example.pred[i_bud], seg_example.target)
-            p = pd.DataFrame(mb_stats, columns=self.feats2use)
+            p = pd.DataFrame(mb_stats, columns=self.rf_feats)
             p['validation'] = is_val
 
             # "cellLabels" specifies the label for each mask
@@ -374,7 +375,7 @@ class BudTrainer(BudTracker):
         self.props = props # also saves
 
     def explore_hyperparams(self):
-        data = self.props.loc[~self.props['validation'], self.feats2use]
+        data = self.props.loc[~self.props['validation'], self.rf_feats]
         truth = self.props.loc[~self.props['validation'], 'is_mb_pair']
 
         rf = RandomForestClassifier(n_estimators=15,
@@ -409,7 +410,7 @@ class BudTrainer(BudTracker):
 
         print('\nValidation performance:')
         best_rf = self._rf.best_estimator_
-        valdata = self.props.loc[self.props['validation'], self.feats2use]
+        valdata = self.props.loc[self.props['validation'], self.rf_feats]
         valtruth = self.props.loc[self.props['validation'], 'is_mb_pair']
         preds = best_rf.predict(valdata)
         print('Accuracy:', metrics.accuracy_score(valtruth, preds))

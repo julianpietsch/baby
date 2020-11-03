@@ -3,28 +3,26 @@
 '''
 TrackerCoordinator class to coordinate cell tracking and bud assignment.
 '''
-import os
+from os.path import join, dirname
 from collections import Counter
 import pickle
 import numpy as np
+from pathlib import Path, PosixPath
 from skimage.measure import regionprops_table
 from skimage.draw import polygon
 from scipy.optimize import linear_sum_assignment
 from baby.errors import BadOutput
 
-models_path = os.path.join(os.path.dirname(__file__), '../models')
+models_path = join(dirname(__file__), '../models')
 
 class FeatureCalculator:
     '''
     Base class for making use of regionprops-based features.
     If no features are offered it uses most of them.
     '''
-    def __init__(self, feats2use=None, extra_feats=None,
-                 px_size=None, model=None):
+    def __init__(self, feats2use, px_size=None):
 
-        if feats2use is None:
-            feats2use, extra_feats = switch_case_nfeats(7)
-        self.feats2use, self.extra_feats = (feats2use, extra_feats)
+        self.feats2use = feats2use
 
         if px_size is None:
             px_size = 0.263
@@ -34,6 +32,13 @@ class FeatureCalculator:
         self.outfeats = list(
             regionprops_table(np.diag((1, 0)),
                               properties=self.feats2use).keys())
+
+    def load_model(self, path, fname):
+            model_file = join(path, fname)
+            with open(model_file, 'rb') as file_to_load:
+                model = pickle.load(file_to_load)
+
+            return model
 
     def calc_feats_from_mask(self, masks, feats2use=None, norm=True,
                              px_size=None):
@@ -82,36 +87,24 @@ class FeatureCalculator:
         '''
         area = px_size**2
 
+        degrees = {'linear': px_size, 'square':area}
+        degrees_feats = {'linear':['minor_axis_length',  'major_axis_length',
+                        'perimeter', 'perimeter_crofton',
+                                 # 'feret_diameter_max',
+                                   'equivalent_diameter'],
+                       'square': ['area', 'convex_area']}
+
         if 'centroid' in self.feats2use:
             feats[self.outfeats.index('centroid-0')] /= px_size
             feats[self.outfeats.index('centroid-1')] /= px_size
 
-        if 'area' in self.feats2use:
-            feats[self.outfeats.index('area')] /= area
 
-        if 'convex_area' in self.feats2use:
-            feats[self.outfeats.index('convex_area')] /= area
-
-        if 'bbox_area' in self.feats2use:
-            feats[self.outfeats.index('bbox_area')] /= area
-
-        if 'minor_axis_length' in self.feats2use:
-            feats[self.outfeats.index('minor_axis_length')] /= px_size
-
-        if 'major_axis_length' in self.feats2use:
-            feats[self.outfeats.index('major_axis_length')] /= px_size
+        for deg, feat_names in degrees_feats.items():
+            for feat_name in feat_names:
+                if feat_name in self.feats2use:
+                    feats[self.outfeats.index(feat_name)] /= degrees[deg]
 
         return feats
-
-    def get_feats2use(self):
-        '''
-        Return feats to be used from a loaded random forest model rf_model
-        '''
-
-        assert hasattr(self, 'rf_model'), "Random Forest model does not exist"
-
-        model_nfeats = len(self.rf_model.feature_importances_)
-        return(switch_case_nfeats(model_nfeats))
 
 class CellTracker(FeatureCalculator):
     '''
@@ -119,38 +112,67 @@ class CellTracker(FeatureCalculator):
 
     Initialization parameters:
 
-    :rf_model: sklearn.ensemble.RandomForestClassifier object
+    :model: sklearn.ensemble.RandomForestClassifier object
     :nstepsback: int Number of timepoints to go back
     :thresh: float Cut-off value to assume a cell is not new
     '''
     def __init__(self,
                  feats2use=None,
-                 rf_model=None,
-                 thresh=None,
+                 extra_feats=None,
+                 model=None,
+                 bak_model=None,
+                 low_thresh=None,
+                 up_thresh=None,
                  nstepsback=None,
                  red_fun=None,
                  **kwargs):
+
+        if extra_feats is None:
+            extra_feats = ()
+
+        if type(model) is str or type(model) is PosixPath: 
+            with open(Path(model), 'rb') as f:
+                model = pickle.load(f)
+
+        if feats2use is None:
+            if model is None:
+                model = self.load_model( models_path,
+                                         'ct_rf_20201029_7.pkl')
+            if bak_model is None:
+                bak_model = self.load_model( models_path,
+                                         'ct_rf_20201029_8.pkl')
+            self.model = model
+            self.bak_model = bak_model
+
+            feats2use, extra_feats = self.get_feats2use()
+            
+        self.extra_feats = extra_feats
+
         super().__init__(feats2use, **kwargs)
-
-        if rf_model is None:
-            rf_model_file = os.path.join(models_path,
-                                      'ctrack_randomforest_20201012.pkl')
-            with open(rf_model_file, 'rb') as file_to_load:
-                rf_model = pickle.load(file_to_load)
-        self.rf_model = rf_model
-
 
         if nstepsback is None:
             nstepsback = 3
         self.nstepsback = nstepsback
 
-        if thresh is None:
-            thresh = 0.7
-        self.thresh = thresh
+        if low_thresh is None:
+            low_thresh = 0.3
+        if up_thresh is None:
+            up_thresh = 0.7
+        self.low_thresh, self.up_thresh = low_thresh, up_thresh
 
         if red_fun is None:
             red_fun = np.nanmax
         self.red_fun = red_fun
+
+    def get_feats2use(self):
+        '''
+        Return feats to be used from a loaded random forest model model
+        '''
+        nfeats = self.model.n_features_
+        nfeats_bak = self.bak_model.n_features_
+        max_nfeats = max((nfeats, nfeats_bak))
+
+        return(switch_case_nfeats(max_nfeats))
 
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
@@ -185,7 +207,8 @@ class CellTracker(FeatureCalculator):
             if feat == 'distance':
                 # Assume that centroid-0 and centroid-1 are in the first two cols
                 n3darray[..., i] = np.sqrt(
-                    n3darray[..., 0]**2 + n3darray[..., 1]**2)
+                    n3darray[..., self.outfeats.index('centroid-0')]**2 +
+                    n3darray[..., self.outfeats.index('centroid-1')]**2)
 
         return n3darray
 
@@ -217,7 +240,7 @@ class CellTracker(FeatureCalculator):
             # assign available hits
             row_ids, col_ids = linear_sum_assignment(-pred_matrix)
             for i,j in zip(row_ids, col_ids):
-                if  pred_matrix[i, j] > self.thresh:
+                if  pred_matrix[i, j] > self.up_thresh:
                     new_lbls[j] = prev_lbls[i]
 
         return new_lbls
@@ -240,16 +263,29 @@ class CellTracker(FeatureCalculator):
         if array_3d.size == 0:
             return np.array([])
 
-        predict_fun = self.rf_model.predict if boolean else self.rf_model.predict_proba
+        predict_fun = self.model.predict if boolean else \
+            self.model.predict_proba
+        bak_pred_fun = self.bak_model.predict if boolean else \
+            self.bak_model.predict_proba
 
         orig_shape = array_3d.shape[:2]
 
         # Flatten for predictions and then reshape back into matrix
-        pred_list = np.array([
-            val[1] for val in predict_fun(array_3d.reshape(
-                -1, array_3d.shape[2]))
-        ])
-        pred_matrix = pred_list.reshape(orig_shape)
+        pred_list = []
+        for vec in array_3d.reshape(-1, array_3d.shape[2]):
+            prob = predict_fun(
+                vec[:self.model.n_features_].reshape(1,-1))[0][1]
+            if self.low_thresh < prob < self.up_thresh:
+                prob = bak_pred_fun(vec[:self.bak_model.n_features_].reshape(
+                1,-1))[0][1] 
+            pred_list.append(prob)
+
+        # pred_list = np.array([
+        #     val[1] for val in predict_fun(array_3d.reshape(
+        #         -1, array_3d.shape[2]))
+        # ])
+
+        pred_matrix = np.array(pred_list).reshape(orig_shape)
 
         return pred_matrix
 
@@ -320,22 +356,24 @@ class CellTracker(FeatureCalculator):
 
 class BudTracker(FeatureCalculator):
     def __init__(self,
+                 model=None,
                  feats2use=None,
-                 rf_model=None,
                  **kwargs):
+
+        if model is None:
+            model_file = join(models_path,
+                                      'mb_model_20201022.pkl')
+            with open(model_file, 'rb') as file_to_load:
+                model = pickle.load(file_to_load)
+        self.model = model
+
         if feats2use is None:
-            feats2use, _ = switch_case_nfeats(7)
+            feats2use = ['centroid', 'area', 'minor_axis_length']
         super().__init__(feats2use, **kwargs)
 
         self.a_ind = self.outfeats.index('area')
         self.ma_ind = self.outfeats.index('minor_axis_length')
 
-        if rf_model is None:
-            rf_model_file = os.path.join(models_path,
-                                      'mb_model_20201022.pkl')
-            with open(rf_model_file, 'rb') as file_to_load:
-                rf_model = pickle.load(file_to_load)
-        self.rf_model = rf_model
 
 
     ### Assign mother-
@@ -440,14 +478,14 @@ class BudTracker(FeatureCalculator):
         ncells = len(masks)
 
         mb_stats = self.calc_mother_bud_stats(
-                p_budneck, p_bud, masks, feats=None)
+                p_budneck, p_bud, masks, feats)
 
         good_stats = ~np.isnan(mb_stats).any(axis=1)
         # Assume probability of bud assignment for any rows that are NaN will
         # be zero
         ba_probs = np.zeros(ncells**2)
         if good_stats.any():
-            ba_probs[good_stats] = self.rf_model.predict_proba(
+            ba_probs[good_stats] = self.model.predict_proba(
                 mb_stats[good_stats, :])[:, 1]
         ba_probs = ba_probs.reshape((ncells, ) * 2)
 
@@ -501,17 +539,23 @@ class MasterTracker(FeatureCalculator):
     '''
     def __init__(self, ctrack_args=None, btrack_args=None,
                  **kwargs):
-        super().__init__(**kwargs)
         if ctrack_args is None:
-            ctrack_args = {'feats2use' : self.feats2use}
+            ctrack_args = {}
         self.cell_tracker = CellTracker(**ctrack_args)
 
         if btrack_args is None:
-            btrack_args = {'feats2use' : self.feats2use}
+            btrack_args = {}
         self.bud_tracker = BudTracker(**btrack_args)
 
-        # TODO: make this work for btrack as well
-        self.feats2use = self.cell_tracker.feats2use
+        feats2use = set(self.cell_tracker.feats2use).union(set(
+                self.bud_tracker.feats2use))
+
+        super().__init__(feats2use, **kwargs)
+
+        # Extract indices of the relevant features
+        self.ct_idx = [self.outfeats.index(f) for f in self.cell_tracker.outfeats]
+        self.bt_idx = [self.outfeats.index(f) for f in self.bud_tracker.outfeats]
+
 
     def step_trackers(self,
                       masks,
@@ -558,11 +602,12 @@ class MasterTracker(FeatureCalculator):
 
         nstepsback = self.cell_tracker.nstepsback
         lastn_lbls = cell_lbls[-nstepsback:]
-        lastn_feats = prev_feats[-nstepsback:]
+        lastn_feats = [fset[:,self.ct_idx] for fset in prev_feats[-nstepsback:]]
 
         new_lbls, _, max_lbl = self.cell_tracker.get_new_lbls(
-            masks, lastn_lbls, lastn_feats, max_lbl, feats)
+            masks, lastn_lbls, lastn_feats, max_lbl, feats[:,self.ct_idx])
 
+        print("new lbls: ", new_lbls)
         # if necessary, allocate more memory for state vectors/matrices
         init = {
             'lifetime': np.zeros(0),  # vector (>=max_lbl)
@@ -585,7 +630,9 @@ class MasterTracker(FeatureCalculator):
         # Update lineage state variables
         if len(masks) > 0 and len(new_lbls) > 0:
             ba_probs = self.bud_tracker.predict_mother_bud(
-                p_budneck, p_bud, masks, feats)
+                p_budneck, p_bud, masks, feats[:, self.bt_idx])
+            print(feats[:, self.bt_idx])
+            print(self.bud_tracker.outfeats)
             lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
             lifetime[lblinds] += 1
             p_is_mother[lblinds] = np.maximum(p_is_mother[lblinds],
@@ -630,7 +677,6 @@ class MasterTracker(FeatureCalculator):
 
             output['mother_assign'] = ma.tolist()
 
-        if return_baprobs:
             output['p_bud_assign'] = ba_probs.tolist()
 
         return output
@@ -648,12 +694,28 @@ def switch_case_nfeats(nfeats):
     returns
     list of main and extra feats based on the number of feats
     '''
-    main_feats = {5 : [(
-            'area', 'minor_axis_length', 'major_axis_length', 'convex_area',
+    main_feats = {
+        4 : [(
+            'area', 'minor_axis_length', 'major_axis_length', 
         'bbox_area'), ()],
-
             # Including centroid
-            7 : [('centroid', 'area', 'minor_axis_length',
-                          'major_axis_length', 'convex_area'), ('distance',)]}
+        7 : [('centroid', 'area', 'minor_axis_length', 'major_axis_length',
+              'bbox_area', 'perimeter'), ()],
+            # Including centroid and distance
+        8 : [(
+            'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
+            'bbox_area', 'perimeter'), ('distance',)],
+        12 : [(
+            'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
+            'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
+            'extent',
+            'orientation', 'perimeter'), ()],
+        13 : [(
+            'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
+            'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
+            'extent', 'orientation', 'perimeter'), ('distance', )]
+            # 'feret_diameter_max', not available in current version
+            # 'perimeter_crofton'
+    }
 
     return(main_feats.get(nfeats, []))

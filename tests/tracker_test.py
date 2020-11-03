@@ -75,8 +75,8 @@ def evolve60env(modelsets, image_dir):
         bam = pickle.load(f)
 
     # Set up a tracker for this model set
-    tracker = MasterTracker(ctrack_args={'rf_model': ctm},
-                            btrack_args={'rf_model': bam},
+    tracker = MasterTracker(ctrack_args={'model': ctm},
+                            btrack_args={'model': bam},
                             px_size=0.263)
 
     return tracker, trkF, trkG

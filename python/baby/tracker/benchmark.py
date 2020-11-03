@@ -1,6 +1,7 @@
 import numpy as np
 import pickle
 import pandas as pd
+from pathlib import Path, PosixPath
 
 from baby.tracker.core import CellTracker
 from baby.io import load_tiled_image
@@ -19,12 +20,11 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         self.cindices =  self.indices + ['cellLabels']
         self.meta = meta.copy()
         self.meta['cont_list_index'] = *range(len(self.meta)),
+
         self.tracker = CellTracker(model = model)
         if nstepsback is None:
             self.nstepsback = self.tracker.nstepsback
         self.traps_loc
-        # self.test = self.predict_set(*self.traps_loc[0])
-        # self.calculate_errsum()
 
     @property
     def traps_loc(self):
@@ -78,7 +78,7 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         '''
         Predict labels using tp1-tp2 accuracy of prediction
         '''
-        print("Processing trap {}".format(exp, pos, trap))
+        # print("Processing trap {}".format(exp, pos, trap))
         tp_img_tuple = *self.df_get_imglist(exp, pos, trap),
         tp, lbl_list = self.predict_lbls_from_tpimgs(tp_img_tuple)
         # print("loc {}, {}, {}, labels: {}".format(exp, pos, trap, lbl_list))
@@ -97,7 +97,7 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         list of 2-sized tuples: list of tp id of errors and the mistaken cell
 
         '''
-        print("Testing trap {}, {}, {}".format(exp,pos,trap))
+        print("Processing trap {}, {}, {}".format(exp,pos,trap))
         new_cids = self.predict_set(exp, pos, trap)
 
         test_df = self.meta.loc(axis=0)[(exp, pos, trap)].copy()
@@ -108,7 +108,7 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         local_indices = [[], []]
 
         # Case just defines if it is the test or new set
-        print("Making tp-wise comparison")
+        # print("Making tp-wise comparison")
         for i, case in enumerate((zip(orig[:-1],
                                       orig[1:]), zip(new[:-1], new[1:]))):
             for prev_cells, pos_cells in case:
@@ -119,7 +119,7 @@ class CellBenchmarker: #TODO Simplify this by inheritance
                 local_indices[i] += local_assignment
 
         # Flatten
-        if len(local_indices) > 2: #TODO check why this stopped working
+        if len(local_indices) > 2: 
             flt_test, flt_new = [
                 np.array([j for i in case for j in i]) for case in local_indices
             ]
@@ -142,7 +142,7 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         if len(local_indices)>2:
             return (frac_correct, list(zip(error_list, error_cid)))
         else:
-            print("Single timepoint")
+            # print("Warning: Single set of tps for this position")
             return (frac_correct, error_cid)
 
     def calculate_errsum(self):
