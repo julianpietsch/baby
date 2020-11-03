@@ -122,7 +122,7 @@ class CellTracker(FeatureCalculator):
                  model=None,
                  bak_model=None,
                  low_thresh=None,
-                 up_thresh=None,
+                 high_thresh=None,
                  nstepsback=None,
                  red_fun=None,
                  **kwargs):
@@ -156,9 +156,9 @@ class CellTracker(FeatureCalculator):
 
         if low_thresh is None:
             low_thresh = 0.3
-        if up_thresh is None:
-            up_thresh = 0.7
-        self.low_thresh, self.up_thresh = low_thresh, up_thresh
+        if high_thresh is None:
+            high_thresh = 0.7
+        self.low_thresh, self.high_thresh = low_thresh, high_thresh
 
         if red_fun is None:
             red_fun = np.nanmax
@@ -240,7 +240,7 @@ class CellTracker(FeatureCalculator):
             # assign available hits
             row_ids, col_ids = linear_sum_assignment(-pred_matrix)
             for i,j in zip(row_ids, col_ids):
-                if  pred_matrix[i, j] > self.up_thresh:
+                if  pred_matrix[i, j] > self.high_thresh:
                     new_lbls[j] = prev_lbls[i]
 
         return new_lbls
@@ -275,7 +275,7 @@ class CellTracker(FeatureCalculator):
         for vec in array_3d.reshape(-1, array_3d.shape[2]):
             prob = predict_fun(
                 vec[:self.model.n_features_].reshape(1,-1))[0][1]
-            if self.low_thresh < prob < self.up_thresh:
+            if self.low_thresh < prob < self.high_thresh:
                 prob = bak_pred_fun(vec[:self.bak_model.n_features_].reshape(
                 1,-1))[0][1] 
             pred_list.append(prob)
