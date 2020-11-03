@@ -15,13 +15,13 @@ class CellBenchmarker: #TODO Simplify this by inheritance
 
     This class can also produce confusion matrices for a given Tracker and validation dataset.
      '''
-    def __init__(self, meta, model, nstepsback=None):
+    def __init__(self, meta, model, bak_model, nstepsback=None):
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
         self.meta = meta.copy()
         self.meta['cont_list_index'] = *range(len(self.meta)),
 
-        self.tracker = CellTracker(model = model)
+        self.tracker = CellTracker(model = model, bak_model= bak_model)
         if nstepsback is None:
             self.nstepsback = self.tracker.nstepsback
         self.traps_loc
@@ -150,12 +150,13 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         all_errs = {}
         nerrs = {}
         stepsback = list(range(1, 6))
-        threshs = [0.1, 0.5, 0.9]
+        threshs = [0.65, 0.8, 0.95]
         for nstepsback in stepsback:
             for thresh in threshs:
                 self.nstepsback = nstepsback
                 self.tracker.nstepsback = nstepsback
-                self.ctrack_thresh = thresh
+                self.low_thresh = 1-thresh
+                self.high_thresh = thresh
                 all_errs[(thresh, nstepsback)] = []
                 frac_errs[(thresh, nstepsback)] = []
                 nerrs[(thresh, nstepsback)] = []
@@ -215,11 +216,13 @@ class CellBenchmarker: #TODO Simplify this by inheritance
 
         return truth_mat
 
-    def gen_cm_stats(self, pair, thresh=0.5):
+    def gen_cm_stats(self, pair, thresh=0.7):
 
         masks = [self.masks[i] for i in self.meta.loc[pair,'cont_list_index']]
         feats = [self.tracker.calc_feats_from_mask(mask) for mask in masks]
         ndarray = self.tracker.calc_feat_ndarray(*feats)
+        self.tracker.low_thresh = 1-thresh
+        self.tracker.high_thresh = thresh
         prob_mat = self.tracker.predict_proba_from_ndarray(ndarray)
         pred_mat = prob_mat > thresh
         

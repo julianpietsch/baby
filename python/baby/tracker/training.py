@@ -260,7 +260,8 @@ class CellTrainer(CellTracker):
         '''
         if not hasattr(self, '_benchmarker'):
             val_meta = self.meta.loc[self.meta['train_val'] == 'validation']
-            self._benchmarker = CellBenchmarker(val_meta, self.rf.best_estimator_)
+            self._benchmarker = CellBenchmarker(val_meta, self.rf.best_estimator_,
+                                                self.rf.best_estimator_)
         return self._benchmarker
 
 
