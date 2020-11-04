@@ -375,7 +375,7 @@ class BudTrainer(BudTracker):
 
         self.props = props # also saves
 
-    def explore_hyperparams(self):
+    def explore_hyperparams(self, hyper_param_target='precision'):
         data = self.props.loc[~self.props['validation'], self.rf_feats]
         truth = self.props.loc[~self.props['validation'], 'is_mb_pair']
 
@@ -390,8 +390,15 @@ class BudTrainer(BudTracker):
             'max_depth': [2, 3, 4],
             'class_weight': [None, 'balanced', 'balanced_subsample']
         }
-        scoring = ['accuracy', 'balanced_accuracy', 'precision',
-                   'recall', 'f1'] 
+        scoring = {
+            'accuracy': 'accuracy',
+            'balanced_accuracy': 'balanced_accuracy',
+            'precision': 'precision',
+            'recall': 'recall',
+            'f1': 'f1',
+            'f0_5': metrics.make_scorer(metrics.fbeta_score, beta=0.5),
+            'f2': metrics.make_scorer(metrics.fbeta_score, beta=2)
+        }
 
         def get_balanced_best_index(cv_results_):
             '''Find a model balancing F1 score and speed'''
@@ -401,7 +408,7 @@ class BudTrainer(BudTracker):
             return df.loc[df.mean_test_f1 > thresh, 'mean_score_time'].idxmin()
 
         self._rf = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5,
-                scoring=scoring, refit='f1')
+                scoring=scoring, refit=hyper_param_target)
         self._rf.fit(data, truth)
 
         df = pd.DataFrame(self._rf.cv_results_)

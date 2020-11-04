@@ -831,8 +831,8 @@ class BabyTrainer(object):
             fig.savefig(self.save_dir / 'histories_{}.png'.format(key))
             plt.close(fig)
 
-    def fit_bud_model(self):
-        self.bud_trainer.explore_hyperparams()
+    def fit_bud_model(self, **kwargs):
+        self.bud_trainer.explore_hyperparams(**kwargs)
         model_file = self.save_dir / self.parameters.mother_bud_model_file
         self.bud_trainer.save_model(model_file)
 
