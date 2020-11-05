@@ -551,10 +551,14 @@ class MasterTracker(FeatureCalculator):
                  **kwargs):
         if ctrack_args is None:
             ctrack_args = {}
+        if 'px_size' not in ctrack_args and 'px_size' in kwargs:
+            ctrack_args['px_size'] = kwargs['px_size']
         self.cell_tracker = CellTracker(**ctrack_args)
 
         if btrack_args is None:
             btrack_args = {}
+        if 'px_size' not in btrack_args and 'px_size' in kwargs:
+            btrack_args['px_size'] = kwargs['px_size']
         self.bud_tracker = BudTracker(**btrack_args)
 
         feats2use = set(self.cell_tracker.feats2use).union(set(
