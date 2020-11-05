@@ -115,12 +115,17 @@ class CellTracker(FeatureCalculator):
     :model: sklearn.ensemble.RandomForestClassifier object
     :nstepsback: int Number of timepoints to go back
     :thresh: float Cut-off value to assume a cell is not new
+    :low_thresh: Lower thresh for model switching
+    :high_thresh: Higher thresh for model switching.
+        Probabilities between these two thresholds summon the
+        backup model.
     '''
     def __init__(self,
                  feats2use=None,
                  extra_feats=None,
                  model=None,
                  bak_model=None,
+                 thresh=None,
                  low_thresh=None,
                  high_thresh=None,
                  nstepsback=None,
@@ -133,6 +138,10 @@ class CellTracker(FeatureCalculator):
         if type(model) is str or type(model) is PosixPath: 
             with open(Path(model), 'rb') as f:
                 model = pickle.load(f)
+
+        if type(bak_model) is str or type(bak_model) is PosixPath: 
+            with open(Path(bak_model), 'rb') as f:
+                bak_model = pickle.load(f)
 
         if feats2use is None:
             if model is None:
@@ -154,10 +163,13 @@ class CellTracker(FeatureCalculator):
             nstepsback = 3
         self.nstepsback = nstepsback
 
+        if thresh is None:
+            thresh = 0.5
+        self.thresh = thresh
         if low_thresh is None:
-            low_thresh = 0.3
+            low_thresh = 0.15
         if high_thresh is None:
-            high_thresh = 0.7
+            high_thresh = 0.85
         self.low_thresh, self.high_thresh = low_thresh, high_thresh
 
         if red_fun is None:
@@ -240,7 +252,7 @@ class CellTracker(FeatureCalculator):
             # assign available hits
             row_ids, col_ids = linear_sum_assignment(-pred_matrix)
             for i,j in zip(row_ids, col_ids):
-                if  pred_matrix[i, j] > self.high_thresh:
+                if  pred_matrix[i, j] > self.thresh:
                     new_lbls[j] = prev_lbls[i]
 
         return new_lbls
@@ -276,8 +288,9 @@ class CellTracker(FeatureCalculator):
             prob = predict_fun(
                 vec[:self.model.n_features_].reshape(1,-1))[0][1]
             if self.low_thresh < prob < self.high_thresh:
-                prob = bak_pred_fun(vec[:self.bak_model.n_features_].reshape(
+                bak_prob = bak_pred_fun(vec[:self.bak_model.n_features_].reshape(
                 1,-1))[0][1] 
+                prob = max(prob, bak_prob)
             pred_list.append(prob)
 
         # pred_list = np.array([
