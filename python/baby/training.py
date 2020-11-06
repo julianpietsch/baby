@@ -7,7 +7,7 @@ import numpy as np
 from numpy.polynomial import Polynomial
 from scipy.optimize import curve_fit
 import pandas as pd
-from tqdm import trange
+from tqdm import tqdm, trange
 from skimage import filters
 from skimage import transform
 from skimage.measure import regionprops
@@ -36,7 +36,8 @@ from .losses import bce_dice_loss, dice_coeff
 from . import models
 from .segmentation import (binary_edge, mask_iou, squareconn,
                            morph_radial_thresh_fit, draw_radial)
-from baby.tracker.training import CellTrainer, BudTrainer
+from .performance import calc_IoUs, best_IoU, calc_AP
+from .tracker.training import CellTrainer, BudTrainer
 # from bud_test import BudTrainer
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
@@ -520,17 +521,30 @@ class BabyTrainer(object):
             opt_cnn = self.cnn_opt
             b_iter = batch_iterator(list(range(dgen.n_pairs)),
                                     batch_size=dgen.batch_size)
-            for b_inds in b_iter:
-                batch = [
-                    dgen.get_by_index(b, aug=seg_example_aug) for b in b_inds
-                ]
-                preds = split_batch_pred(
-                    opt_cnn.predict(np.stack([img for img, _, _ in batch])))
-                for pred, (_, lbl, info) in zip(preds, batch):
-                    yield SegExample(pred, lbl.transpose(2, 0, 1), info)
+            with tqdm(total=dgen.n_pairs) as pbar:
+                for b_inds in b_iter:
+                    batch = [
+                        dgen.get_by_index(b, aug=seg_example_aug)
+                        for b in b_inds
+                    ]
+                    preds = split_batch_pred(
+                        opt_cnn.predict(np.stack([img for img, _, _ in batch
+                                                 ])))
+                    for pred, (_, lbl, info) in zip(preds, batch):
+                        pbar.update()
+                        yield SegExample(pred, lbl.transpose(2, 0, 1), info)
 
-        return TrainValProperty(example_generator(self.gen.train),
-                                example_generator(self.gen.val))
+        if self.in_memory:
+            if getattr(self, '_seg_examples', None) is None:
+                self._seg_examples = TrainValProperty(
+                    list(example_generator(self.gen.train)),
+                    list(example_generator(self.gen.val)))
+            return TrainValProperty((e for e in self._seg_examples.train),
+                                    (e for e in self._seg_examples.val))
+        else:
+            self._seg_examples = None
+            return TrainValProperty(example_generator(self.gen.train),
+                                    example_generator(self.gen.val))
 
     @property
     def track_trainer(self):
@@ -817,13 +831,63 @@ class BabyTrainer(object):
             fig.savefig(self.save_dir / 'histories_{}.png'.format(key))
             plt.close(fig)
 
-    def fit_bud_model(self):
-        self.bud_trainer.explore_hyperparams()
+    def fit_bud_model(self, **kwargs):
+        self.bud_trainer.explore_hyperparams(**kwargs)
         model_file = self.save_dir / self.parameters.mother_bud_model_file
         self.bud_trainer.save_model(model_file)
 
     def fit_seg_params(self):
-        pass
+        # interior_threshold: threshold on predicted interior
+        # nclosing: number of closing operations on threshold mask
+        # nopening: number of opening operations on threshold mask
+        #
+        default_params = {
+                'interior_threshold': [0.8, 0.8, 0.8],
+                'nclosing': [2, 2, 2],
+                'nopening': [0, 0, 0],
+                'connectivity': [2,2,2],
+                'edge_sub_dilations': [1, 1, 1],
+                'pedge_thresh': None, 'fit_radial': True,
+                'use_group_thresh': True, 'group_thresh_expansion': 0.1,
+                }
+        params = {
+                'group_thresh_expansion': [-1,0,0.1,0.2], # -1 -> no thresh
+                'nclosing': [0,1,2], 'nopening': [0,1,2],
+                'interior_threshold': np.arange(0.5, 1.0, 0.1).tolist()
+                }
+
+        from joblib import Parallel, delayed
+        import itertools
+        param_grid = list(itertools.product(*params.values()))
+
+        param_pred_segs = {}
+        for gind in range(3)[::-1]:
+            for pars in param_grid:
+                key = 'G({}), NC({:d}), NO({:d}), IT({:.2f})'.format(gind, *pars)
+                print(key)
+                new_params = {k: v.copy() if type(v) == list else v for k, v in default_params.items()}
+                for k, v in zip(params.keys(), pars):
+                    new_params[k][gind] = v
+                param_pred_segs[key] =  Parallel(n_jobs=4, prefer='threads')(
+                        delayed(morph_seg_grouped)(o, flattener, **new_params)
+                        for o in val_pred
+                        )
+
+        param_IoU_mats = {k: [calc_IoUs(t, p) for t, p in zip(val_truth, psegs)]
+                          for k, psegs in param_pred_segs.items()}
+        param_edge_probs = {
+            k: [np.array([np.dstack(pred)[..., [1, 3, 6]].max(axis=2)[s].mean() for s in segs])
+                for pred, segs in zip(val_pred, psegs)]
+            for k, psegs in param_pred_segs.items()
+        }
+
+        param_mIoUs = pd.DataFrame({k: [np.mean(best_IoU(i)[0]) for i in IoU_mats]
+                                    for k, IoU_mats in param_IoU_mats.items()})
+        param_minIoUs = pd.DataFrame({k: [np.min(best_IoU(i)[0], initial=1) for i in IoU_mats]
+                                      for k, IoU_mats in param_IoU_mats.items()})
+        param_mAPs = pd.DataFrame({k: [calc_AP(i, probs=p, iou_thresh=0.7)[0]
+                                       for i, p in zip(IoU_mats, param_edge_probs[k])]
+                                   for k, IoU_mats in param_IoU_mats.items()})
 
 
 class Nursery(BabyTrainer):

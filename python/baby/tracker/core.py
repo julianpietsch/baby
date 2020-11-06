@@ -63,20 +63,25 @@ class FeatureCalculator:
         if px_size is None:
             px_size = self.px_size
 
-        feats=[]
+        if feats2use is None:
+            feats2use = self.feats2use
+        nfeats = len(feats2use)
         if masks.sum():
+            feats = []
             for mask in masks:
                 cell_feats = []
                 for feat in regionprops_table(mask.astype(int),
-                        properties=feats2use or self.feats2use).values():
+                        properties=feats2use).values():
                     cell_feats.append(feat[0])
-
                 if norm:
                     cell_feats = self.norm_feats(cell_feats, px_size)# or self.px_size)
-
                 feats.append(cell_feats)
 
-        return np.array(feats)
+            feats = np.array(feats)
+        else:
+            feats = np.zeros((0, nfeats))
+
+        return feats
 
     def norm_feats(self, feats, px_size):
         '''
@@ -448,6 +453,8 @@ class BudTracker(FeatureCalculator):
 
                 # Draw rectangle
                 r_points = self.get_rpoints(feats, d, m)
+                if r_points is None:
+                    continue
                 rr, cc = polygon(r_points[0, :], r_points[1, :],
                                  p_budneck.shape)
                 if len(rr) == 0:
@@ -538,7 +545,10 @@ class BudTracker(FeatureCalculator):
         # Draw connecting rectangle
         r_hvec = d_centre - m_centre
         r_wvec = np.matmul(np.array([[0, -1], [1, 0]]), r_hvec)
-        r_wvec = r_width * r_wvec / np.linalg.norm(r_wvec)
+        r_wvec_len = np.linalg.norm(r_wvec)
+        if r_wvec_len == 0:
+            return None
+        r_wvec = r_width * r_wvec / r_wvec_len
         r_points = np.zeros((2, 4))
         r_points[:, 0] = m_centre - 0.5 * r_wvec
         r_points[:, 1] = r_points[:, 0] + r_hvec
@@ -563,10 +573,14 @@ class MasterTracker(FeatureCalculator):
                  **kwargs):
         if ctrack_args is None:
             ctrack_args = {}
+        if 'px_size' not in ctrack_args and 'px_size' in kwargs:
+            ctrack_args['px_size'] = kwargs['px_size']
         self.cell_tracker = CellTracker(**ctrack_args)
 
         if btrack_args is None:
             btrack_args = {}
+        if 'px_size' not in btrack_args and 'px_size' in kwargs:
+            btrack_args['px_size'] = kwargs['px_size']
         self.bud_tracker = BudTracker(**btrack_args)
 
         feats2use = set(self.cell_tracker.feats2use).union(set(
@@ -629,7 +643,6 @@ class MasterTracker(FeatureCalculator):
         new_lbls, _, max_lbl = self.cell_tracker.get_new_lbls(
             masks, lastn_lbls, lastn_feats, max_lbl, feats[:,self.ct_idx])
 
-        print("new lbls: ", new_lbls)
         # if necessary, allocate more memory for state vectors/matrices
         init = {
             'lifetime': np.zeros(0),  # vector (>=max_lbl)
@@ -653,8 +666,6 @@ class MasterTracker(FeatureCalculator):
         if len(masks) > 0 and len(new_lbls) > 0:
             ba_probs = self.bud_tracker.predict_mother_bud(
                 p_budneck, p_bud, masks, feats[:, self.bt_idx])
-            print(feats[:, self.bt_idx])
-            print(self.bud_tracker.outfeats)
             lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
             lifetime[lblinds] += 1
             p_is_mother[lblinds] = np.maximum(p_is_mother[lblinds],
@@ -699,6 +710,7 @@ class MasterTracker(FeatureCalculator):
 
             output['mother_assign'] = ma.tolist()
 
+        if return_baprobs:
             output['p_bud_assign'] = ba_probs.tolist()
 
         return output

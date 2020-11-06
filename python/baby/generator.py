@@ -2,6 +2,7 @@ from pathlib import Path
 import numpy as np
 from functools import namedtuple
 from tensorflow.python.keras.utils.data_utils import Sequence
+from tqdm import tqdm
 
 from .io import load_tiled_image
 from .augmentation import Augmenter
@@ -55,7 +56,7 @@ class ImageLabel(Sequence):
         if self.in_memory:
             self.images = [
                 [ppf(*load_tiled_image(img)) for ppf, img
-                 in zip(self.preprocess, imgs)] for imgs in self.paths
+                 in zip(self.preprocess, imgs)] for imgs in tqdm(self.paths)
             ]
 
         # Initialise ordering

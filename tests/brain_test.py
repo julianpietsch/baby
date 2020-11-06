@@ -81,7 +81,8 @@ def test_evolve_segment_and_track(bb, imgstack, imgs_evolve60):
     # Test stateless version
     output = bb.segment_and_track(imgstack,
                                   yield_volumes=True,
-                                  refine_outlines=True)
+                                  refine_outlines=True,
+                                  return_baprobs=True)
     for o in output:
         print(o)
         assert all(
