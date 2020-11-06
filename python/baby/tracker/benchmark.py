@@ -149,7 +149,7 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         frac_errs = {}
         all_errs = {}
         nerrs = {}
-        stepsback = list(range(1, 3))
+        stepsback = list(range(1, 7))
         threshs = [0.65, 0.8, 0.95]
         for nstepsback in stepsback:
             for thresh in threshs:
@@ -157,6 +157,7 @@ class CellBenchmarker: #TODO Simplify this by inheritance
                 self.tracker.nstepsback = nstepsback
                 self.low_thresh = 1-thresh
                 self.high_thresh = thresh
+                self.thresh = thresh*5/8
                 all_errs[(thresh, nstepsback)] = {}
                 frac_errs[(thresh, nstepsback)] = []
                 nerrs[(thresh, nstepsback)] = []

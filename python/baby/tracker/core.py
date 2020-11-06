@@ -11,6 +11,9 @@ from pathlib import Path, PosixPath
 from skimage.measure import regionprops_table
 from skimage.draw import polygon
 from scipy.optimize import linear_sum_assignment
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC#, LinearSVC
+# from sklearn.calibration import CalibratedClassifierCV
 from baby.errors import BadOutput
 
 models_path = join(dirname(__file__), '../models')
@@ -143,21 +146,27 @@ class CellTracker(FeatureCalculator):
             with open(Path(bak_model), 'rb') as f:
                 bak_model = pickle.load(f)
 
+        # Use feat2use for CellTrainer subclass
         if feats2use is None:
             if model is None:
                 model = self.load_model( models_path,
-                                         'ct_rf_20201029_7.pkl')
+                                         'ct_svc_20201106_6.pkl')
             if bak_model is None:
                 bak_model = self.load_model( models_path,
-                                         'ct_rf_20201029_8.pkl')
+                                         'ct_svc_20201106_7.pkl')
             self.model = model
             self.bak_model = bak_model
 
             feats2use, extra_feats = self.get_feats2use()
             
+            self.bak_noutfeats = get_nfeats_from_model(self.bak_model)
+
         self.extra_feats = extra_feats
 
         super().__init__(feats2use, **kwargs)
+        self.noutfeats = get_nfeats_from_model(self.model) if \
+            hasattr(self, 'model') else len(feats2use)+ len(extra_feats)
+
 
         if nstepsback is None:
             nstepsback = 3
@@ -180,8 +189,8 @@ class CellTracker(FeatureCalculator):
         '''
         Return feats to be used from a loaded random forest model model
         '''
-        nfeats = self.model.n_features_
-        nfeats_bak = self.bak_model.n_features_
+        nfeats = get_nfeats_from_model(self.model)
+        nfeats_bak = get_nfeats_from_model(self.bak_model)
         max_nfeats = max((nfeats, nfeats_bak))
 
         return(switch_case_nfeats(max_nfeats))
@@ -286,9 +295,9 @@ class CellTracker(FeatureCalculator):
         pred_list = []
         for vec in array_3d.reshape(-1, array_3d.shape[2]):
             prob = predict_fun(
-                vec[:self.model.n_features_].reshape(1,-1))[0][1]
+                vec[:self.noutfeats].reshape(1,-1))[0][1]
             if self.low_thresh < prob < self.high_thresh:
-                bak_prob = bak_pred_fun(vec[:self.bak_model.n_features_].reshape(
+                bak_prob = bak_pred_fun(vec[:self.bak_noutfeats].reshape(
                 1,-1))[0][1] 
                 prob = max(prob, bak_prob)
             pred_list.append(prob)
@@ -732,3 +741,14 @@ def switch_case_nfeats(nfeats):
     }
 
     return(main_feats.get(nfeats, []))
+
+def get_nfeats_from_model(model):
+    if isinstance(model, SVC):
+        nfeats = model.support_vectors_.shape[-1]
+    # elif isinstance(model, CalibratedClassifierCV):
+    #     nfeats = model.calibrated_classifiers_[0]. \
+    #         base_estimator.coef_.shape[-1]
+    elif isinstance(model, RandomForestClassifier):
+        nfeats = model.n_features_
+
+    return nfeats

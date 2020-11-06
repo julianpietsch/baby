@@ -18,6 +18,8 @@ from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops_table
 from skimage.transform import resize
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC#, LinearSVC
+# from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import GridSearchCV
 from sklearn import metrics
 
@@ -162,10 +164,6 @@ class CellTrainer(CellTracker):
                 for tup in pair_trainset:
                     res_tuples.append(tup)
 
-        # res_tuples = [
-        #     tup for pair in pairs for tup in self.gen_train_from_pair(pair)
-        # ]
-
         return res_tuples
 
     def df_calc_feat_matrix(self, pair_loc, norm=True, px_size=None, df=None):
@@ -216,30 +214,46 @@ class CellTrainer(CellTracker):
 
         return array_3d  
 
-    def explore_hyperparams(self):
-
+    def explore_hyperparams(self, model_type = 'SVC'):
+        self.model_type = model_type
         truth, data = *zip(*self.train),
-        rf = RandomForestClassifier(n_estimators=15,
+        if self.model_type is 'SVC':
+            model = SVC(probability = True, shrinking=False,
+                        verbose=True, random_state=1) 
+            # model = CalibratedClassifierCV(cv=5) 
+            param_grid = {
+                # 'method': ['sigmoid', 'isotonic']
+                # 'class_weight':['balanced', None],
+              # 'C': [0.1, 1, 10, 100, 1000], 
+              'C': [0.1, 10, 100], 
+              'gamma': [1, 0.01, 0.0001],
+              'kernel': ['rbf', 'sigmoid']
+            }
+        elif model_type is 'rf':
+            model = RandomForestClassifier(n_estimators=15,
                                     criterion='gini',
                                     max_depth=3,
                                     class_weight='balanced')
 
-        param_grid = {
-            'n_estimators': [20, 25, 30],
-            'max_features': ['auto', 'sqrt', 'log2'],
-            'max_depth': [None, 3, 4, 5],
-            'class_weight': [None, 'balanced', 'balanced_subsample']
-        }
+            param_grid = {
+                'n_estimators': [20, 25, 30],
+                'max_features': ['auto', 'sqrt', 'log2'],
+                'max_depth': [None, 3, 4, 5],
+                'class_weight': [None, 'balanced', 'balanced_subsample']
+            }
 
-        self.rf = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5)
-        self.rf.fit(data, truth)
-        print(self.rf.best_score_, self.rf.best_params_)
+        self.model = GridSearchCV(estimator=model, param_grid=param_grid, cv=5)
+        self.model.fit(data, truth)
+        print(self.model.best_score_, self.model.best_params_)
 
     def save_model(self, filename):
         date = datetime.date.today().strftime("%Y%m%d")
-        nfeats = str(len(self.outfeats) + len(self.extra_feats))
-        f = open(filename + '_'.join(('ct_rf', date, nfeats)) + '.pkl', 'wb')
-        pickle.dump(self.rf.best_estimator_, f)
+        nfeats = str(self.noutfeats) 
+        model_type = 'svc' if isinstance(self.model, SVC) else 'rf'
+
+        f = open(filename + '_'.join(('ct', model_type, date,
+                                      nfeats)) + '.pkl', 'wb')
+        pickle.dump(self.model.best_estimator_, f)
 
     def save_self(self, filename):
         f = open(filename, 'wb')
@@ -251,7 +265,7 @@ class CellTrainer(CellTracker):
         Create a benchmarker instance to test the newly calculated model
 
         requires
-        :self.rf:
+        :self.model:
         :self.meta:
 
         returns
@@ -260,8 +274,8 @@ class CellTrainer(CellTracker):
         '''
         if not hasattr(self, '_benchmarker'):
             val_meta = self.meta.loc[self.meta['train_val'] == 'validation']
-            self._benchmarker = CellBenchmarker(val_meta, self.rf.best_estimator_,
-                                                self.rf.best_estimator_)
+            self._benchmarker = CellBenchmarker(val_meta, self.model.best_estimator_,
+                                                self.model.best_estimator_)
         return self._benchmarker
 
 
