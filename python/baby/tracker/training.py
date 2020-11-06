@@ -248,8 +248,8 @@ class CellTrainer(CellTracker):
 
     def save_model(self, filename):
         date = datetime.date.today().strftime("%Y%m%d")
-        nfeats = str(self.noutfeats) 
-        model_type = 'svc' if isinstance(self.model, SVC) else 'rf'
+        nfeats = str(self.noutfeats + len(extra_feats))
+        model_type = 'svc' if isinstance(self.model.best_estimator_, SVC) else 'rf'
 
         f = open(filename + '_'.join(('ct', model_type, date,
                                       nfeats)) + '.pkl', 'wb')
