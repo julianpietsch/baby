@@ -3,6 +3,7 @@ import pytest
 import re
 import inspect
 import numpy as np
+import json
 
 import baby
 from baby.brain import BabyBrain
@@ -84,7 +85,7 @@ def test_evolve_segment_and_track(bb, imgstack, imgs_evolve60):
                                   refine_outlines=True,
                                   return_baprobs=True)
     for o in output:
-        print(o)
+        print(json.dumps(o, indent=2))
         assert all(
             [len(o['centres']) == len(o[k]) for k in o if k in eqlen_outkeys])
 

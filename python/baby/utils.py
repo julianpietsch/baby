@@ -55,6 +55,8 @@ def EncodableNamedTuple(obj):
 def jsonify(obj):
     if hasattr(obj, 'toJSON'):
         return obj.toJSON()
+    elif hasattr(obj, 'dtype') and hasattr(obj, 'tolist'):
+        return obj.tolist()
     elif isinstance(obj, tuple):
         return {'_python_tuple': list(obj)}
     if isinstance(obj, set):

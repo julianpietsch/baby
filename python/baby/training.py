@@ -2,6 +2,8 @@ from pathlib import Path
 import shutil
 import json
 import pickle
+import inspect
+from itertools import product, chain
 from typing import NamedTuple, Union, Tuple, Any
 import numpy as np
 from numpy.polynomial import Polynomial
@@ -36,8 +38,11 @@ from .losses import bce_dice_loss, dice_coeff
 from . import models
 from .segmentation import (binary_edge, mask_iou, squareconn,
                            morph_radial_thresh_fit, draw_radial)
+from .morph_thresh_seg import MorphSegGrouped
 from .performance import calc_IoUs, best_IoU, calc_AP
 from .tracker.training import CellTrainer, BudTrainer
+from .brain import default_params
+from .seg_trainer import SegFilterParamOptim, _sub_params
 # from bud_test import BudTrainer
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
@@ -47,7 +52,6 @@ INIT_WEIGHTS_FILE = 'init_weights.h5'
 FINAL_WEIGHTS_FILE = 'final_weights.h5'
 HISTORY_FILE = 'history.pkl'
 LOG_DIR = 'logs'
-
 
 def fix_tf_rtx_gpu_bug():
     """Run to set up TensorFlow session with RTX series NVidia GPUs
@@ -82,6 +86,8 @@ class BabyTrainerParameters(NamedTuple):
     smoothing_sigma_model_file: str = 'smoothing_sigma_model.json'
     flattener_stats_file: str = 'flattener_stats.json'
     flattener_file: str = 'flattener.json'
+    segmentation_stats_file: str = 'segmentation_stats.csv'
+    segmentation_param_file: str = 'segmentation_params.json'
     mother_bud_props_file: str = 'mother_bud_props.csv'
     mother_bud_model_file: str = 'mother_bud_model.pkl'
     cnn_set: Tuple[str, ...] = ('msd_d80', 'unet_4s')
@@ -102,6 +108,28 @@ class SegExample(NamedTuple):
     pred: np.ndarray
     target: np.ndarray
     info: dict
+
+
+# interior_threshold: threshold on predicted interior
+# nclosing: number of closing operations on threshold mask
+# nopening: number of opening operations on threshold mask
+#
+base_seg_params = {
+    'interior_threshold': [0.5, 0.5, 0.5],
+    'nclosing': [0, 0, 0],
+    'nopening': [0, 0, 0],
+    'connectivity': [2, 2, 2],
+    'edge_sub_dilations': [0, 0, 0]
+}
+
+
+seg_param_coords = {
+    'nclosing': [0, 1, 2],
+    'nopening': [0, 1, 2],
+    'interior_threshold': np.arange(0.3, 1.0, 0.05).tolist(),
+    'connectivity': [1, 2],
+    'edge_sub_dilations': [0, 1, 2]
+}
 
 
 class BabyTrainer(object):
@@ -156,9 +184,7 @@ class BabyTrainer(object):
     @parameters.setter
     def parameters(self, params):
         if isinstance(params, dict):
-            p = {}
-            if hasattr(self, '_parameters') and self._parameters:
-                p = self._parameters._asdict()
+            p = self.parameters._asdict()
             p.update(params)
             params = BabyTrainerParameters(**p)
         elif not isinstance(params, BabyTrainerParameters):
@@ -550,14 +576,14 @@ class BabyTrainer(object):
     def track_trainer(self):
         if not hasattr(self, '_track_trainer'):
             self._track_trainer = CellTrainer(self.data._metadata,
-                                               data=self.data)
+                                              data=self.data)
         return self._track_trainer
 
     @track_trainer.setter
     def track_trainer(self, all_feats2use=None):
         self._track_trainer = CellTrainer(self.data._metadata,
-                                           data=self.data,
-                                           all_feats2use=all_feats2use)
+                                          data=self.data,
+                                          all_feats2use=all_feats2use)
 
     @property
     def bud_trainer(self):
@@ -567,6 +593,35 @@ class BabyTrainer(object):
                 props_file=props_file,
                 px_size=self.parameters.target_pixel_size)
         return self._bud_trainer
+
+    @property
+    def seg_param_stats(self):
+        if getattr(self, '_seg_param_stats', None) is None:
+            p = self.parameters
+            stats_file = self.save_dir / p.segmentation_stats_file
+            if not stats_file.is_file():
+                raise BadProcess('"fit_seg_params" has not been run yet')
+            self._seg_param_stats = pd.read_csv(stats_file, index_col=0)
+        return self._seg_param_stats
+
+    @property
+    def seg_params(self):
+        params_file = self.save_dir / self.parameters.segmentation_param_file
+        with open(params_file, 'rt') as f:
+            params = json.load(f)
+        return params
+
+    @seg_params.setter
+    def seg_params(self, val):
+        if not type(val) == dict:
+            raise BadParam('"seg_params" should be a "dict"')
+        msg_args = inspect.getfullargspec(MorphSegGrouped.__init__).args
+        if not set(val.keys()).issubset(msg_args):
+            raise BadParam(
+                '"seg_params" must specify arguments to "MorphSegGrouped"')
+        params_file = self.save_dir / self.parameters.segmentation_param_file
+        with open(params_file, 'wt') as f:
+            json.dump(jsonify(val), f)
 
     def generate_bud_stats(self):
         self.bud_trainer.generate_property_table(self.seg_examples,
@@ -836,58 +891,107 @@ class BabyTrainer(object):
         model_file = self.save_dir / self.parameters.mother_bud_model_file
         self.bud_trainer.save_model(model_file)
 
-    def fit_seg_params(self):
-        # interior_threshold: threshold on predicted interior
-        # nclosing: number of closing operations on threshold mask
-        # nopening: number of opening operations on threshold mask
-        #
-        default_params = {
-                'interior_threshold': [0.8, 0.8, 0.8],
-                'nclosing': [2, 2, 2],
-                'nopening': [0, 0, 0],
-                'connectivity': [2,2,2],
-                'edge_sub_dilations': [1, 1, 1],
-                'pedge_thresh': None, 'fit_radial': True,
-                'use_group_thresh': True, 'group_thresh_expansion': 0.1,
-                }
-        params = {
-                'group_thresh_expansion': [-1,0,0.1,0.2], # -1 -> no thresh
-                'nclosing': [0,1,2], 'nopening': [0,1,2],
-                'interior_threshold': np.arange(0.5, 1.0, 0.1).tolist()
-                }
+    def fit_seg_params(self, njobs=5, scoring='F0_5'):
+        param_grid = list(product(*seg_param_coords.values()))
+        basic_pars = list(seg_param_coords.keys())
 
+        train_examples = list(self.seg_examples.train)
         from joblib import Parallel, delayed
-        import itertools
-        param_grid = list(itertools.product(*params.values()))
-
-        param_pred_segs = {}
+        rows = []
         for gind in range(3)[::-1]:
-            for pars in param_grid:
-                key = 'G({}), NC({:d}), NO({:d}), IT({:.2f})'.format(gind, *pars)
-                print(key)
-                new_params = {k: v.copy() if type(v) == list else v for k, v in default_params.items()}
-                for k, v in zip(params.keys(), pars):
-                    new_params[k][gind] = v
-                param_pred_segs[key] =  Parallel(n_jobs=4, prefer='threads')(
-                        delayed(morph_seg_grouped)(o, flattener, **new_params)
-                        for o in val_pred
-                        )
+            rows.extend(
+                Parallel(n_jobs=njobs)(
+                    delayed(_seg_filter_optim)(gind,
+                                               pars,
+                                               basic_pars,
+                                               self.flattener,
+                                               train_examples,
+                                               base_params=base_seg_params,
+                                               scoring=scoring)
+                    for pars in tqdm(param_grid)))
 
-        param_IoU_mats = {k: [calc_IoUs(t, p) for t, p in zip(val_truth, psegs)]
-                          for k, psegs in param_pred_segs.items()}
-        param_edge_probs = {
-            k: [np.array([np.dstack(pred)[..., [1, 3, 6]].max(axis=2)[s].mean() for s in segs])
-                for pred, segs in zip(val_pred, psegs)]
-            for k, psegs in param_pred_segs.items()
-        }
+        rows_expanded = [
+            dict(
+                chain(*[[('_'.join((k, str(g))), gv)
+                         for g, gv in enumerate(v)] if type(v) == list else [(
+                             k, v)]
+                        for k, v in chain([
+                            ('group', row['group']), ('score', row['score'])
+                        ], row['basic'].items(), row['filter'].items())]))
+            for row in rows
+        ]
 
-        param_mIoUs = pd.DataFrame({k: [np.mean(best_IoU(i)[0]) for i in IoU_mats]
-                                    for k, IoU_mats in param_IoU_mats.items()})
-        param_minIoUs = pd.DataFrame({k: [np.min(best_IoU(i)[0], initial=1) for i in IoU_mats]
-                                      for k, IoU_mats in param_IoU_mats.items()})
-        param_mAPs = pd.DataFrame({k: [calc_AP(i, probs=p, iou_thresh=0.7)[0]
-                                       for i, p in zip(IoU_mats, param_edge_probs[k])]
-                                   for k, IoU_mats in param_IoU_mats.items()})
+        self._seg_param_stats = pd.DataFrame(rows_expanded)
+        stats_file = self.save_dir / self.parameters.segmentation_stats_file
+        self._seg_param_stats.to_csv(stats_file)
+
+        self.refit_filter_seg_params(scoring=scoring)
+
+    def refit_filter_seg_params(self,
+                                lazy=False,
+                                bootstrap=False,
+                                scoring='F0_5'):
+
+        # Merge the best parameters from each group into a single parameter set
+        merged_params = {k: v.copy() for k, v in base_seg_params.items()}
+        stats = self.seg_param_stats
+        for g, r in enumerate(stats.groupby('group').score.idxmax()):
+            for k in merged_params:
+                merged_params[k][g] = stats.loc[r, k + '_' + str(g)]
+
+        sfpo = SegFilterParamOptim(self.flattener,
+                                   basic_params=merged_params,
+                                   scoring=scoring)
+        sfpo.generate_stat_table(self.seg_examples.train)
+
+        sfpo.fit_filter_params(lazy=lazy, bootstrap=bootstrap)
+        merged_params.update(sfpo.opt_params)
+        self.seg_params = merged_params
+
+    def validate_seg_params(self, iou_thresh=0.7, save=True):
+        segmenter = MorphSegGrouped(self.flattener,
+                                    return_masks=True,
+                                    fit_radial=True,
+                                    use_group_thresh=True,
+                                    **self.seg_params)
+        edge_inds = [
+            i for i, t in enumerate(self.flattener.targets)
+            if t.prop == 'edge'
+        ]
+        stats = {}
+        dfs = {}
+        for k, seg_exs in zip(self.seg_examples._fields, self.seg_examples):
+            stats[k] = []
+            for seg_ex in seg_exs:
+                seg = segmenter.segment(seg_ex.pred, refine_outlines=True)
+                edge_scores = np.array([
+                    seg_ex.pred[edge_inds, ...].max(axis=0)[s].mean()
+                    for s in seg.edges
+                ])
+                IoUs = calc_IoUs(seg_ex.target, seg.masks)
+                bIoU, _ = best_IoU(IoUs)
+                stats[k].append((edge_scores, IoUs, np.mean(bIoU),
+                                 np.min(bIoU, initial=1),
+                                 calc_AP(IoUs,
+                                         probs=edge_scores,
+                                         iou_thresh=iou_thresh)[0]))
+            dfs[k] = pd.DataFrame([s[2:] for s in stats[k]],
+                                  columns=['IoU_mean', 'IoU_min', 'AP'])
+
+        display({k: df.mean() for k, df in dfs.items()})
+
+        nrows = len(dfs)
+        ncols = dfs['val'].shape[1]
+        fig, axs = plt.subplots(nrows=nrows,
+                                ncols=ncols,
+                                figsize=(ncols * 4, nrows * 4))
+        for axrow, (k, df) in zip(axs, dfs.items()):
+            for ax, col in zip(axrow, df.columns):
+                ax.hist(df.loc[:, col], bins=26, range=(0, 1))
+                ax.set(xlabel=col, title=k)
+        if save:
+            fig.savefig(self.save_dir / 'seg_validation_plot.png')
+            plt.close(fig)
 
 
 class Nursery(BabyTrainer):
@@ -1092,3 +1196,23 @@ def _best_nerode(szg, min_size):
         if not any([c < min_size for c in e])
     ]
     return ne[0] if len(ne) > 0 else 0
+
+
+def _seg_filter_optim(g,
+                      p,
+                      pk,
+                      flattener,
+                      seg_gen,
+                      base_params=default_params,
+                      scoring='F0_5'):
+    p = _sub_params({(k, g): v for k, v in zip(pk, p)},
+                    base_params)
+    sfpo = SegFilterParamOptim(flattener, basic_params=p, scoring=scoring)
+    sfpo.generate_stat_table(seg_gen)
+    sfpo.fit_filter_params(lazy=True, bootstrap=False)
+    return {
+        'group': g,
+        'basic': p,
+        'filter': sfpo.opt_params,
+        'score': sfpo.opt_score
+    }

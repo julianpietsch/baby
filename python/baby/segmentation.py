@@ -623,7 +623,7 @@ def morph_seg_grouped(pred,
     ngroups = len(cellgroups)
 
     def broadcast_arg(arg, argname, t=int):
-        if type(arg) == t:
+        if type(arg) == t or arg is None:
             arg = (arg,) * ngroups
 
         arg = list(arg)
@@ -637,9 +637,10 @@ def morph_seg_grouped(pred,
     nopening = broadcast_arg(nopening, 'nopening')
     min_area = broadcast_arg(min_area, 'min_area')
     connectivity = broadcast_arg(connectivity, 'connectivity')
-    pedge_thresh = broadcast_arg(pedge_thresh, 'pedge_thresh')
+    if pedge_thresh is not None:
+        pedge_thresh = broadcast_arg(pedge_thresh, 'pedge_thresh', float)
     group_thresh_expansion = broadcast_arg(group_thresh_expansion,
-                                           'group_thresh_expansion')
+                                           'group_thresh_expansion', float)
 
     tnames = flattener.names()
 
@@ -652,9 +653,9 @@ def morph_seg_grouped(pred,
 
     group_segs = []
     p_edges = []
-    for group, thresh, nc, no, ma, conn, gte in \
-            zip(cellgroups, interior_threshold, nclosing,
-                nopening, min_area, connectivity, group_thresh_expansion):
+    groupargs = zip(cellgroups, interior_threshold, nclosing, nopening,
+                    min_area, connectivity, group_thresh_expansion)
+    for group, thresh, nc, no, ma, conn, gte in groupargs:
 
         if type(group) == str:
             group = (group,)

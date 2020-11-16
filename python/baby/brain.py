@@ -146,7 +146,11 @@ class BabyBrain(object):
         self.flattener = SegmentationFlattening(flattener_file)
         self.params = params
 
+        if ('use_group_thresh' not in self.params and
+                'group_thresh_expansion' in self.params):
+            self.params['use_group_thresh'] = True
         self.morph_segmenter = MorphSegGrouped(self.flattener,
+                                               fit_radial=True,
                                                return_masks=True,
                                                return_coords=True,
                                                **self.params)

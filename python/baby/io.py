@@ -132,6 +132,8 @@ class TrainValPairs(object):
     @property
     def metadata(self):
         if getattr(self, '_metadata', None) is None:
+            if len(self.training) == 0 and len(self.validation) == 0:
+                return []
             trainvalpairs = {
                 'training': self.training,
                 'validation': self.validation
@@ -150,8 +152,11 @@ class TrainValPairs(object):
                 sub_metadata.append(pd.DataFrame(pair_meta))
                 sub_metadata[-1]['list_index'] = sub_metadata[-1].index
             self._metadata = pd.concat(sub_metadata, axis=0, ignore_index=True)
-            self._metadata = self.metadata.loc[
-                np.array([x[0] for x in self.metadata['tilesize']])==81]
+            # TODO
+            # The following shouldn't be there- nursery is meant to handle any
+            # tile size (which is distinct from pixel size)
+            # self._metadata = self.metadata.loc[
+            #     np.array([x[0] for x in self.metadata['tilesize']])==81]
             self._metadata.sort_values(['experimentID', 'position', 'trap', 'tp'], inplace=True)
             self._metadata.set_index(['experimentID', 'position', 'trap'], inplace=True)
             self._metadata_tp = self._metadata.set_index('tp', append=True)

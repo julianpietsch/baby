@@ -352,6 +352,10 @@ class MorphSegGrouped:
                                            'edge_substraction_dilations',
                                            n_groups)
 
+        # Minimum area must be larger than 1 to avoid generating cells with
+        # no size:
+        min_area = [np.max([a, 1]) for a in min_area]
+
         # Initialize the different groups and their targets
         self.groups = []
         for i, target_names in enumerate(cellgroups):
@@ -406,6 +410,10 @@ class MorphSegGrouped:
     def extract_edges(self, pred, shape, refine_outlines, return_volume):
         masks = [[]]
         if refine_outlines:
+            if not self.fit_radial:
+                raise BadParam(
+                    '"refine_outlines" requires "fit_radial" to have been specified'
+                )
             # Refine outlines using edge predictions
             grouped_coords = [[cell.coords for cell in group.cells]
                               for group in self.groups]
