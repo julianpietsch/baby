@@ -58,7 +58,7 @@ class Cell:
             rprop = single_region_prop(self.mask)
             coords, edge = outline_to_radial(self.edge, rprop,
                                              return_outline=True)
-            self.mask = ndimage.binary_fill_holes(self.edge)
+            self.mask = ndimage.binary_fill_holes(edge)
         else:
             edge = self._edge | (self.border_rect & self.mask)
             coords = tuple()

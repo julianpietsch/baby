@@ -20,10 +20,10 @@
       "nopening": [2, 2, 1],
       "connectivity": [1, 2, 2],
       "edge_sub_dilations": [0, 1, 0],
-      "containment_thresh": 0.9,
+      "containment_thresh": 0.85,
       "min_area": 1,
       "pedge_thresh": [0.0032, 0.0063, 0.0],
-      "group_thresh_expansion": [0.26, 0.32, 0.0]
+      "group_thresh_expansion": [0.235, 0.32, 0.0]
     }
   },
   "prime95b_brightfield_60x_1z": {
