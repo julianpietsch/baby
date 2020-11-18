@@ -15,6 +15,7 @@ from baby.morph_thresh_seg import MorphSegGrouped
 from baby.performance import calc_IoUs, best_IoU, calc_AP
 from baby.seg_trainer import SegFilterParamOptim, _sub_params
 from baby.tracker.training import CellTrainer, BudTrainer
+from baby.training import CNNTrainer
 
 from matplotlib import pyplot as plt
 from tqdm import tqdm
