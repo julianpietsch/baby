@@ -21,7 +21,7 @@ setup(
                       'numpy',
                       'pandas',
                       'scikit-image',
-                      'scikit-learn',
+                      'scikit-learn==0.22.2',
                       'tqdm',
                       'tensorflow>=1.14',
                       'imageio',

@@ -1,7 +1,5 @@
 from .smoothing_model_trainer import SmoothingModelTrainer
 from .flattener_trainer import FlattenerTrainer
-from .bud_trainer import BudTrainer
-from .track_trainer import TrackTrainer
 # Todo: separate based on TFv1 or TFv2
 import tensorflow as tf
 if tf.__version__.startswith('1'):
@@ -12,4 +10,5 @@ else:
 from .cnn_trainer import CNNTrainer
 
 from .training import *
+from .utils import fix_tf_rtx_gpu_bug
 

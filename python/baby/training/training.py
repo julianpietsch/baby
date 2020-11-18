@@ -14,7 +14,7 @@ from baby.brain import default_params
 from baby.morph_thresh_seg import MorphSegGrouped
 from baby.performance import calc_IoUs, best_IoU, calc_AP
 from baby.seg_trainer import SegFilterParamOptim, _sub_params
-from baby.tracker.training import CellTrainer
+from baby.tracker.training import CellTrainer, BudTrainer
 
 from matplotlib import pyplot as plt
 from tqdm import tqdm
@@ -30,9 +30,6 @@ from .utils import BabyTrainerParameters, TrainValProperty, \
     augmented_generator
 from .smoothing_model_trainer import SmoothingModelTrainer
 from .flattener_trainer import FlattenerTrainer
-from .cnn_trainer import CNNTrainer
-from .track_trainer import TrackTrainer
-from .bud_trainer import BudTrainer
 
 from baby.utils import find_file, as_python_object, jsonify, batch_iterator, \
     split_batch_pred
@@ -317,10 +314,10 @@ class BabyTrainer(object):
             'validation' if validation else 'training'))
 
     def generate_smoothing_sigma_stats(self):
-        train_gen = augmented_generator(self.gen.train, lambda x, y: (x, y))
-        val_gen = augmented_generator(self.gen.train, lambda x, y: (x, y))
+        # train_gen = augmented_generator(self.gen.train, lambda x, y: (x, y))
+        # val_gen = augmented_generator(self.gen.train, lambda x, y: (x, y))
         self.smoothing_sigma_trainer.generate_smoothing_sigma_stats(
-            train_gen, val_gen)
+            self.gen.train, self.gen.val)
 
     @property
     def smoothing_sigma_stats(self):
