@@ -114,6 +114,7 @@ class SmoothingModelTrainer:
         self.stats_file = save_dir / stats_file
         self.model_file = save_dir / model_file
         self._model = None
+        self._stats = None
 
     def generate_smoothing_sigma_stats(self, train_gen, val_gen):
         with augmented_generator(train_gen, lambda x, y: (x, y)) as gen:
@@ -127,13 +128,13 @@ class SmoothingModelTrainer:
 
     @property
     def stats(self):
-        if self._model is None:
+        if self._stats is None:
             if not self.stats_file.exists():
                 raise BadProcess(
                     'smoothing sigma stats have not been generated')
-            self._model = pd.read_csv(self.stats_file)
-        return TrainValProperty(self._model[~self._model['validation']],
-                                self._model[self._model['validation']])
+            self._stats = pd.read_csv(self.stats_file)
+        return TrainValProperty(self._stats[~self._stats['validation']],
+                                self._stats[self._stats['validation']])
 
     @property
     def model(self):
@@ -229,5 +230,5 @@ class SmoothingModelTrainer:
                    xlabel='nedge',
                    ylabel='sigma',
                    ylim=[0, sigma_max])
-
+        fig.tight_layout()
         fig.savefig(self.save_dir / 'fitted_smoothing_sigma_model.png')

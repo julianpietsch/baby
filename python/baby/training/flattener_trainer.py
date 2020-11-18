@@ -97,15 +97,14 @@ class FlattenerTrainer:
                                  train_aug, val_aug, max_erode=5):
         # Set up temporary flattener
         old_flattener = getattr(self, '_flattener', None)
-        self.flattener = lambda x, y: x
+        self._flattener = lambda x, y: x # FIXME change using property + dummy Flattener
         try:
             with augmented_generator(train_gen, train_aug) as gen:
                 fs_train = _generate_flattener_stats(gen, max_erode)
             with augmented_generator(val_gen, val_aug) as gen:
                 fs_val = _generate_flattener_stats(gen, max_erode)
         finally:
-            self.flattener = old_flattener
-
+            self._flattener = old_flattener
         with open(self.stats_file, 'wt') as f:
             json.dump({'train': fs_train, 'val': fs_val}, f)
         self._stats = None  # trigger reload of property
