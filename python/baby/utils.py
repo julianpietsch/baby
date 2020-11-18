@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import NamedTuple, Any
 from importlib import import_module
 import numpy as np
+from baby.errors import BadParam
 
 
 class Timer(object):

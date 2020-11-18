@@ -75,7 +75,7 @@ class Augmenter(object):
                 raise BadParam('"substacks" must be a positive integer')
         self.nsubstacks = substacks
 
-    def __call__(self, img, lbl):
+    def __call__(self, img, lbl_info):
         """
         Random data augmentation of img and lbl.
 
@@ -92,6 +92,10 @@ class Augmenter(object):
         """
 
         # Ensure that img and lbl have the same xy dimensions
+        if isinstance(lbl_info, tuple):
+            lbl, info = lbl_info
+        else:
+            lbl = lbl_info
         assert img.shape[:2] == lbl.shape[:2], \
             'xy dimensions of img and lbl are mismatched'
 
@@ -496,9 +500,9 @@ class ScalingAugmenter(SmoothedLabelAugmenter):
         self._scaling = self._input_pix_size / self.target_pixel_size
         self._outshape = np.round(np.array(self.xy_out) / self._scaling)
         img, lbl = super(ScalingAugmenter, self).__call__(img, lbl_info)
-        self._input_pix_size = None
-        self._scaling = None
-        self._outshape = None
+       # self._input_pix_size = None
+       # iself.scaling = None
+       # self._outshape = None
         return img, lbl
 
     def vshift(self, img, lbl, maxpix=None):

@@ -1,20 +1,21 @@
 import json
 import re
+
 from pathlib import Path
+from typing import Union
 from fnmatch import translate as glob_to_re
 from os import walk
 from itertools import groupby, chain, repeat
-from functools import namedtuple
+from collections import namedtuple, Counter
 import numpy as np
-from imageio import imread, imwrite
+import pandas as pd
 from PIL.PngImagePlugin import PngInfo
+from imageio import imread, imwrite
 from sklearn.model_selection import train_test_split
 
-from .utils import PathEncoder
 from .errors import LayoutError, UnpairedImagesError
+from .utils import PathEncoder
 
-import pandas as pd
-from collections import Counter
 
 def load_tiled_image(filename):
     tImg = imread(filename)
@@ -75,7 +76,7 @@ def load_paired_images(filenames, typeA='Brightfield', typeB='segoutlines'):
     valid = filter(lambda m: m[0], zip(matches, filenames))
     grouped = {
         k: {m.group(2): f for m, f in v
-           } for k, v in groupby(valid, key=lambda m: m[0].group(1))
+            } for k, v in groupby(valid, key=lambda m: m[0].group(1))
     }
     valid = [
         set(v.keys()).issuperset({typeA, typeB}) for v in grouped.values()
@@ -84,7 +85,7 @@ def load_paired_images(filenames, typeA='Brightfield', typeB='segoutlines'):
         raise UnpairedImagesError
     return {
         l: {t: load_tiled_image(f) for t, f in g.items()
-           } for l, g in grouped.items()
+            } for l, g in grouped.items()
     }
 
 
@@ -114,7 +115,7 @@ class TrainValPairs(object):
         if not isinstance(pairs, list):
             raise ValueError('"validation" must be a list')
         self._val_pairs = pairs
-        self._metadata = None # reset metadata if validation data changes
+        self._metadata = None  # reset metadata if validation data changes
 
     @property
     def ncells(self):
@@ -142,12 +143,14 @@ class TrainValPairs(object):
             for k, pairs in trainvalpairs.items():
                 pair_meta = []
                 for _, l in pairs:
-                    info = json.loads(imread(l).meta.get('Description', '{}'))
-                    pair_meta.append({field : value for field, value in info.items()})
-                    pair_meta[-1]['cellLabels'] = aslist(pair_meta[-1]['cellLabels'])
+                    info = json.loads(imread(l).meta.get(
+                        'Description', '{}'))
+                    pair_meta.append(
+                        {field: value for field, value in info.items()})
+                    pair_meta[-1]['cellLabels'] = aslist(
+                        pair_meta[-1]['cellLabels'])
                     pair_meta[-1]['filename'] = l
                     pair_meta[-1]['train_val'] = k
-
 
                 sub_metadata.append(pd.DataFrame(pair_meta))
                 sub_metadata[-1]['list_index'] = sub_metadata[-1].index
@@ -161,11 +164,10 @@ class TrainValPairs(object):
             self._metadata.set_index(['experimentID', 'position', 'trap'], inplace=True)
             self._metadata_tp = self._metadata.set_index('tp', append=True)
             # TODO: assert that all index has the same  trainval field
-
         return self._metadata
 
     @property
-    def traps(self, chunk_size = 4, min_tp = 2, trap_together=True):
+    def traps(self, chunk_size=4, min_tp=2, trap_together=True):
         ''' Group the data in chunks to use for cell tracking random forest cross-validation'''
         # df = self._metadata[self._metadata['train_val']=='training'] #TODO Reconsider this filter
         traps = pd.DataFrame(self._metadata.sort_values(['tp']).groupby(
@@ -176,18 +178,19 @@ class TrainValPairs(object):
         traps['indices'] = find_continuous_tps(traps['tp_uniq'], chunk_size)
         traps['cont'] = [l[inds] for i, (l, inds) in enumerate(traps[['tp_uniq', 'indices']].values)]
         #TODO ALAN: Add split operation
-        
 
-        if not trap_together: # shuffle after splitting rn chunks?
+        if not trap_together:  # shuffle after splitting rn chunks?
             traps = traps.sample(frac=1, random_state=24)
 
         # remove non-continuous values
-        traps = traps.loc[traps['cont'].apply(len)>min_tp] #clean up
+        traps = traps.loc[traps['cont'].apply(len) > min_tp]  # clean up
         self._traps = traps
         return self._traps
         # return tp_chunks
 
-    def load(self, filename):
+    def load(self, filename, base_dir: Union[Path, str] = './'):
+        if isinstance(base_dir, str):
+            base_dir = Path(base_dir)
         with open(filename, 'rt') as f:
             trainval = json.load(f)
         if 'train_data' in trainval and 'val_data' in trainval:
@@ -196,20 +199,35 @@ class TrainValPairs(object):
         else:
             train_pairs = trainval.get('training', [])
             val_pairs = trainval.get('validation', [])
-        train_pairs = [(Path(img), Path(lbl)) for img, lbl in train_pairs]
-        val_pairs = [(Path(img), Path(lbl)) for img, lbl in val_pairs]
+        train_pairs = [(base_dir / img, base_dir / lbl)
+                       for img, lbl in train_pairs]
+        val_pairs = [(base_dir / img, base_dir / lbl)
+                     for img, lbl in val_pairs]
         self.training = train_pairs
         self.validation = val_pairs
 
-    def save(self, filename):
-        with open(filename, 'wt') as f:
-            json.dump(
+    def save(self, filename, base_dir: Union[Path, str] = './'):
+        if isinstance(base_dir, str):
+            base_dir = Path(base_dir)
+        # Create a string first to catch exceptions and avoid overwriting
+        # the train_val_pairs file
+        try:
+            data = json.dumps(
+
                 {
-                    'training': self.training,
-                    'validation': self.validation
+                    'training': [tuple(path.relative_to(base_dir)
+                                       for path in p)
+                                 for p in self.training],
+                    'validation': [tuple(path.relative_to(base_dir)
+                                         for path in p)
+                                   for p in self.validation]
                 },
-                f,
                 cls=PathEncoder)
+            with open(filename, 'wt') as f:
+                f.write(data)
+
+        except ValueError as e:
+            raise e
 
     def add_from(self,
                  base_dir,
@@ -238,15 +256,12 @@ class TrainValPairs(object):
         # Group by path and prefix (i.e., excluding suffix):
         prefix = lambda x: str(x[2].parent) + x[1].group(1)
         first = lambda x: x[0]
-        grouped = [{
-            t: list(ims)
-            for t, ims in groupby(sorted(p, key=first), key=first)
-        }
-                   for _, p in groupby(matches, key=prefix)]
-
+        grouped = [{t: list(ims)
+                    for t, ims in groupby(sorted(p, key=first), key=first)}
+                    for _, p in groupby(matches, key=prefix)]
         if not only_outlines: # replace imgs with img if only using outlines
             pairs = [(p['img'][0][2], p['lbl'][0][2])
-                 for p in grouped
+                        for p in grouped
                  if len(p.get('img', [])) == 1 and len(p.get('lbl', [])) == 1]
         else:
             pairs = [(p['img'][0][2], p['img'][0][2])
@@ -276,12 +291,15 @@ class TrainValPairs(object):
         train_groups, val_groups = set(train_groups), set(val_groups)
 
         # Add new pairs to the existing train-val split
-        self.training += [p for p, g in zip(pairs, pair_groups) if g in train_groups]
-        self.validation += [p for p, g in zip(pairs, pair_groups) if g in val_groups]
+        self.training += [p for p, g in zip(pairs, pair_groups) if
+                          g in train_groups]
+        self.validation += [p for p, g in zip(pairs, pair_groups) if
+                            g in val_groups]
 
     def __repr__(self):
         return 'TrainValPairs: {:d} training and {:d} validation pairs'.format(
             len(self.training), len(self.validation))
+
 
 # ---------------- HELPER FUNCTIONS -----------------------
 
@@ -321,4 +339,4 @@ def find_indices(groups, chunk_size, return_max=True):
         maxind = sizes.index(np.max(sizes))
         indices = indices[maxind]
     return indices
-            
+

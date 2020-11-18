@@ -1,47 +1,31 @@
+import pickle
 from itertools import chain
-
 from pathlib import Path
 
-import json
-
 import numpy as np
-from matplotlib import pyplot as plt
-import seaborn as sns
 import pandas as pd
-import pickle
-
-
-from skimage.segmentation import watershed, active_contour
-from skimage.measure import label, regionprops, regionprops_table
-from skimage.draw import ellipse_perimeter
-from skimage.draw import polygon
-from skimage.feature import peak_local_max
-from scipy import ndimage as ndi
-from scipy.ndimage import (
-    binary_fill_holes, binary_dilation, binary_erosion, binary_closing, minimum_filter
-)
-
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import GridSearchCV
-
 import tensorflow as tf
-
-from baby.visualise import plot_ims, colour_segstack, plot_IoU, colour_seg
+from baby.brain import BabyBrain
 from baby.io import load_tiled_image
+from baby.performance import calc_IoUs, best_IoU
 from baby.preprocessing import (
     robust_norm, SegmentationFlattening, flattener_norm_func, seg_norm
 )
-from baby.performance import calc_IoUs, best_IoU, calc_PR, calc_AP
+from baby.segmentation import morph_seg_grouped
 from baby.utils import batch_iterator, split_batch_pred
-from baby.brain import BabyBrain
-from baby.segmentation import draw_radial, morph_seg_grouped
+from scipy.ndimage import (
+    binary_fill_holes
+)
+from skimage.draw import polygon
+from skimage.measure import regionprops, regionprops_table
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import GridSearchCV
 
-config = tf.ConfigProto()
-config.gpu_options.allow_growth = True
-tf.keras.backend.set_session(tf.Session(config=config))
+if tf.__version__.startswith('1'):
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    tf.keras.backend.set_session(tf.Session(config=config))
 
-from tensorflow.python.keras import models
-from tensorflow.python.keras import layers as KL
 
 class BudTrainer:
     '''

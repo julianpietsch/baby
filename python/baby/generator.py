@@ -15,7 +15,6 @@ from .preprocessing import segoutline_flattening as preprocess_segim
 
 ImageLabelShapes = namedtuple('ImageLabelShapes', ('input', 'output'))
 
-
 class ImageLabel(Sequence):
     def __init__(self, paths, batch_size, aug, preprocess=None,
                  in_memory=False):
