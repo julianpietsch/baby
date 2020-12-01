@@ -65,6 +65,8 @@ class SegExample(NamedTuple):
 #
 # TODO Create SegTrainer
 # TODO Add default parameters to SegTrainer
+#   Structure taht the parameters should actually be (shape/size)
+#   Thresholds modified to the correct parameters
 base_seg_params = {
     'interior_threshold': [0.5, 0.5, 0.5],
     'nclosing': [0, 0, 0],
@@ -74,6 +76,7 @@ base_seg_params = {
 }
 
 # Todo add default parameters to SegTrainer
+#       Search space !
 seg_param_coords = {
     'nclosing': [0, 1, 2],
     'nopening': [0, 1, 2],
@@ -189,10 +192,19 @@ class BabyTrainer(object):
             self._track_trainer = CellTrainer(self.data._metadata, self.data)
         return self._track_trainer
 
+    @track_trainer.setter
+    def track_trainer(self, all_feats2use=None):
+        self._track_trainer = CellTrainer(self.data._metadata,
+                                          data=self.data,
+                                          all_feats2use=all_feats2use)
+
     @property
     def bud_trainer(self):
-        if self._bud_trainer is None:
-            self._bud_trainer = BudTrainer(self.data._metadata, self.data)
+        props_file = self.save_dir / self.parameters.mother_bud_props_file
+        if not hasattr(self, '_bud_trainer') or not self._bud_trainer:
+            self._bud_trainer = BudTrainer(
+                props_file=props_file,
+                px_size=self.parameters.target_pixel_size)
         return self._bud_trainer
 
     @property
@@ -497,11 +509,6 @@ class BabyTrainer(object):
                       DeprecationWarning)
         self.cnn_trainer.plot_histories(**kwargs)
 
-    # Todo: move to SegmentationParamTrainer
-    # Todo fill
-    def fit_seg_params(self):
-        pass
-
     # TODO: move to Segmentation Param Trainer
     @property
     def seg_examples(self):
@@ -601,6 +608,7 @@ class BabyTrainer(object):
         param_grid = list(product(*seg_param_coords.values()))
         basic_pars = list(seg_param_coords.keys())
 
+        # TODO switch back to validation examples
         train_examples = list(self.seg_examples.train)
         from joblib import Parallel, delayed
         rows = []

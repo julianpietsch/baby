@@ -111,8 +111,3 @@ def schedule_steps(epoch, steps):
             return step[0]
     print("Setting learning rate to {}".format(steps[-1][0]))
     return steps[-1][0]
-
-
-class TrainValProperty(NamedTuple):
-    train: Any
-    val: Any

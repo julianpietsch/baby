@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Union
 
-from baby.hypermodels import get_hypermodel
+from baby.training.hypermodels import get_hypermodel
 from kerastuner import RandomSearch, Hyperband, BayesianOptimization, Tuner, \
     HyperModel
 
@@ -22,14 +22,14 @@ def instantiate_tuner(model, method='random', **kwargs):
 
 
 class HyperParameterTrainer:
-    """
-    Class that chooses the best hyperparameters for a specific model-type.
+    """Optimises hyperparameters for different CNN architectures.
 
     Note: uses Keras-tuner Hypermodels -- requires tensorflow 2
 
     Outputs: a set of parameters for that form of model, into a file.
-    If using tensorflow 1: these parameters need to be set by the user by
-    default.
+    If using tensorflow 1: default parameters are used but they can be set
+    by the user under "hyperparameters.json" under each CNN architecture's
+    dedicated directory.
     """
 
     def __init__(self, save_dir: Path, cnn_set, gen, aug, outputs,
@@ -122,6 +122,11 @@ class HyperParameterTrainer:
         with open(filename, 'w') as fd:
             json.dump(self.best_parameters, fd)
 
+    def use_defaults(self):
+        filename = self.cnn_dir / 'hyperparameters.json'
+        with open(filename, 'w') as fd:
+            json.dump(self.cnn.defaults, fd)
+
     def search(self, epochs=100, steps_per_epoch=10, validation_steps=10,
                **kwargs):
         """
@@ -166,8 +171,7 @@ class HyperParameterTrainer:
         pass
 
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-from tensorflow.core.util.event_pb2 import Event
-import os 
+
 
 def extract(dpath, subpath):
     scalar_accumulators = [EventAccumulator(str(dpath / dname /

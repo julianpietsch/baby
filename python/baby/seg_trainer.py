@@ -2,6 +2,7 @@ from math import floor, log10
 from itertools import combinations, product, chain, repeat
 from typing import NamedTuple, Union, Tuple, Any
 import numpy as np
+np.seterr(all='ignore')
 import pandas as pd
 
 from baby.segmentation import mask_containment
@@ -28,7 +29,17 @@ class Score(NamedTuple):
 
 
 class SegFilterParamOptim:
-
+    """
+    # TODO What does this class do
+        * What are the parameters and what do they mean
+        * What are the defaults, what are the ranges/admissible options?
+    :param flattener:
+    :param basic_params:
+    :param IoU_thresh:
+    :param scoring:
+    :param nbootstraps:
+    :param bootstrap_frac:
+    """
     def __init__(self,
                  flattener,
                  basic_params={},
@@ -36,6 +47,7 @@ class SegFilterParamOptim:
                  scoring='F0_5',
                  nbootstraps=10,
                  bootstrap_frac=0.9):
+
         self.IoU_thresh = IoU_thresh
         self.scoring = scoring
         self.nbootstraps = nbootstraps
@@ -66,6 +78,16 @@ class SegFilterParamOptim:
 
     @property
     def scoring(self):
+        """ The scoring method used during evaluation of the segmentation.
+        Accepted values are: # TODO define the scoring metrics
+        * precision:
+        * recall:
+        * F1:
+        * F0_5:
+        * F2:
+        * meanIoU:
+        :return: str scoring method
+        """
         return self._scoring
 
     @scoring.setter
@@ -174,12 +196,17 @@ class SegFilterParamOptim:
         df_truth = df_truth.set_index('example')
         self._nPs = df_truth.ncells
 
-        df = pd.DataFrame(rows,
-                          columns=[
-                              'example', 'group', 'cell', 'area', 'p_edge',
-                              'containment', 'assignments', 'max_IoU',
-                              'best_assignments'
-                          ])
+        dtypes = [('example', np.uint16),
+                  ('group', np.uint8),
+                  ('cell', np.uint16),
+                  ('area', np.uint16),
+                  ('p_edge', np.float64),
+                  ('containment', np.uint16),
+                  ('assignments', np.uint16),
+                  ('max_IoU', np.float64),
+                  ('best_assignments', np.uint16)]
+        df = pd.DataFrame(np.array(rows, dtype=dtypes))
+
         df['is_best'] = ((df.best_assignments >= 0) &
                          (df.max_IoU >= self.IoU_thresh))
         df['eid'] = df.example

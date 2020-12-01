@@ -1,7 +1,12 @@
+"""Optimising the hyper-parameters of the `SegmentationFlattener`"""
 import json
+import pathlib
+
 import matplotlib.pyplot as plt
 import numpy as np
+from baby.augmentation import Augmenter
 from baby.errors import BadProcess, BadType, BadParam
+from baby.generator import ImageLabel
 from baby.preprocessing import dwsquareconn, SegmentationFlattening
 from baby.utils import find_file
 from scipy.ndimage import binary_erosion
@@ -9,7 +14,18 @@ from scipy.ndimage import binary_erosion
 from .utils import augmented_generator, TrainValProperty
 
 
-def _generate_flattener_stats(gen, max_erode):
+def _generate_flattener_stats(gen: ImageLabel, max_erode: int) -> dict:
+    """ Generates flattener statistics of the data output by the generator.
+
+    This function measures the size (in pixels) of segmentation mask
+    overlaps and the number of binary erosions necessary to remove the overlap
+    between any pairs of cells in the data contained in the generator.
+
+    :param gen: the data generator on which to compute statistics
+    :param max_erode: the maximum number of erosions to consider
+    :return: the statistics in a dictionary with keys `overlap_sizes` and
+    `erosion_sizes`
+    """
     nerode = list(range(max_erode + 1))
     overlap_sizes = [[] for _ in nerode]
     erosion_sizes = []
@@ -40,11 +56,27 @@ def _generate_flattener_stats(gen, max_erode):
 
 
 def _group_sizes(es, thresh, pad=0):
+    """Returns the upper and lower bounds for cell group sizes.
+
+    #TODO not sure what the parameters mean
+    :param es:
+    :param thresh:
+    :param pad:
+    :return:
+    """
     return ([s for s in es if s[0] < thresh + pad],
             [s for s in es if s[0] >= thresh - pad])
 
 
 def _group_overlapping(os, thresh, pad=0):
+    """#TODO not sure what this function does
+
+    #TODO not sure what the parameters mean
+    :param os:
+    :param thresh:
+    :param pad:
+    :return:
+    """
     return ([
                 (x, y, w) for x, y, w in os if
                 x < thresh + pad and y < thresh + pad
@@ -54,6 +86,14 @@ def _group_overlapping(os, thresh, pad=0):
 
 
 def _best_overlapping(overlapping, erosion_sizes, min_size):
+    """#TODO not sure what this function does
+
+    #TODO not sure what these parameters mean
+    :param overlapping:
+    :param erosion_sizes:
+    :param min_size:
+    :return:
+    """
     sz_erosions = list(zip(*erosion_sizes))
     e_invalid = [any([c < min_size for c in e]) for e in
                  sz_erosions[:0:-1]]
@@ -63,6 +103,14 @@ def _best_overlapping(overlapping, erosion_sizes, min_size):
 
 
 def _sum_group_overlapping(os, thresh, pad=0):
+    """#TODO not sure what this function does
+
+    #TODO not sure what these parameters mean
+    :param os:
+    :param thresh:
+    :param pad:
+    :return:
+    """
     return tuple(
         sum([w
              for _, _, w in og])
@@ -70,6 +118,14 @@ def _sum_group_overlapping(os, thresh, pad=0):
 
 
 def _find_best_fgroup_split(os, edges, pad=0):
+    """#TODO not sure what this function does
+
+    #TODO not sure what these parameters mean
+    :param os:
+    :param edges:
+    :param pad:
+    :return:
+    """
     overlaps = [
         _sum_group_overlapping(os, thresh, pad=pad) for thresh in edges
     ]
@@ -77,6 +133,13 @@ def _find_best_fgroup_split(os, edges, pad=0):
 
 
 def _best_nerode(szg, min_size):
+    """#TODO not sure what this function does
+
+    #TODO not sure what these parameters mean
+    :param szg:
+    :param min_size:
+    :return:
+    """
     ne = [
         n for n, e in list(enumerate(zip(*szg)))[:0:-1]
         if not any([c < min_size for c in e])
@@ -86,15 +149,37 @@ def _best_nerode(szg, min_size):
 
 
 class FlattenerTrainer:
-    def __init__(self, save_dir, stats_file, flattener_file):
+    def __init__(self, save_dir: pathlib.Path,
+                 stats_file: str, flattener_file: str):
+        """Optimises the hyper-parameters for the `SegmentationFlattener`.
+
+
+
+        #TODO describe method for optimisation
+        :param save_dir: the base directory in which to save outputs
+        :param stats_file: the name of the file in which the stats are saved
+        :param flattener_file: the name of the file defining the flattener
+        """
         self.save_dir = save_dir
         self.stats_file = self.save_dir / stats_file
         self.flattener_file = self.save_dir / flattener_file
-        self._flattener = None
+        self._flattener = lambda x, y: x
         self._stats = None
 
-    def generate_flattener_stats(self, train_gen, val_gen,
-                                 train_aug, val_aug, max_erode=5):
+    def generate_flattener_stats(self, train_gen: ImageLabel,
+                                 val_gen: ImageLabel,
+                                 train_aug: Augmenter, val_aug: Augmenter,
+                                 max_erode: int = 5):
+        """Generate overlap and erosion statistics for augmented data in input.
+
+        :param train_gen: the generator of training images and their labels
+        :param val_gen: the generator of validation images and their labels
+        :param train_aug: the augmenter to use for training images
+        :param val_aug: the augmenter to use for validation images
+        :param max_erode: the maximum allowed number of erosions used to
+        generate erosion values
+        :return: None, saves results to `self.stats_file`
+        """
         # Set up temporary flattener
         old_flattener = getattr(self, '_flattener', None)
         self._flattener = lambda x, y: x # FIXME change using property + dummy Flattener
@@ -110,7 +195,12 @@ class FlattenerTrainer:
         self._stats = None  # trigger reload of property
 
     @property
-    def stats(self):
+    def stats(self) -> TrainValProperty:
+        """The last statistics computed, loaded from `self.stats_file`
+
+        :return: The last training and validation statistics computed.
+        :raises: BadProcess error if the file does not exist.
+        """
         if self._stats is None:
             if not self.stats_file.exists():
                 raise BadProcess(
@@ -123,7 +213,11 @@ class FlattenerTrainer:
                                 self._stats.get('val', {}))
 
     @property
-    def flattener(self):
+    def flattener(self) -> SegmentationFlattening:
+        """The last flattener saved to file.
+        :return: a segmentation flattener
+        :raise: BadProcess, if no flattener has been assigned.
+        """
         if self._flattener is None:
             if self.flattener_file.is_file():
                 f = SegmentationFlattening()
@@ -147,6 +241,20 @@ class FlattenerTrainer:
         self._flattener = f
 
     def fit(self, nbins=30, min_size=10, pad_frac=0.03, bud_max=200):
+        """Optimise the parameters of the `SegmentationFlattener` based on
+        previously computed statistics.
+
+        # TODO define optimisation method
+
+        # TODO missing some unknown parameters
+        :param nbins:
+        :param min_size: the minimum size of a segmented object for it to be
+        considered a cell.
+        :param pad_frac:
+        :param bud_max: the maximum size (in pixels) of cells considered buds.
+        :return: None, saves the optimal parameters to the flattener file
+        :raises: BadProcess if no statistics have been computed yet.
+        """
         if pad_frac > 0.25 or pad_frac < 0:
             raise BadParam('"pad_frac" must be between 0 and 0.2')
 
@@ -217,6 +325,15 @@ class FlattenerTrainer:
         self._flattener = None
 
     def plot_stats(self, nbins=30):
+        """Plot a histogram of cell overlap statistics of the training set.
+
+        # TODO describe what the plot means
+        # TODO add an image as an example
+
+        :param nbins: binning of data, passed to `matplotlib.pyplot.hist2d`
+        :return: None, saves the resulting figure under `self.save_dir /
+        "flattener_stats.png"`
+        """
         overlapping = self.stats.train.get('overlap_sizes', [])
         max_erode = len(overlapping)
         fig, axs = plt.subplots(1, max_erode, figsize=(16, 16 / max_erode))

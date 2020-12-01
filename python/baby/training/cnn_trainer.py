@@ -1,7 +1,13 @@
 import json
+import pathlib
+from typing import List, Tuple
+
 import matplotlib.pyplot as plt
 import pickle
 import tensorflow as tf
+from baby.augmentation import Augmenter
+from baby.generator import ImageLabel
+from baby.preprocessing import SegmentationFlattening
 from matplotlib.colors import to_rgba
 from scipy.signal import savgol_filter
 from tensorflow.python.keras.callbacks import ModelCheckpoint, TensorBoard, \
@@ -23,19 +29,39 @@ LOG_DIR = 'logs'
 
 
 class CNNTrainer:
-    def __init__(self, save_dir, cnn_set, gen, aug, flattener, max_cnns=3,
-                 cnn_fn=None):
+    """
+    Methods for optimising the weights of the CNNs using gradient descent.
+    """
+    def __init__(self, save_dir: pathlib.Path,
+                 cnn_set: tuple, gen: ImageLabel, aug: Augmenter,
+                 flattener: SegmentationFlattening,
+                 max_cnns: int = 3,
+                 cnn_fn: str = None):
+        """
+        Methods for optimising the weights of the CNNs using gradient descent.
+
+        :param save_dir: base directory in which to save weights and outputs
+        :param cnn_set: the names of CNN architectures to be trained
+        :param gen: the data generator
+        :param aug: the data augmentor
+        :param flattener: the data flattener
+        :param max_cnns: the maximum number of CNNs to train/keep, default is 3
+        :param cnn_fn: the CNN architecture to start with, defaults to None
+        """
         self.flattener = flattener
         self.aug = aug
         self.gen = gen
+        # TODO no longer needed with hyperparmeter optim
         self._max_cnns = max_cnns
         self.save_dir = save_dir
         self.cnn_set = cnn_set
         self._cnn_fn = cnn_fn
         self._cnns = dict()
+        self._opt_cnn = None
 
     @property
     def cnn_fn(self):
+        """The current CNN architecture function."""
         if self._cnn_fn is None:
             self.cnn_fn = self.cnn_set[0]
         return getattr(models, self._cnn_fn)
@@ -50,6 +76,7 @@ class CNNTrainer:
 
     @property
     def cnn_dir(self):
+        """The subdirectory into which to save the current CNN output."""
         d = self.save_dir / self.cnn_name
         if not d.is_dir():
             d.mkdir()
@@ -57,10 +84,12 @@ class CNNTrainer:
 
     @property
     def cnn_name(self):
+        """The name of the currently active CNN architecture."""
         return get_name(self.cnn_fn)
 
     @property
     def cnn(self):
+        """The keras Model for the active CNN."""
         if self.cnn_name not in self._cnns:
             if len(self._cnns) > self._max_cnns:
                 # To avoid over-consuming memory reset graph
@@ -95,6 +124,7 @@ class CNNTrainer:
 
     @property
     def histories(self):
+        """A CNN name to training history dictionary."""
         # Always get the most up-to-date version from disk
         hdict = {}
         active_cnn_fn = self.cnn_name
@@ -115,6 +145,7 @@ class CNNTrainer:
 
     @property
     def opt_dir(self):
+        """The directory in which the weights of the best CNN are saved."""
         history = min(self.histories.values(),
                       default=None,
                       key=lambda x: min(x['history']['val_loss']))
@@ -124,8 +155,9 @@ class CNNTrainer:
 
     @property
     def opt_cnn(self):
+        """The keras model for the CNN with the lowest loss."""
         if self._opt_cnn is None:
-            opt_dir = self.cnn_opt_dir
+            opt_dir = self.opt_dir
             opt_file = opt_dir / OPT_WEIGHTS_FILE
             if not opt_file.exists():
                 raise BadProcess(
@@ -135,7 +167,17 @@ class CNNTrainer:
                                        custom_objects=custom_objects)
         return self._opt_cnn
 
-    def fit(self, epochs=400, schedule=None, replace=False, extend=False):
+    def fit(self, epochs: int = 400,
+            schedule: List[Tuple[int, float]] = None,
+            replace: bool = False,
+            extend: bool = False):
+        """Fit the active CNN to minimise loss on the (augmented) generator.
+
+        :param epochs: number of epochs to train, defaults to 400
+        :param schedule: learning rate schedule, defaults to fixed rate 0.001
+        :param replace: force training if CNN already has a weights file
+        :param extend: train using existing CNN weights as initial weights
+        """
         # First check output names match current flattener names
         assert (all([
             m == f
@@ -183,8 +225,27 @@ class CNNTrainer:
         print('Saving final weights...')
         self.cnn.save_weights(str(finalfile))
 
-    def plot_histories(self, key='loss', log=True, window=21, ax=None,
-                       save=True, legend=True):
+    def plot_histories(self, key: str = 'loss',
+                       log: bool = True, window: int = 21,
+                       ax: plt.axis = None,
+                       save: bool = True,
+                       legend: bool = True):
+        """
+        Plot the loss/metric histories of all of the trained CNNs.
+
+        # TODO add an image as an example
+
+        :param key: which metric to plot, defaults to loss
+        :param log: set y-axis to log scale, defaults to True
+        :param window: filter window for Savitsky-Golay filter applied to
+        metric before plotting, defaults to 21 which assumes at least 22
+        epochs of training, 50 suggested.
+        :param ax: axis on which to plot the losses, defaults to None
+        :param save: save the plot to `save_dir / f"histories_{key}.png"`,
+        defaults to True
+        :param legend: adds a legend to the plot, defaults to True
+        :return:
+        """
         if save:
             fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
         if ax is None:

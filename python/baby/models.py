@@ -41,14 +41,14 @@ def unet_4s(inputs):
     return unet_block(inputs, [8, 16, 32, 64], batchnorm=True)
 
 
-@named_model_fn('Unet')
+@named_model_fn('unet')
 def unet(inputs, depth=4, layer_size=8, batchnorm=True, dropout=0.):
     layer_sizes = [layer_size*(2**i) for i in range(depth)]
     return unet_block(inputs, layer_sizes,
                       dropout=dropout, batchnorm=batchnorm)
 
 
-@named_model_fn('MSD')
+@named_model_fn('msd')
 def msd(inputs, depth=80, width=1, n_dilations=4, dilation=1, batchnorm=True):
     dilations = [dilation * (2 ** i) for i in range(n_dilations)]
     return msd_block(inputs, depth, width, dilations, batchnorm=batchnorm)

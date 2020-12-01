@@ -9,7 +9,7 @@ import pandas as pd
 from tqdm import trange
 
 from baby.io import load_tiled_image
-from baby.utils import TrainValProperty
+from baby.training.utils import TrainValProperty
 from baby.errors import BadProcess, BadParam
 from .core import CellTracker, BudTracker
 from .benchmark import CellBenchmarker
@@ -30,7 +30,7 @@ class CellTrainer(CellTracker):
     '''
 
     def __init__(self, meta, data=None, masks=None,
-                 val_masks = None, all_feats2use=None,
+                 val_masks=None, all_feats2use=None,
                  px_size=None):
 
         if all_feats2use is None:

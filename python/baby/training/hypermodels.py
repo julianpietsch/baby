@@ -14,6 +14,11 @@ class UNet(HyperModel):
         self.input_shape = input_shape
         self.outputs = outputs
         self.name = 'Unet'
+        # TODO output defaults
+
+    @property
+    def defaults(self):
+        return dict(depth=4, layer_size=8, batchnorm=True, dropout=0.0)
 
     def build(self, hp):
         inputs = Input(shape=self.input_shape)
@@ -41,6 +46,8 @@ class MSD(HyperModel):
         self.outputs = outputs
         self.weights = {n: weights.get(n, 1) for n in self.outputs}
         self.name = 'MSD'
+        self.defaults = dict(depth=80, width=1, n_dilations=4, dilation=1,
+                             batnorm=True)
 
     def build(self, hp):
         inputs = Input(shape=self.input_shape)

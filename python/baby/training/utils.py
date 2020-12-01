@@ -45,6 +45,10 @@ class BabyTrainerParameters(NamedTuple):
     smoothing_sigma_model_file: str = 'smoothing_sigma_model.json'
     flattener_stats_file: str = 'flattener_stats.json'
     flattener_file: str = 'flattener.json'
+    segmentation_stats_file: str = 'segmentation_stats.csv'
+    segmentation_param_file: str = 'segmentation_params.json'
+    mother_bud_props_file: str = 'mother_bud_props.csv'
+    mother_bud_model_file: str = 'mother_bud_model.pkl'
     cnn_set: Tuple[str, ...] = ('msd_d80', 'unet_4s')
     cnn_fn: Union[None, str] = None
     batch_size: int = 8
@@ -52,6 +56,7 @@ class BabyTrainerParameters(NamedTuple):
     xy_out: int = 80
     target_pixel_size: float = 0.263
     substacks: Union[None, int] = None
+
 
 
 @contextmanager
