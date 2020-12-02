@@ -401,10 +401,13 @@ class MorphSegGrouped:
                      if self.contains(lower.mask, upper.mask)]
 
             for lower, upper in pairs:
-                if accessor(lower) < accessor(upper):
-                    lower_group.cells.remove(lower)
-                else:
-                    upper_group.cells.remove(upper)
+                # Check that one of the cells hasn't already been removed in
+                # previous pairs
+                if lower in lower_group.cells and upper in upper_group.cells:
+                    if accessor(lower) < accessor(upper):
+                        lower_group.cells.remove(lower)
+                    else:
+                        upper_group.cells.remove(upper)
 
     # Todo: rename
     def extract_edges(self, pred, shape, refine_outlines, return_volume):

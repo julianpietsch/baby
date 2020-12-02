@@ -609,7 +609,7 @@ class BabyTrainer(object):
         basic_pars = list(seg_param_coords.keys())
 
         # TODO switch back to validation examples
-        train_examples = list(self.seg_examples.train)
+        val_examples = list(self.seg_examples.val)
         from joblib import Parallel, delayed
         rows = []
         for gind in range(3)[::-1]:
@@ -619,7 +619,7 @@ class BabyTrainer(object):
                                                pars,
                                                basic_pars,
                                                self.flattener,
-                                               train_examples,
+                                               val_examples,
                                                base_params=base_seg_params,
                                                scoring=scoring)
                     for pars in tqdm(param_grid)))
