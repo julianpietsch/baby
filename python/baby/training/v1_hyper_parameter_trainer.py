@@ -6,7 +6,7 @@ class DummyHyperModel:
     """
     Dummy version of HyperModel for TFv1 with which kerastuner cannot be used
     """
-    unet_default_params = dict(depth=4, layer_size=4, batchnorm=True,
+    unet_default_params = dict(depth=4, layer_size=8, batchnorm=True,
                                dropout=0.)
     msd_default_params = dict(depth=80, width=1, n_dilations=4, dilation=1,
                               batchnorm=True)

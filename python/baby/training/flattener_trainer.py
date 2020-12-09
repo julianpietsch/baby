@@ -163,7 +163,7 @@ class FlattenerTrainer:
         self.save_dir = save_dir
         self.stats_file = self.save_dir / stats_file
         self.flattener_file = self.save_dir / flattener_file
-        self._flattener = lambda x, y: x
+        self._flattener = None
         self._stats = None
 
     def generate_flattener_stats(self, train_gen: ImageLabel,

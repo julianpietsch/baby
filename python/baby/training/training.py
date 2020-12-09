@@ -546,7 +546,21 @@ class BabyTrainer(object):
                                                  ])))
                     for pred, (_, lbl, info) in zip(preds, batch):
                         pbar.update()
-                        yield SegExample(pred, lbl.transpose(2, 0, 1), info)
+                        lbl = lbl.transpose(2, 0, 1)
+                        # Filter out examples that have been augmented away
+                        valid = lbl.sum(axis=(1, 2)) > 0
+                        lbl = lbl[valid]
+                        clab = info.get('cellLabels', []) or []
+                        if type(clab) is int:
+                            clab = [clab]
+                        clab = [l for l, v in zip(clab, valid) if v]
+                        info['cellLabels'] = clab
+                        buds = info.get('buds', []) or []
+                        if type(buds) is int:
+                            buds = [buds]
+                        buds = [b for b, v in zip(buds, valid) if v]
+                        info['buds'] = buds
+                        yield SegExample(pred, lbl, info)
 
         if self.in_memory:
             if getattr(self, '_seg_examples', None) is None:

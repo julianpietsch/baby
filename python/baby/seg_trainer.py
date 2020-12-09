@@ -201,10 +201,10 @@ class SegFilterParamOptim:
                   ('cell', np.uint16),
                   ('area', np.uint16),
                   ('p_edge', np.float64),
-                  ('containment', np.uint16),
+                  ('containment', np.float64),
                   ('assignments', np.uint16),
                   ('max_IoU', np.float64),
-                  ('best_assignments', np.uint16)]
+                  ('best_assignments', np.int32)]
         df = pd.DataFrame(np.array(rows, dtype=dtypes))
 
         df['is_best'] = ((df.best_assignments >= 0) &

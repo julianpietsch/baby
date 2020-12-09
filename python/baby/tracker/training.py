@@ -7,6 +7,7 @@ import pickle
 import numpy as np
 import pandas as pd
 from tqdm import trange
+from typing import NamedTuple
 
 from baby.io import load_tiled_image
 from baby.training.utils import TrainValProperty
@@ -21,7 +22,10 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC#, LinearSVC
 # from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import GridSearchCV
-from sklearn import metrics
+from sklearn.metrics import (
+    make_scorer, fbeta_score, accuracy_score, balanced_accuracy_score,
+    precision_score, recall_score, f1_score, plot_precision_recall_curve
+)
 
 class CellTrainer(CellTracker):
     '''
@@ -36,7 +40,7 @@ class CellTrainer(CellTracker):
         if all_feats2use is None:
             feats2use = ('centroid', 'area', 'minor_axis_length',
                          'major_axis_length', 'convex_area')
-            extra_feats = ('distance',) 
+            extra_feats = ('distance',)
 
         else:
             feats2use, extra_feats = all_feats2use
@@ -71,7 +75,7 @@ class CellTrainer(CellTracker):
         Process all traps (run on finished experiments), combine results with location df and drop
         unused columns.
         '''
-        
+
         self.meta = self.meta[~self.meta.index.duplicated(keep='first')]
         self.traps = self.traps.explode('cont')
         self.traps['tp'] = self.traps['cont']
@@ -93,7 +97,7 @@ class CellTrainer(CellTracker):
 
         train = []
         for trap in traps: # fill the training dataset with traps' tuples
-            trapsets = self.gen_train_from_trap(trap) 
+            trapsets = self.gen_train_from_trap(trap)
             if trapsets:
                 train.append(trapsets)
         self.train = np.concatenate(train)
@@ -106,7 +110,7 @@ class CellTrainer(CellTracker):
 
         truemat = np.equal.outer(*subdf['cellLabels'].values).reshape(-1)
         propsmat = self.df_calc_feat_matrix(pair_loc).reshape(
-            -1, self.nfeats) 
+            -1, self.nfeats)
 
         return [x for x in zip(truemat, propsmat)]
 
@@ -123,7 +127,7 @@ class CellTrainer(CellTracker):
                                self.meta['cellLabels'].values)):
             try:
                 #check nlabels and ncells agree
-                assert (len(lbl)==self.masks[index].shape[2]) | (len(lbl)==0) 
+                assert (len(lbl)==self.masks[index].shape[2]) | (len(lbl)==0)
             except AssertionError:
                 print('nlabels and img mismatch in row: ')
 
@@ -201,7 +205,7 @@ class CellTrainer(CellTracker):
                 for j in range(ncells2):
                     array_3d[i,j,:noutfeats] = \
                     self.norm_feats(array_3d[i,j,:noutfeats], px_size=px_size)
-            
+
 
         # Calculate extra features
         for i, feat in enumerate(self.extra_feats, len(self.out_feats)):
@@ -212,20 +216,20 @@ class CellTrainer(CellTracker):
 
             # Add here any other calculation to use it as a feature
 
-        return array_3d  
+        return array_3d
 
     def explore_hyperparams(self, model_type = 'SVC'):
         self.model_type = model_type
         truth, data = *zip(*self.train),
         if self.model_type is 'SVC':
             model = SVC(probability = True, shrinking=False,
-                        verbose=True, random_state=1) 
-            # model = CalibratedClassifierCV(cv=5) 
+                        verbose=True, random_state=1)
+            # model = CalibratedClassifierCV(cv=5)
             param_grid = {
-                # 'method': ['sigmoid', 'isotonic']
-                # 'class_weight':['balanced', None],
-              # 'C': [0.1, 1, 10, 100, 1000], 
-              'C': [0.1, 10, 100], 
+              # 'method': ['sigmoid', 'isotonic']
+              # 'class_weight':['balanced', None],
+              # 'C': [0.1, 1, 10, 100, 1000],
+              'C': [0.1, 10, 100],
               'gamma': [1, 0.01, 0.0001],
               'kernel': ['rbf', 'sigmoid']
             }
@@ -367,8 +371,14 @@ class BudTrainer(BudTracker):
             # Build a ground truth matrix identifying mother-bud pairs
             ncells = len(seg_example.target)
             is_mb_pair = np.zeros((ncells, ncells), dtype=bool)
-            bud_inds = [cell_labels.index(b) for b in buds if b > 0]
-            is_mb_pair[np.flatnonzero(buds), bud_inds] = True
+            mb_inds = [
+                (i, cell_labels.index(b))
+                for i, b in enumerate(buds)
+                if b > 0 and b in cell_labels
+            ]
+            if len(mb_inds) > 0:
+                mother_inds, bud_inds = zip(*mb_inds)
+                is_mb_pair[mother_inds, bud_inds] = True
             p['is_mb_pair'] = is_mb_pair.flatten()
 
             # Ignore any rows containing NaNs
@@ -390,8 +400,10 @@ class BudTrainer(BudTracker):
         self.props = props # also saves
 
     def explore_hyperparams(self, hyper_param_target='precision'):
-        data = self.props.loc[~self.props['validation'], self.rf_feats]
-        truth = self.props.loc[~self.props['validation'], 'is_mb_pair']
+        # Train bud assignment model on validation data, since this more
+        # closely represents real-world performance of the CNN:
+        data = self.props.loc[self.props['validation'], self.rf_feats]
+        truth = self.props.loc[self.props['validation'], 'is_mb_pair']
 
         rf = RandomForestClassifier(n_estimators=15,
                                     criterion='gini',
@@ -404,15 +416,6 @@ class BudTrainer(BudTracker):
             'max_depth': [2, 3, 4],
             'class_weight': [None, 'balanced', 'balanced_subsample']
         }
-        scoring = {
-            'accuracy': 'accuracy',
-            'balanced_accuracy': 'balanced_accuracy',
-            'precision': 'precision',
-            'recall': 'recall',
-            'f1': 'f1',
-            'f0_5': metrics.make_scorer(metrics.fbeta_score, beta=0.5),
-            'f2': metrics.make_scorer(metrics.fbeta_score, beta=2)
-        }
 
         def get_balanced_best_index(cv_results_):
             '''Find a model balancing F1 score and speed'''
@@ -422,7 +425,7 @@ class BudTrainer(BudTracker):
             return df.loc[df.mean_test_f1 > thresh, 'mean_score_time'].idxmin()
 
         self._rf = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5,
-                scoring=scoring, refit=hyper_param_target)
+                scoring=SCORING_METRICS, refit=hyper_param_target)
         self._rf.fit(data, truth)
 
         df = pd.DataFrame(self._rf.cv_results_)
@@ -430,21 +433,57 @@ class BudTrainer(BudTracker):
                      or c.startswith('param_')]
         print(df.loc[self._rf.best_index_, disp_cols])
 
-        print('\nValidation performance:')
-        best_rf = self._rf.best_estimator_
-        valdata = self.props.loc[self.props['validation'], self.rf_feats]
-        valtruth = self.props.loc[self.props['validation'], 'is_mb_pair']
-        preds = best_rf.predict(valdata)
-        print('Accuracy:', metrics.accuracy_score(valtruth, preds))
-        print('Precision:', metrics.precision_score(valtruth, preds))
-        print('Recall:', metrics.recall_score(valtruth, preds))
-        print('F1 score:', metrics.f1_score(valtruth, preds))
+    def performance(self):
+        if not isinstance(getattr(self, '_rf', None), GridSearchCV):
+            raise BadProcess('"explore_hyperparams" has not been run')
 
-        return best_rf
+        best_rf = self._rf.best_estimator_
+        isval = self.props['validation']
+        data = self.props.loc[~isval, self.rf_feats]
+        truth = self.props.loc[~isval, 'is_mb_pair']
+        valdata = self.props.loc[isval, self.rf_feats]
+        valtruth = self.props.loc[isval, 'is_mb_pair']
+        metrics = tuple(SCORING_METRICS.values())
+        return TrainValProperty(
+                Score(*(m(best_rf, data, truth) for m in metrics)),
+                Score(*(m(best_rf, valdata, valtruth) for m in metrics)))
+
+    def plot_PR(self):
+        best_rf = self._rf.best_estimator_
+        isval = self.props['validation']
+        valdata = self.props.loc[isval, self.rf_feats]
+        valtruth = self.props.loc[isval, 'is_mb_pair']
+        plot_precision_recall_curve(best_rf, valdata, valtruth)
 
     def save_model(self, filename):
         f = open(filename, 'wb')
         pickle.dump(self._rf.best_estimator_, f)
+
+
+SCORING_METRICS = {
+    'accuracy': make_scorer(accuracy_score),
+    'balanced_accuracy': make_scorer(balanced_accuracy_score),
+    'precision': make_scorer(precision_score),
+    'recall': make_scorer(recall_score),
+    'f1': make_scorer(f1_score),
+    'f0_5': make_scorer(fbeta_score, beta=0.5),
+    'f2': make_scorer(fbeta_score, beta=2)
+}
+
+
+class Score(NamedTuple):
+    accuracy: float
+    balanced_accuracy: float
+    precision: float
+    recall: float
+    F1: float
+    F0_5: float
+    F2: float
+
+    def __str__(self):
+        return 'Score({})'.format(', '.join([
+            '{}={:.3f}'.format(k, v) for k, v in self._asdict().items()
+            ]))
 
 
 
