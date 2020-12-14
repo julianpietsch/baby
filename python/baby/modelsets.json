@@ -1,11 +1,22 @@
 {
   "prime95b_brightfield_60x_5z": {
-    "morph_model_file": "I5_prime_unet_4s_20200630.hdf5",
-    "flattener_file": "flattener_60x_prime_20200630.json",
+    "morph_model_file": "I5_prime_unet_4s_20201208.hdf5",
+    "flattener_file": "flattener_60x_prime_20201208.json",
     "celltrack_model_file": "ct_svc_20201106_7.pkl",
-    "budassign_model_file": "mb_model_20201022.pkl",
+    "budassign_model_file": "mb_model_20201208.pkl",
     "pixel_size": 0.182,
-    "default_image_size": [117, 117]
+    "default_image_size": [117, 117],
+    "params": {
+      "interior_threshold": [0.95, 0.3, 0.35],
+      "nclosing": [0, 0, 0],
+      "nopening": [2, 0, 0],
+      "connectivity": [1, 1, 1],
+      "edge_sub_dilations": [0, 1, 0],
+      "containment_thresh": 0.9,
+      "min_area": 17,
+      "pedge_thresh": [0.0, 0.0, 0.0006],
+      "group_thresh_expansion": [0.2, 0.18, 0.0]
+    }
   },
   "evolve_brightfield_60x_5z": {
     "morph_model_file": "I5_evolve_unet_4s_20201001.hdf5",

@@ -179,10 +179,15 @@ class SegFilterParamOptim:
                             else:
                                 contained_cells[(g, l)] = containment
 
-            IoUs = calc_IoUs(seg_ex.target, masks, fill_holes=False)
-            max_IoU = IoUs.max(axis=0)
-            assignments = IoUs.argmax(axis=0)
-            _, best_assignments = best_IoU(IoUs.T)
+            if ncells > 0:
+                IoUs = calc_IoUs(seg_ex.target, masks, fill_holes=False)
+                max_IoU = IoUs.max(axis=0)
+                assignments = IoUs.argmax(axis=0)
+                _, best_assignments = best_IoU(IoUs.T)
+            else:
+                max_IoU = np.zeros(len(masks))
+                assignments = np.zeros(len(masks), dtype=np.uint16)
+                best_assignments = -np.ones(len(masks), dtype=np.int32)
             ind = 0
             for g, group in enumerate(self.segrps):
                 for c, cell in enumerate(group.cells):
