@@ -10,9 +10,11 @@ from tqdm import trange
 from typing import NamedTuple
 
 from baby.io import load_tiled_image
+from baby.tracker.utils import pick_baryfun
 from baby.training.utils import TrainValProperty
 from baby.errors import BadProcess, BadParam
 from .core import CellTracker, BudTracker
+
 from .benchmark import CellBenchmarker
 
 from scipy.ndimage import binary_fill_holes
@@ -184,9 +186,6 @@ class CellTrainer(CellTracker):
 
         subdf = df.loc(axis=0)[pair_loc]
 
-        if pair_loc[2]== 11 and pair_loc[3]==(1,2): #debugging
-            print(subdf)
-
         group_props = subdf.groupby('tp')
         group_sizes = group_props.size().to_list()
 
@@ -206,16 +205,8 @@ class CellTrainer(CellTracker):
                     array_3d[i,j,:noutfeats] = \
                     self.norm_feats(array_3d[i,j,:noutfeats], px_size=px_size)
 
-
-        # Calculate extra features
-        for i, feat in enumerate(self.extra_feats, len(self.out_feats)):
-            if feat == 'distance':
-                array_3d[..., i] = np.sqrt(
-                    array_3d[..., self.out_feats.index('centroid-0')]**2 +
-                    array_3d[..., self.out_feats.index('centroid-1')]**2)
-
-            # Add here any other calculation to use it as a feature
-
+        array_3d = self.add_extrafeats(array_3d, new_feats, prev_feats,
+                                       noutfeats)
         return array_3d
 
     def explore_hyperparams(self, model_type = 'SVC'):

@@ -12,9 +12,9 @@ from skimage.measure import regionprops_table
 from skimage.draw import polygon
 from scipy.optimize import linear_sum_assignment
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC#, LinearSVC
-# from sklearn.calibration import CalibratedClassifierCV
+from sklearn.svm import SVC
 from baby.errors import BadOutput
+from baby.tracker.utils import calc_barycentre
 
 models_path = join(dirname(__file__), '../models')
 
@@ -35,6 +35,10 @@ class FeatureCalculator:
         self.outfeats = list(
             regionprops_table(np.diag((1, 0)),
                               properties=self.feats2use).keys())
+
+        self.xind = self.outfeats.index('centroid-0')
+        self.yind = self.outfeats.index('centroid-1')
+        self.aind = self.outfeats.index('area')
 
     def load_model(self, path, fname):
             model_file = join(path, fname)
@@ -228,15 +232,37 @@ class CellTracker(FeatureCalculator):
             n3darray[..., i] = np.subtract.outer(prev_feats[:, i],
                                                  new_feats[:, i])
 
-        # Calculate extra features
-        for i, feat in enumerate(self.extra_feats, noutfeats):
-            if feat == 'distance':
-                # Assume that centroid-0 and centroid-1 are in the first two cols
-                n3darray[..., i] = np.sqrt(
-                    n3darray[..., self.outfeats.index('centroid-0')]**2 +
-                    n3darray[..., self.outfeats.index('centroid-1')]**2)
+        print('b4 ', n3darray)
+        n3darray = self.add_extrafeats(n3darray, new_feats, prev_feats,
+                                       noutfeats)
+        print('after ', n3darray)
 
         return n3darray
+
+    def add_extrafeats(self, n3darray, new_feats, prev_feats, noutfeats):
+        # Calculate extra features
+    
+        if 'barydist' in self.extra_feats or 'baryangle' in self.extra_feats:
+
+            if self.aweight is not None:
+                weights = new_feats[:, self.aind]
+
+            barycentre = calc_barycentre(new_feats[:, [self.xind, self.yind]],
+                                         weights = weights)
+            
+        for i, feat in enumerate(self.extra_feats, noutfeats):
+            if feat == 'distance':
+                n3darray[..., i] = np.sqrt(
+                    n3darray[..., self.xind]**2 +
+                    n3darray[..., self.yind]**2)
+
+            if feat == 'baryangle' or feat == 'barydist':
+                new_fld = pick_baryfun(feat)(
+                    new_feats[:, [self.xind, self.yind]], barycentre)
+                n3darray[..., i] = np.subtract.outer(prev_feats[:, i],
+                                                     new_baryfld)
+
+        return(n3darray)
 
     def assign_lbls(self, pred_3darray, prev_lbls, red_fun=None):
         '''Assign labels using a prediction matrix of nxmxl where n is the number
@@ -736,20 +762,20 @@ def switch_case_nfeats(nfeats):
         7 : [('centroid', 'area', 'minor_axis_length', 'major_axis_length',
               'bbox_area', 'perimeter'), ()],
             # Including centroid and distance
-        8 : [(
+        10 : [(
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
-            'bbox_area', 'perimeter'), ('distance',)],
+            'bbox_area', 'perimeter'), ('distance', 'barydist',
+                                                    'baryangle')],
         12 : [(
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
             'extent',
             'orientation', 'perimeter'), ()],
-        13 : [(
+        15 : [(
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
-            'extent', 'orientation', 'perimeter'), ('distance', )]
-            # 'feret_diameter_max', not available in current version
-            # 'perimeter_crofton'
+            'extent', 'orientation', 'perimeter'), ('distance', 'barydist',
+                                                    'baryangle')]
     }
 
     return(main_feats.get(nfeats, []))
