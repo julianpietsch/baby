@@ -57,6 +57,7 @@ class SegExample(NamedTuple):
     pred: np.ndarray
     target: np.ndarray
     info: dict
+    img: np.ndarray
 
 
 # interior_threshold: threshold on predicted interior
@@ -544,7 +545,7 @@ class BabyTrainer(object):
                     preds = split_batch_pred(
                         opt_cnn.predict(np.stack([img for img, _, _ in batch
                                                  ])))
-                    for pred, (_, lbl, info) in zip(preds, batch):
+                    for pred, (img, lbl, info) in zip(preds, batch):
                         pbar.update()
                         lbl = lbl.transpose(2, 0, 1)
                         # Filter out examples that have been augmented away
@@ -560,7 +561,7 @@ class BabyTrainer(object):
                             buds = [buds]
                         buds = [b for b, v in zip(buds, valid) if v]
                         info['buds'] = buds
-                        yield SegExample(pred, lbl, info)
+                        yield SegExample(pred, lbl, info, img)
 
         if self.in_memory:
             if getattr(self, '_seg_examples', None) is None:
