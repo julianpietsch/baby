@@ -55,9 +55,6 @@ class CellTrainer(CellTracker):
         self.cindices =  self.indices + ['cellLabels']
         self.data = data
         self.traps = data.traps
-        # if val_masks is None:
-        #     self.val_masks = [load_tiled_image(mask)[0] for
-        #                       bf, mask  in self.data.validation]
         self.meta = data._metadata_tp
         self.process_metadata()
         if masks is None:
@@ -91,6 +88,7 @@ class CellTrainer(CellTracker):
     def gen_train(self):
         '''
         Generates the data for training using all the loaded images.
+
         '''
 
         traps = np.unique([ind[:self.indices.index('trap')+1] for ind in self.traps.index], axis=0)
@@ -106,12 +104,26 @@ class CellTrainer(CellTracker):
         self.train = np.concatenate(train)
 
     def gen_train_from_pair(self, pair_loc):
+        '''
+        Produces a list of training (truth, features) pairs from
+        a pair of timepoints in a position
+
+        input
+
+        :pair_loc: (experiment, position, trap, (tp1,tp2)) tuple
+
+        returns
+
+        list of (bool, floats list) tuples
+        
+        '''
         subdf = self.meta[['list_index', 'cellLabels']].loc(axis=0)[pair_loc]
 
         if not subdf['cellLabels'].all():
             return None
 
         truemat = np.equal.outer(*subdf['cellLabels'].values).reshape(-1)
+
         propsmat = self.df_calc_feat_matrix(pair_loc).reshape(
             -1, self.noutfeats + len(self.extra_feats))
 
@@ -138,27 +150,17 @@ class CellTrainer(CellTracker):
               
 
             trapfeats = self.calc_feats_from_mask(self.masks[index])
-            # trapfeats = [
-            #     regionprops_table(resize(self.masks[index][..., i],
-            #                              (100, 100)).astype('bool').astype('int'),
-            #                       properties=self.feats2use)  #
-            #     for i in range(len(lbl))
-            # ]
 
             for cell, feats in zip(lbl, trapfeats):
                 nindex.append(ind + (cell, ))
                 props_lst.append(feats)
 
         all_featnames = self.outfeats + list(self.trapfeats) 
-        # out_dict = {featname: [] for featname in all_featnames}
         nindex = pd.MultiIndex.from_tuples(nindex, names=self.cindices)
-
-        # for cells_props in props_lst:
-        #     for key, val in cells_props.items():
-        #         out_dict[key].append(val[0])
 
         self.rprops = pd.DataFrame(np.array(props_lst),
                                    index=nindex, columns = all_featnames)
+
         self.rprop_keys = self.rprops.columns
 
     def gen_train_from_trap(self, trap_loc):
@@ -204,7 +206,6 @@ class CellTrainer(CellTracker):
         if self.model_type is 'SVC':
             model = SVC(probability = True, shrinking=False,
                         verbose=True, random_state=1)
-            # model = CalibratedClassifierCV(cv=5)
             param_grid = {
               # 'method': ['sigmoid', 'isotonic']
               # 'class_weight':['balanced', None],
@@ -246,7 +247,7 @@ class CellTrainer(CellTracker):
     @property
     def benchmarker(self):
         '''
-        Create a benchmarker instance to test the newly calculated model
+        Create a benchmarker instance to test the new model
 
         requires
         :self.model:

@@ -9,9 +9,6 @@ def calc_barycentre(centres, weights=None):
     if weights is None:
         weights = np.ones_like(centres)
 
-    if not np.sum(weights):
-        weights = None
-
     barycentre = np.average(centres, axis=0, weights = weights)
     return(barycentre)
 
