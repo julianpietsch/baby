@@ -179,7 +179,7 @@ class CellTrainer(CellTracker):
         nindex = pd.MultiIndex.from_tuples(nindex, names=self.cindices)
 
         self.rprops = pd.DataFrame(np.array(props_lst),
-                                   index=nindex, columns = self.all_ofeats)
+                                   index=nindex, columns = self.tfeats)
 
         self.rprop_keys = self.rprops.columns
 
