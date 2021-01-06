@@ -94,8 +94,6 @@ class FeatureCalculator:
                 cell_feats = []
                 for feat in regionprops_table(mask.astype(int),
                         properties=feats2use).values():
-                    if not feat:
-                        print('error')
                     cell_feats.append(feat[0])
 
                 if norm:
@@ -308,6 +306,7 @@ class CellTracker(FeatureCalculator):
         n3darray = np.empty((len(prev_feats), len(new_feats),
                              self.noutfeats ))
 
+        # print('self: ', self, ' self.ntfeats: ', self.ntfeats, ' featsshape: ', new_feats.shape)
         for i in range(self.ntfeats):
             n3darray[..., i] = np.subtract.outer(prev_feats[:, i],
                                                  new_feats[:, i])
@@ -693,8 +692,9 @@ class MasterTracker(FeatureCalculator):
         super().__init__(feats2use, trapfeats=trapfeats, **kwargs)
 
         # Extract indices of the relevant features
-        self.ct_idx = [self.outfeats.index(f) for f in self.cell_tracker.outfeats]
-        self.bt_idx = [self.outfeats.index(f) for f in self.bud_tracker.outfeats]
+        self.ct_idx = [self.tfeats.index(f) for f in self.cell_tracker.tfeats]
+        # DONE Tests passing, TODO check if the change budtracker.outfeats to tfeats broke anything
+        self.bt_idx = [self.tfeats.index(f) for f in self.bud_tracker.tfeats] 
 
 
     def step_trackers(self,
@@ -739,6 +739,7 @@ class MasterTracker(FeatureCalculator):
 
         # Get features for cells at this time point
         feats = self.calc_feats_from_mask(masks)
+        print(self.ct_idx)
 
         nstepsback = self.cell_tracker.nstepsback
         lastn_lbls = cell_lbls[-nstepsback:]
