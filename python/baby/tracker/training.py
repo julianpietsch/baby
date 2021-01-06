@@ -10,7 +10,7 @@ from tqdm import trange
 from typing import NamedTuple
 
 from baby.io import load_tiled_image
-from baby.tracker.utils import pick_baryfun
+from baby.tracker.utils import pick_baryfun, calc_barycentre
 from baby.training.utils import TrainValProperty
 from baby.errors import BadProcess, BadParam
 from .core import CellTracker, BudTracker
@@ -42,13 +42,14 @@ class CellTrainer(CellTracker):
         if all_feats2use is None:
             feats2use = ('centroid', 'area', 'minor_axis_length',
                          'major_axis_length', 'convex_area')
+            trap_feats = ('baryangle', 'barydist')
             extra_feats = ('distance',)
 
         else:
-            feats2use, extra_feats = all_feats2use
+            feats2use, trapfeats, extra_feats = all_feats2use
 
-        super().__init__(feats2use = feats2use, extra_feats = extra_feats,
-                         px_size=px_size)
+        super().__init__(feats2use = feats2use, trapfeats = trapfeats,
+                         extra_feats = extra_feats, px_size=px_size)
 
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
@@ -112,7 +113,7 @@ class CellTrainer(CellTracker):
 
         truemat = np.equal.outer(*subdf['cellLabels'].values).reshape(-1)
         propsmat = self.df_calc_feat_matrix(pair_loc).reshape(
-            -1, self.nfeats)
+            -1, self.noutfeats + len(self.extra_feats))
 
         return [x for x in zip(truemat, propsmat)]
 
@@ -122,37 +123,42 @@ class CellTrainer(CellTracker):
         '''
 
         nindex = []
-        props_list = []
-        i=0
+        props_lst = []
+        # Move cell_id index to use calc_feats_from mask fn
+        self.masks = [np.moveaxis(mask, 2, 0) for mask in self.masks] 
+
         for ind, (index,
                   lbl) in zip(self.meta.index, enumerate(
                                self.meta['cellLabels'].values)):
             try:
                 #check nlabels and ncells agree
-                assert (len(lbl)==self.masks[index].shape[2]) | (len(lbl)==0)
+                assert (len(lbl)==self.masks[index].shape[0]) | (len(lbl)==0)
             except AssertionError:
                 print('nlabels and img mismatch in row: ')
+              
 
-            trapfeats = [
-                regionprops_table(resize(self.masks[index][..., i],
-                                         (100, 100)).astype('bool').astype('int'),
-                                  properties=self.feats2use)  #
-                for i in range(len(lbl))
-            ]
+            trapfeats = self.calc_feats_from_mask(self.masks[index])
+            # trapfeats = [
+            #     regionprops_table(resize(self.masks[index][..., i],
+            #                              (100, 100)).astype('bool').astype('int'),
+            #                       properties=self.feats2use)  #
+            #     for i in range(len(lbl))
+            # ]
 
             for cell, feats in zip(lbl, trapfeats):
                 nindex.append(ind + (cell, ))
-                props_list.append(feats)
-            i+=1
+                props_lst.append(feats)
 
-        out_dict = {key: [] for key in props_list[0].keys()}
+        all_featnames = self.outfeats + list(self.trapfeats) 
+        # out_dict = {featname: [] for featname in all_featnames}
         nindex = pd.MultiIndex.from_tuples(nindex, names=self.cindices)
 
-        for cells_props in props_list:
-            for key, val in cells_props.items():
-                out_dict[key].append(val[0])
+        # for cells_props in props_lst:
+        #     for key, val in cells_props.items():
+        #         out_dict[key].append(val[0])
 
-        self.rprops = pd.DataFrame(out_dict, index=nindex)
+        self.rprops = pd.DataFrame(np.array(props_lst),
+                                   index=nindex, columns = all_featnames)
         self.rprop_keys = self.rprops.columns
 
     def gen_train_from_trap(self, trap_loc):
@@ -186,27 +192,10 @@ class CellTrainer(CellTracker):
 
         subdf = df.loc(axis=0)[pair_loc]
 
-        group_props = subdf.groupby('tp')
-        group_sizes = group_props.size().to_list()
+        prev_feats, new_feats = subdf.groupby('tp').apply(np.array)
 
-        self.out_feats = subdf.columns.to_list()
-        self.nfeats = len(self.out_feats) + len(self.extra_feats)
-        # Array to pour the calculations and get cellxcell feature vectors
-        array_3d = np.empty(*[group_sizes + [self.nfeats]])
+        array_3d = self.calc_feat_ndarray(prev_feats, new_feats)
 
-        for i, feat in enumerate(self.out_feats):
-            array_3d[..., i] = np.subtract.outer(
-                *group_props[feat].apply(list).to_list())
-
-        if norm: # normalise features
-            ncells1, ncells2, noutfeats = array_3d.shape
-            for i in range(ncells1):
-                for j in range(ncells2):
-                    array_3d[i,j,:noutfeats] = \
-                    self.norm_feats(array_3d[i,j,:noutfeats], px_size=px_size)
-
-        array_3d = self.add_extrafeats(array_3d, new_feats, prev_feats,
-                                       noutfeats)
         return array_3d
 
     def explore_hyperparams(self, model_type = 'SVC'):
@@ -243,7 +232,7 @@ class CellTrainer(CellTracker):
 
     def save_model(self, filename):
         date = datetime.date.today().strftime("%Y%m%d")
-        nfeats = str(self.noutfeats + len(extra_feats))
+        nfeats = str(self.noutfeats + len(self.extra_feats))
         model_type = 'svc' if isinstance(self.model.best_estimator_, SVC) else 'rf'
 
         f = open(filename + '_'.join(('ct', model_type, date,

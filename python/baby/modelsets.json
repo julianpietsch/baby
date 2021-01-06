@@ -2,7 +2,7 @@
   "prime95b_brightfield_60x_5z": {
     "morph_model_file": "I5_prime_unet_4s_20201208.hdf5",
     "flattener_file": "flattener_60x_prime_20201208.json",
-    "celltrack_model_file": "ct_svc_20201106_7.pkl",
+    "celltrack_model_file": "ct_rf_20210105_10",
     "budassign_model_file": "mb_model_20201208.pkl",
     "pixel_size": 0.182,
     "default_image_size": [117, 117],
@@ -21,7 +21,7 @@
   "evolve_brightfield_60x_5z": {
     "morph_model_file": "I5_evolve_unet_4s_20201001.hdf5",
     "flattener_file": "flattener_60x_evolve_20201001.json",
-    "celltrack_model_file": "ct_svc_20201106_7.pkl",
+    "celltrack_model_file": "ct_rf_20210105_10",
     "budassign_model_file": "mb_model_20201022.pkl",
     "pixel_size": 0.263,
     "default_image_size": [81, 81],
@@ -40,7 +40,7 @@
   "prime95b_brightfield_60x_1z": {
     "morph_model_file": "I1_prime_unet_4s_20200630.hdf5",
     "flattener_file": "flattener_60x_prime_20200630.json",
-    "celltrack_model_file": "ct_svc_20201106_7.pkl",
+    "celltrack_model_file": "ct_rf_20210105_10",
     "budassign_model_file": "mb_model_20201022.pkl",
     "pixel_size": 0.182,
     "default_image_size": [117, 117]
@@ -48,7 +48,7 @@
   "evolve_brightfield_60x_1z": {
     "morph_model_file": "I1_evolve_unet_4s_20200630.hdf5",
     "flattener_file": "flattener_60x_prime_20200630.json",
-    "celltrack_model_file": "ct_svc_20201106_7.pkl",
+    "celltrack_model_file": "ct_rf_20210105_10",
     "budassign_model_file": "mb_model_20201022.pkl",
     "pixel_size": 0.263,
     "default_image_size": [81, 81]
@@ -56,7 +56,7 @@
   "prime95b_brightfield_60x_3z": {
     "morph_model_file": "I3_prime_unet_4s_20200903.hdf5",
     "flattener_file": "flattener_60x_prime_20200630.json",
-    "celltrack_model_file": "ct_svc_20201106_7.pkl",
+    "celltrack_model_file": "ct_rf_20210105_10",
     "budassign_model_file": "mb_model_20201022.pkl",
     "pixel_size": 0.182,
     "default_image_size": [117, 117]
@@ -64,7 +64,7 @@
   "evolve_brightfield_60x_3z": {
     "morph_model_file": "I3_evolve_unet_4s_20200903.hdf5",
     "flattener_file": "flattener_60x_prime_20200630.json",
-    "celltrack_model_file": "ct_svc_20201106_7.pkl",
+    "celltrack_model_file": "ct_rf_20210105_10svc_20201106_7.pkl",
     "budassign_model_file": "mb_model_20201022.pkl",
     "pixel_size": 0.263,
     "default_image_size": [81, 81]

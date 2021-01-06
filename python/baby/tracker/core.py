@@ -14,7 +14,7 @@ from scipy.optimize import linear_sum_assignment
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from baby.errors import BadOutput
-from baby.tracker.utils import calc_barycentre
+from baby.tracker.utils import calc_barycentre, pick_baryfun
 
 models_path = join(dirname(__file__), '../models')
 
@@ -47,8 +47,8 @@ class FeatureCalculator:
 
             return model
 
-    def calc_feats_from_mask(self, masks, feats2use=None, norm=True,
-                             px_size=None):
+    def calc_feats_from_mask(self, masks, feats2use=None, trapfeats=None,
+                             norm=True, px_size=None):
         '''
         Calculate feature ndarray from ndarray of cell masks
         ---
@@ -57,6 +57,8 @@ class FeatureCalculator:
         :masks: ndarray (ncells, x_size, y_size), typically dtype bool
         :feats2use: list of strings with the feature properties to extract.
             If it is None it uses the ones set in self.feats2use.
+        :trapfeats: List of str with additional features to use
+            calculated immediately after basic features.
         :norm: bool, if True normalises mask to a defined px_size.
         :px_size: float, used to normalise the images.
 
@@ -69,23 +71,70 @@ class FeatureCalculator:
 
         if feats2use is None:
             feats2use = self.feats2use
-        nfeats = len(feats2use)
+
+        if trapfeats is None:
+            trapfeats = self.trapfeats
+
+        nfeats = len(self.outfeats) + len(trapfeats)
+
+        feats = np.empty((masks.shape[0], nfeats)) # ncells * nfeats
         if masks.sum():
-            feats = []
-            for mask in masks:
+            for i, mask in enumerate(masks):
                 cell_feats = []
                 for feat in regionprops_table(mask.astype(int),
                         properties=feats2use).values():
+                    if not feat:
+                        print('error')
                     cell_feats.append(feat[0])
-                if norm:
-                    cell_feats = self.norm_feats(cell_feats, px_size)# or self.px_size)
-                feats.append(cell_feats)
 
-            feats = np.array(feats)
+                if norm:
+                    cell_feats = self.norm_feats(cell_feats, px_size)
+
+                feats[i, :len(feats2use)+1] = cell_feats
+
+            if trapfeats:
+            
+                trapfeats_nd = self.calc_trapfeats(feats)
+                feats[:, len(feats2use)+1:] = trapfeats_nd
         else:
+
             feats = np.zeros((0, nfeats))
 
+
         return feats
+
+    def calc_trapfeats(self, basefeats):
+        '''
+        Calculate trap-based features
+        using basic ones.
+        :basefeats: (n basic outfeats) 1-D array with features outputed by
+            skimage.measure.regionprops_table
+
+
+        requires
+            self.aind
+            self.aweights
+            self.xind
+            self.yind
+            self.trapfeats
+
+        returns
+        (ntrapfeats) 1-D array with 
+        '''
+        if self.aweights is not None:
+            weights = basefeats[:, self.aind]
+        else:
+            weights = None
+
+        barycentre = calc_barycentre(basefeats[:, [self.xind, self.yind]],
+                                     weights = weights)
+
+        trapfeat_nd = np.empty((basefeats.shape[0], len(self.trapfeats)))
+        for i, trapfeat in enumerate(self.trapfeats):
+            trapfeat_nd[:,i] = pick_baryfun(trapfeat)(
+                basefeats[:, [self.xind, self.yind]], barycentre)
+
+        return(trapfeat_nd)
 
     def norm_feats(self, feats, px_size):
         '''
@@ -102,7 +151,6 @@ class FeatureCalculator:
         degrees = {'linear': px_size, 'square':area}
         degrees_feats = {'linear':['minor_axis_length',  'major_axis_length',
                         'perimeter', 'perimeter_crofton',
-                                 # 'feret_diameter_max',
                                    'equivalent_diameter'],
                        'square': ['area', 'convex_area']}
 
@@ -120,20 +168,35 @@ class FeatureCalculator:
 
 class CellTracker(FeatureCalculator):
     '''
-    Class used to manage cell tracking.
+    Class used to manage cell tracking. You can call it using an existing model or
+    use the inherited CellTrainer to get a new one.
 
     Initialization parameters:
 
     :model: sklearn.ensemble.RandomForestClassifier object
+    :trapfeats: Features to manually calculate within a trap
+    :extra_feats: Additional features to calculate
+    :model: Model to use, if provided ignores all other args but threshs
+    :bak_model: Backup mode to use when prediction is unsure
     :nstepsback: int Number of timepoints to go back
     :thresh: float Cut-off value to assume a cell is not new
     :low_thresh: Lower thresh for model switching
     :high_thresh: Higher thresh for model switching.
         Probabilities between these two thresholds summon the
         backup model.
+
+    :aweights: area weight for barycentre calculations
+
+
+    # Feature order in array features
+    1. basic features
+    2. trap features (within a trap)
+    3. extra features (process between imgs)
+
     '''
     def __init__(self,
                  feats2use=None,
+                 trapfeats=None,
                  extra_feats=None,
                  model=None,
                  bak_model=None,
@@ -141,8 +204,12 @@ class CellTracker(FeatureCalculator):
                  low_thresh=None,
                  high_thresh=None,
                  nstepsback=None,
+                 aweights=None,
                  red_fun=None,
                  **kwargs):
+
+        if trapfeats is None:
+            trapfeats = ()
 
         if extra_feats is None:
             extra_feats = ()
@@ -166,15 +233,19 @@ class CellTracker(FeatureCalculator):
             self.model = model
             self.bak_model = bak_model
 
-            feats2use, extra_feats = self.get_feats2use()
+            feats2use, trapfeats, extra_feats = self.get_feats2use()
             
             self.bak_noutfeats = get_nfeats_from_model(self.bak_model)
 
+        if aweights is None:
+            self.aweights = None
+            
+        self.trapfeats = trapfeats
         self.extra_feats = extra_feats
 
         super().__init__(feats2use, **kwargs)
         self.noutfeats = get_nfeats_from_model(self.model) if \
-            hasattr(self, 'model') else len(feats2use)+ len(extra_feats)
+            hasattr(self, 'model') else len(feats2use)+ len(trapfeats) + len(extra_feats)
 
 
         if nstepsback is None:
@@ -226,41 +297,36 @@ class CellTracker(FeatureCalculator):
         noutfeats = len(self.outfeats)
 
         n3darray = np.empty((len(prev_feats), nnew,
-                             noutfeats + len(self.extra_feats)))
+                             noutfeats + len(self.extra_feats)
+                             + len(self.trapfeats)))
 
-        for i in range(noutfeats):
+        for i in range(noutfeats + len(self.trapfeats)):
             n3darray[..., i] = np.subtract.outer(prev_feats[:, i],
                                                  new_feats[:, i])
 
-        print('b4 ', n3darray)
-        n3darray = self.add_extrafeats(n3darray, new_feats, prev_feats,
+        n3darray = self.calc_extrafeats(n3darray, new_feats, prev_feats,
                                        noutfeats)
-        print('after ', n3darray)
 
         return n3darray
 
-    def add_extrafeats(self, n3darray, new_feats, prev_feats, noutfeats):
-        # Calculate extra features
+    # def calc_trapfeats(self, n3darray, new_feats, prev_feats, noutfeats):
+    #     # Calculate extra features
     
-        if 'barydist' in self.extra_feats or 'baryangle' in self.extra_feats:
+    #     for i, trapfeat in enumerate(self.trapfeats, noutfeats):
+    #         trapfeat_idx = self.trapfeats.index(trapfeat) + noutfeats
 
-            if self.aweight is not None:
-                weights = new_feats[:, self.aind]
-
-            barycentre = calc_barycentre(new_feats[:, [self.xind, self.yind]],
-                                         weights = weights)
+    #         if trapfeat == 'baryangle' or trapfeat == 'barydist':
+    #             n3darray[..., i] =  np.subtract.outer(prev_feats[:, trapfeat_idx],
+    #                                             new_fld)
             
-        for i, feat in enumerate(self.extra_feats, noutfeats):
+    def calc_extrafeats(self, n3darray, new_feats, prev_feats, noutfeats):
+        for i, feat in enumerate(self.extra_feats, noutfeats + 
+                                 len(self.trapfeats)):
             if feat == 'distance':
                 n3darray[..., i] = np.sqrt(
                     n3darray[..., self.xind]**2 +
-                    n3darray[..., self.yind]**2)
+                    n3darray[..., self.yind]**2) # TODO clean this expression
 
-            if feat == 'baryangle' or feat == 'barydist':
-                new_fld = pick_baryfun(feat)(
-                    new_feats[:, [self.xind, self.yind]], barycentre)
-                n3darray[..., i] = np.subtract.outer(prev_feats[:, i],
-                                                     new_baryfld)
 
         return(n3darray)
 
@@ -757,25 +823,25 @@ def switch_case_nfeats(nfeats):
     main_feats = {
         4 : [(
             'area', 'minor_axis_length', 'major_axis_length', 
-        'bbox_area'), ()],
+            'bbox_area'), (), ()],
             # Including centroid
         7 : [('centroid', 'area', 'minor_axis_length', 'major_axis_length',
-              'bbox_area', 'perimeter'), ()],
+              'bbox_area', 'perimeter'), () , ()],
             # Including centroid and distance
         10 : [(
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
-            'bbox_area', 'perimeter'), ('distance', 'barydist',
-                                                    'baryangle')],
+            'bbox_area', 'perimeter'), ('baryangle', 'barydist'),
+                                                    ('distance',)],
         12 : [(
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
             'extent',
-            'orientation', 'perimeter'), ()],
+            'orientation', 'perimeter'), (), ()],
         15 : [(
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
-            'extent', 'orientation', 'perimeter'), ('distance', 'barydist',
-                                                    'baryangle')]
+            'extent', 'orientation', 'perimeter'), ('baryangle', 'barydist'),
+                                                    ('distance',)]
     }
 
     return(main_feats.get(nfeats, []))

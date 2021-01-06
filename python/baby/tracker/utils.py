@@ -9,7 +9,10 @@ def calc_barycentre(centres, weights=None):
     if weights is None:
         weights = np.ones_like(centres)
 
-    barycentre = np.average(axis=1, weights = weights)
+    if not np.sum(weights):
+        weights = None
+
+    barycentre = np.average(centres, axis=0, weights = weights)
     return(barycentre)
 
 # Calculate distance to center
@@ -19,7 +22,7 @@ def calc_barydists(centres, bary):
     :centre: int (2,) tuple. Centre of cell
     :bary: float (2,) tuple. Barycentre of image
     '''
-    vec2bary = np.subtract(centres, bary, axis=1)
+    vec2bary = centres - bary
     dists = np.sqrt(np.sum(vec2bary ** 2, axis=1))
 
     return dists
@@ -33,14 +36,14 @@ def calc_baryangles(centres, bary):
     '''
     
     angles = []
-    vec2bary = np.subtract(centres, bary, axis=1)
+    vec2bary = centres - bary
     angles = np.apply_along_axis(lambda x: np.arctan2(*x), 1, vec2bary)
 
     return(angles)
 
 def pick_baryfun(key):
     baryfuns = {'barydist':calc_barydists,
-             'baryangle':calc_baryangle}
+                'baryangle':calc_baryangles}
     return(baryfuns[key])
 
 # Fix single-cell case
