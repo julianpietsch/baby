@@ -22,19 +22,32 @@ class FeatureCalculator:
     '''
     Base class for making use of regionprops-based features.
     If no features are offered it uses most of them.
+
+    This class is not to be used directly
     '''
-    def __init__(self, feats2use, px_size=None):
+    def __init__(self, feats2use, trapfeats=None, aweights=None,
+                 px_size=None):
 
         self.feats2use = feats2use
+
+        if trapfeats is None:
+            trapfeats=()
+        self.trapfeats = trapfeats
+
+        if aweights is None:
+            aweights=None
+        self.aweights = aweights
 
         if px_size is None:
             px_size = 0.263
         self.px_size = px_size
 
-
-        self.outfeats = list(
+        self.outfeats = tuple(
             regionprops_table(np.diag((1, 0)),
                               properties=self.feats2use).keys())
+
+        self.tfeats = self.outfeats + self.trapfeats
+        self.ntfeats = len(self.tfeats)
 
         self.xind = self.outfeats.index('centroid-0')
         self.yind = self.outfeats.index('centroid-1')
@@ -75,9 +88,7 @@ class FeatureCalculator:
         if trapfeats is None:
             trapfeats = self.trapfeats
 
-        nfeats = len(self.outfeats) + len(trapfeats)
-
-        feats = np.empty((masks.shape[0], nfeats)) # ncells * nfeats
+        feats = np.empty((masks.shape[0], self.ntfeats)) # ncells * nfeats
         if masks.sum():
             for i, mask in enumerate(masks):
                 cell_feats = []
@@ -90,15 +101,15 @@ class FeatureCalculator:
                 if norm:
                     cell_feats = self.norm_feats(cell_feats, px_size)
 
-                feats[i, :len(feats2use)+1] = cell_feats
+                feats[i, :len(self.outfeats)] = cell_feats
 
             if trapfeats:
             
-                trapfeats_nd = self.calc_trapfeats(feats)
-                feats[:, len(feats2use)+1:] = trapfeats_nd
+                tfeats = self.calc_trapfeats(feats)
+                feats[:, len(self.outfeats):self.ntfeats] = tfeats
         else:
 
-            feats = np.zeros((0, nfeats))
+            feats = np.zeros((0, self.ntfeats))
 
 
         return feats
@@ -226,10 +237,10 @@ class CellTracker(FeatureCalculator):
         if feats2use is None:
             if model is None:
                 model = self.load_model( models_path,
-                                         'ct_svc_20201106_6.pkl')
+                                         'ct_rf_20210105_10.pkl')
             if bak_model is None:
                 bak_model = self.load_model( models_path,
-                                         'ct_svc_20201106_7.pkl')
+                                         'ct_rf_20210105_10.pkl')
             self.model = model
             self.bak_model = bak_model
 
@@ -240,12 +251,13 @@ class CellTracker(FeatureCalculator):
         if aweights is None:
             self.aweights = None
             
-        self.trapfeats = trapfeats
+        super().__init__(feats2use, trapfeats=trapfeats, **kwargs)
+
         self.extra_feats = extra_feats
 
-        super().__init__(feats2use, **kwargs)
-        self.noutfeats = get_nfeats_from_model(self.model) if \
-            hasattr(self, 'model') else len(feats2use)+ len(trapfeats) + len(extra_feats)
+        self.all_ofeats = self.outfeats + trapfeats + extra_feats
+
+        self.noutfeats = len(self.all_ofeats)
 
 
         if nstepsback is None:
@@ -256,9 +268,9 @@ class CellTracker(FeatureCalculator):
             thresh = 0.5
         self.thresh = thresh
         if low_thresh is None:
-            low_thresh = 0.15
+            low_thresh = 0.1
         if high_thresh is None:
-            high_thresh = 0.85
+            high_thresh = 0.9
         self.low_thresh, self.high_thresh = low_thresh, high_thresh
 
         if red_fun is None:
@@ -293,39 +305,39 @@ class CellTracker(FeatureCalculator):
         if not (new_feats.any() and prev_feats.any()):
             return np.array([])
 
-        nnew = len(new_feats)
-        noutfeats = len(self.outfeats)
+        n3darray = np.empty((len(prev_feats), len(new_feats),
+                             self.noutfeats ))
 
-        n3darray = np.empty((len(prev_feats), nnew,
-                             noutfeats + len(self.extra_feats)
-                             + len(self.trapfeats)))
-
-        for i in range(noutfeats + len(self.trapfeats)):
+        for i in range(self.ntfeats):
             n3darray[..., i] = np.subtract.outer(prev_feats[:, i],
                                                  new_feats[:, i])
 
-        n3darray = self.calc_extrafeats(n3darray, new_feats, prev_feats,
-                                       noutfeats)
+        n3darray = self.calc_dtfeats(n3darray)
 
         return n3darray
-
-    # def calc_trapfeats(self, n3darray, new_feats, prev_feats, noutfeats):
-    #     # Calculate extra features
-    
-    #     for i, trapfeat in enumerate(self.trapfeats, noutfeats):
-    #         trapfeat_idx = self.trapfeats.index(trapfeat) + noutfeats
-
-    #         if trapfeat == 'baryangle' or trapfeat == 'barydist':
-    #             n3darray[..., i] =  np.subtract.outer(prev_feats[:, trapfeat_idx],
-    #                                             new_fld)
             
-    def calc_extrafeats(self, n3darray, new_feats, prev_feats, noutfeats):
-        for i, feat in enumerate(self.extra_feats, noutfeats + 
-                                 len(self.trapfeats)):
+    def calc_dtfeats(self, n3darray):
+        '''
+        Calculates features obtained between timepoints, such as distance
+        for every pair of cells from t1 to t2.
+        ---
+
+        input
+
+        :n3darray: ndarray (ncells_prev, ncells_new, nfeats) containing a
+            cell-wise substraction of the features in the input ndarrays.
+
+        returns
+
+        :n3darray: updated 3-D array with dtfeats added
+        '''
+        for i, feat in enumerate(self.all_ofeats):
             if feat == 'distance':
                 n3darray[..., i] = np.sqrt(
                     n3darray[..., self.xind]**2 +
                     n3darray[..., self.yind]**2) # TODO clean this expression
+                # n3darray[..., i] = np.sqrt(np.sum(n3darray[...,
+                # [self.xind, self.yind]]**2))
 
 
         return(n3darray)
@@ -399,11 +411,6 @@ class CellTracker(FeatureCalculator):
                 prob = max(prob, bak_prob)
             pred_list.append(prob)
 
-        # pred_list = np.array([
-        #     val[1] for val in predict_fun(array_3d.reshape(
-        #         -1, array_3d.shape[2]))
-        # ])
-
         pred_matrix = np.array(pred_list).reshape(orig_shape)
 
         return pred_matrix
@@ -413,7 +420,8 @@ class CellTracker(FeatureCalculator):
                      prev_lbls,
                      prev_feats,
                      max_lbl,
-                     new_feats=None):
+                     new_feats=None,
+                     px_size=None):
         '''
         Core function to calculate the new cell labels.
 
@@ -437,6 +445,7 @@ class CellTracker(FeatureCalculator):
         :new_max: updated max cell label assigned
 
         '''
+
         if new_feats is None:
             new_feats = self.calc_feats_from_mask(new_img)
 
@@ -678,7 +687,10 @@ class MasterTracker(FeatureCalculator):
         feats2use = set(self.cell_tracker.feats2use).union(set(
                 self.bud_tracker.feats2use))
 
-        super().__init__(feats2use, **kwargs)
+        trapfeats = tuple(set(self.cell_tracker.trapfeats).union(set(
+                self.bud_tracker.trapfeats)))
+
+        super().__init__(feats2use, trapfeats=trapfeats, **kwargs)
 
         # Extract indices of the relevant features
         self.ct_idx = [self.outfeats.index(f) for f in self.cell_tracker.outfeats]
@@ -849,9 +861,6 @@ def switch_case_nfeats(nfeats):
 def get_nfeats_from_model(model):
     if isinstance(model, SVC):
         nfeats = model.support_vectors_.shape[-1]
-    # elif isinstance(model, CalibratedClassifierCV):
-    #     nfeats = model.calibrated_classifiers_[0]. \
-    #         base_estimator.coef_.shape[-1]
     elif isinstance(model, RandomForestClassifier):
         nfeats = model.n_features_
 

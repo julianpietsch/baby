@@ -36,8 +36,7 @@ class CellTrainer(CellTracker):
     '''
 
     def __init__(self, meta, data=None, masks=None,
-                 val_masks=None, all_feats2use=None,
-                 px_size=None):
+                 val_masks=None, all_feats2use=None):
 
         if all_feats2use is None:
             feats2use = ('centroid', 'area', 'minor_axis_length',
@@ -49,7 +48,8 @@ class CellTrainer(CellTracker):
             feats2use, trapfeats, extra_feats = all_feats2use
 
         super().__init__(feats2use = feats2use, trapfeats = trapfeats,
-                         extra_feats = extra_feats, px_size=px_size)
+                         extra_feats = extra_feats)
+        self.px_size = None
 
         self.indices = ['experimentID', 'position', 'trap', 'tp']
         self.cindices =  self.indices + ['cellLabels']
@@ -117,15 +117,33 @@ class CellTrainer(CellTracker):
         list of (bool, floats list) tuples
         
         '''
-        subdf = self.meta[['list_index', 'cellLabels']].loc(axis=0)[pair_loc]
+            
+        tmp_subdf = self.meta[['list_index', 'cellLabels', 'pixel_size']].loc(axis=0)[pair_loc]
+
+        # Set px_size if available, if not use default value
+        px_size = np.unique(tmp_subdf['pixel_size'])
+        if len(px_size) > 1:
+            if all(np.isnan(x) for x in px_size):
+                px_size = [0.263]
+            else:
+                px_size = [next(x for x in px_size if not np.isnan(x))]
+        if len(px_size) == 1:
+            px_size = px_size[0]
+        if np.isnan(px_size):
+            px_size = 0.263
+
+        subdf = tmp_subdf[['list_index', 'cellLabels']]
 
         if not subdf['cellLabels'].all():
             return None
 
         truemat = np.equal.outer(*subdf['cellLabels'].values).reshape(-1)
 
-        propsmat = self.df_calc_feat_matrix(pair_loc).reshape(
-            -1, self.noutfeats + len(self.extra_feats))
+        propsmat = self.df_calc_feat_matrix(pair_loc, px_size=px_size)
+
+
+        propsmat = propsmat.reshape(
+            -1, self.noutfeats)
 
         return [x for x in zip(truemat, propsmat)]
 
@@ -139,27 +157,29 @@ class CellTrainer(CellTracker):
         # Move cell_id index to use calc_feats_from mask fn
         self.masks = [np.moveaxis(mask, 2, 0) for mask in self.masks] 
 
-        for ind, (index,
-                  lbl) in zip(self.meta.index, enumerate(
-                               self.meta['cellLabels'].values)):
+        # TODO do this more elegantly
+        for ind, px_size, (index, 
+                  lbl) in zip(self.meta.index, self.meta['pixel_size'].values,
+                              enumerate(self.meta['cellLabels'].values)):
             try:
                 #check nlabels and ncells agree
                 assert (len(lbl)==self.masks[index].shape[0]) | (len(lbl)==0)
             except AssertionError:
                 print('nlabels and img mismatch in row: ')
               
+            if np.isnan(px_size): #Cover for cases where px_size is nan
+                px_size = 0.263
 
-            trapfeats = self.calc_feats_from_mask(self.masks[index])
+            trapfeats = self.calc_feats_from_mask(self.masks[index], px_size=px_size)
 
             for cell, feats in zip(lbl, trapfeats):
                 nindex.append(ind + (cell, ))
                 props_lst.append(feats)
 
-        all_featnames = self.outfeats + list(self.trapfeats) 
         nindex = pd.MultiIndex.from_tuples(nindex, names=self.cindices)
 
         self.rprops = pd.DataFrame(np.array(props_lst),
-                                   index=nindex, columns = all_featnames)
+                                   index=nindex, columns = self.all_ofeats)
 
         self.rprop_keys = self.rprops.columns
 
@@ -200,7 +220,7 @@ class CellTrainer(CellTracker):
 
         return array_3d
 
-    def explore_hyperparams(self, model_type = 'SVC'):
+    def explore_hyperparams(self, model_type = 'rf'):
         self.model_type = model_type
         truth, data = *zip(*self.train),
         if self.model_type is 'SVC':
@@ -233,7 +253,7 @@ class CellTrainer(CellTracker):
 
     def save_model(self, filename):
         date = datetime.date.today().strftime("%Y%m%d")
-        nfeats = str(self.noutfeats + len(self.extra_feats))
+        nfeats = str(self.noutfeats)
         model_type = 'svc' if isinstance(self.model.best_estimator_, SVC) else 'rf'
 
         f = open(filename + '_'.join(('ct', model_type, date,
