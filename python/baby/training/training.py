@@ -35,7 +35,7 @@ from .flattener_trainer import FlattenerTrainer
 from baby.utils import find_file, as_python_object, jsonify, batch_iterator, \
     split_batch_pred
 from baby.errors import BadParam, BadFile, BadType, BadProcess
-from baby.io import TrainValPairs
+from baby.io import TrainValTestPairs
 from baby.preprocessing import (robust_norm, seg_norm)
 from baby.augmentation import (Augmenter, ScalingAugmenter)
 from baby.generator import ImageLabel
@@ -246,30 +246,31 @@ class BabyTrainer(object):
             # Reset generators
             self._gen_train = None
             self._gen_val = None
+            self._gen_test = None
             # Trigger save of the data
-            datafile = self.save_dir / self.parameters.train_val_pairs_file
+            datafile = self.save_dir / self.parameters.train_val_test_pairs_file
             self._impairs.save(datafile, self.base_dir)
             self._ncells = self._impairs.ncells
 
     @property
     def data(self):
         if not hasattr(self, '_impairs') or not self._impairs:
-            self._impairs = TrainValPairs()
-            pairs_file = self.save_dir / self.parameters.train_val_pairs_file
+            self._impairs = TrainValTestPairs()
+            pairs_file = self.save_dir / self.parameters.train_val_test_pairs_file
             if pairs_file.is_file():
                 self._impairs.load(pairs_file, self.base_dir)
         self._check_for_data_update()
         return self._impairs
 
     @data.setter
-    def data(self, train_val_pairs):
-        if isinstance(train_val_pairs, str):
-            pairs_file = find_file(train_val_pairs, self.save_dir, 'data')
-            train_val_pairs = TrainValPairs()
-            train_val_pairs.load(pairs_file, self.base_dir)
-        if not isinstance(train_val_pairs, TrainValPairs):
-            raise BadType('"data" must be of type "baby.io.TrainValPairs"')
-        self._impairs = train_val_pairs
+    def data(self, train_val_test_pairs):
+        if isinstance(train_val_test_pairs, str):
+            pairs_file = find_file(train_val_test_pairs, self.save_dir, 'data')
+            train_val_test_pairs = TrainValTestPairs()
+            train_val_test_pairs.load(pairs_file, self.base_dir)
+        if not isinstance(train_val_test_pairs, TrainValTestPairs):
+            raise BadType('"data" must be of type "baby.io.TrainValTestPairs"')
+        self._impairs = train_val_test_pairs
         self._check_for_data_update()
 
     @property
