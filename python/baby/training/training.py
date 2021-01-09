@@ -189,13 +189,13 @@ class BabyTrainer(object):
     @property
     def track_trainer(self):
         if self._track_trainer is None:
-            self._track_trainer = CellTrainer(self.data._metadata, self.data)
+            self._track_trainer = CellTrainer(self.tracker_data._metadata, self.tracker_data)
         return self._track_trainer
 
     @track_trainer.setter
     def track_trainer(self, all_feats2use=None):
-        self._track_trainer = CellTrainer(self.data._metadata,
-                                          data=self.data,
+        self._track_trainer = CellTrainer(self.tracker_data._metadata,
+                                          data=self.tracker_data,
                                           all_feats2use=all_feats2use)
 
     @property
@@ -251,6 +251,13 @@ class BabyTrainer(object):
             datafile = self.save_dir / self.parameters.train_val_test_pairs_file
             self._impairs.save(datafile, self.base_dir)
             self._ncells = self._impairs.ncells
+             
+            # And for thet tracker datasets too
+    def _tracker_check_for_data_update(self):
+        if getattr(self, '_tracker_ncells', None) != self._tracker_impairs.ncells:
+            datafile = self.save_dir / self.parameters.tracker_tvt_pairs_file
+            self._tracker_impairs.save(datafile, self.base_dir)
+            self._tracker_ncells = self._tracker_impairs.ncells
 
     @property
     def data(self):
@@ -272,6 +279,27 @@ class BabyTrainer(object):
             raise BadType('"data" must be of type "baby.io.TrainValTestPairs"')
         self._impairs = train_val_test_pairs
         self._check_for_data_update()
+
+    @property
+    def tracker_data(self):
+        if not hasattr(self, '_impairs') or not self._impairs:
+            self._tracker_impairs = TrainValTestPairs()
+            pairs_file = self.save_dir / self.parameters.tracker_tvt_pairs_file
+            if pairs_file.is_file():
+                self._tracker_impairs.load(pairs_file, self.base_dir)
+        self._check_for_data_update()
+        return self._tracker_impairs
+
+    @data.setter
+    def tracker_data(self, train_val_test_pairs):
+        if isinstance(train_val_test_pairs, str):
+            pairs_file = find_file(train_val_test_pairs, self.save_dir, 'data')
+            train_val_test_pairs = TrainValTestPairs()
+            train_val_test_pairs.load(pairs_file, self.base_dir)
+        if not isinstance(train_tvt_pairs, TrainValTestPairs):
+            raise BadType('"data" must be of type "baby.io.TrainValTestPairs"')
+        self._tracker_impairs = train_val_test_pairs
+        self._tracker_check_for_data_update()
 
     @property
     def gen(self):
