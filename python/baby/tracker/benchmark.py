@@ -3,8 +3,9 @@ import pickle
 import pandas as pd
 from pathlib import Path, PosixPath
 
-from baby.tracker.core import CellTracker
 from baby.io import load_tiled_image
+from baby.tracker.core import CellTracker
+from baby.tracker.utils import lol_to_adj
 
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops_table
@@ -84,6 +85,7 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         # print("loc {}, {}, {}, labels: {}".format(exp, pos, trap, lbl_list))
         return lbl_list
 
+        
     def compare_traps(self, exp, pos, trap):
         '''
         Error calculator for testing model and assignment heuristics.
@@ -145,12 +147,26 @@ class CellBenchmarker: #TODO Simplify this by inheritance
             # print("Warning: Single set of tps for this position")
             return (frac_correct, error_cid)
 
+    def predict_all(self):
+        stepsback = [2]
+        threshs = [0.9]
+        self.predictions  = {}
+        for nstepsback in stepsback:
+            for thresh in threshs:
+                self.nstepsback = nstepsback
+                self.tracker.nstepsback = nstepsback
+                self.low_thresh = 1-thresh
+                self.high_thresh = thresh
+                self.thresh = thresh*5/8
+                for address in self.traps_loc:
+                    self.predictions[(nstepsback, thresh, address)] = self.predict_set(*address)
+
     def calculate_errsum(self):
         frac_errs = {}
         all_errs = {}
         nerrs = {}
-        stepsback = list(range(1, 7))
-        threshs = [0.65, 0.8, 0.95]
+        stepsback = list(range(1, 3))
+        threshs = [0.65, 0.95]
         for nstepsback in stepsback:
             for thresh in threshs:
                 self.nstepsback = nstepsback
@@ -221,6 +237,8 @@ class CellBenchmarker: #TODO Simplify this by inheritance
 
         masks = [self.masks[i] for i in self.meta.loc[pair,'cont_list_index']]
         feats = [self.tracker.calc_feats_from_mask(mask) for mask in masks]
+        if len(feats) > 3:
+            print('bug')
         ndarray = self.tracker.calc_feat_ndarray(*feats)
         self.tracker.low_thresh = 1-thresh
         self.tracker.high_thresh = thresh
@@ -228,6 +246,9 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         pred_mat = prob_mat > thresh
         
         true_mat = self.get_truth_matrix_from_pair(pair)
+        if not len(true_mat) and not len(pred_mat):
+            return(0,0,0,0)
+
 
         true_flat = true_mat.flatten()
         pred_flat = pred_mat.flatten()
@@ -269,6 +290,9 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         self.pairs = [self.extract_pairs_from_trap(trap) for trap in self.traps_loc]
 
 def gen_boolmat_from_clabs(clabs1, clabs2):
+    if not np.any(clabs1) and not np.any(clabs2):
+        return(np.array([]))
+
     boolmat = np.zeros((len(clabs1), len(clabs2))).astype(bool)
     for i, lab1 in enumerate(clabs1):
         for j, lab2 in enumerate(clabs2):
