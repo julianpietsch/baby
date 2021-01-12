@@ -41,6 +41,7 @@ class BabyTrainerParameters(NamedTuple):
     """Global parameters for training BABY models
     """
     train_val_test_pairs_file: str = 'train_val_pairs.json'
+    tracker_tvt_pairs_file: str = 'tracker_tvt_pairs.json'
     smoothing_sigma_stats_file: str = 'smoothing_sigma_stats.csv'
     smoothing_sigma_model_file: str = 'smoothing_sigma_model.json'
     flattener_stats_file: str = 'flattener_stats.json'

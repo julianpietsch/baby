@@ -43,6 +43,37 @@ def pick_baryfun(key):
                 'baryangle':calc_baryangles}
     return(baryfuns[key])
 
-# Fix single-cell case
-# Add calculated features to feature vector
-# Add models with extended tracking included
+##  Tracking benchmark utils
+
+def lol_to_adj(lol):
+    '''
+    Convert a series list of lists with cell ids into a matrix
+    representing a graph.
+
+    Note that information is lost in the process, and a matrix can't be
+    turned back into a list of list by itself.
+
+    input
+
+    :lol: list of lists with cell ids 
+
+    returns
+
+    
+    '''
+    n = len([y for x in lol for y in x])
+    adj_mat = np.zeros((n,n))
+
+    prev = []
+    cur = 0
+    for l in lol:
+        if not prev:
+            prev = l
+        else:
+            for i, el in enumerate(l):
+                prev_idx = prev.index(el) if el in prev else None
+                if prev_idx:
+                    adj_mat[cur + len(prev) + i, cur + prev_idx] = True
+            cur += len(l)
+
+    return adj_mat

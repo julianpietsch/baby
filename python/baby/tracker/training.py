@@ -246,6 +246,8 @@ class CellTrainer(CellTracker):
                 'max_depth': [None, 3, 4, 5],
                 'class_weight': [None, 'balanced', 'balanced_subsample']
             }
+        else:
+            raise("model_type not found")
 
         self.model = GridSearchCV(estimator=model, param_grid=param_grid, cv=5)
         self.model.fit(data, truth)
