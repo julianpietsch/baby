@@ -18,6 +18,7 @@ import numpy as np
 
 from baby.brain import BabyBrain
 from baby.crawler import BabyCrawler
+from baby.utils import jsonify
 
 routes = web.RouteTableDef()
 
@@ -258,7 +259,7 @@ async def get_sessions(request):
             info['runner'] = runner
         session_info.append(info)
 
-    return web.json_response(session_info)
+    return web.json_response(jsonify(session_info))
 
 
 @routes.post('/segment')
@@ -402,7 +403,7 @@ async def get_segmentation(request):
                 p[k] = [m.tolist() if isinstance(m, np.ndarray) else m for m
                         in v]
 
-    return web.json_response(pred)
+    return web.json_response(jsonify(pred))
 
 
 app = web.Application()

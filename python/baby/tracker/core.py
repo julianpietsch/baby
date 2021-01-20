@@ -739,7 +739,7 @@ class MasterTracker(FeatureCalculator):
 
         # Get features for cells at this time point
         feats = self.calc_feats_from_mask(masks)
-        print(self.ct_idx)
+        # print(self.ct_idx)
 
         nstepsback = self.cell_tracker.nstepsback
         lastn_lbls = cell_lbls[-nstepsback:]
