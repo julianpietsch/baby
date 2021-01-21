@@ -473,9 +473,11 @@ class CellTracker(FeatureCalculator):
                 # ensure that label output is consistently a list
                 new_lbls = new_lbls.tolist()
 
-            else:
-                new_max = len(new_feats)
-                new_lbls = [*range(1, new_max + 1)]
+            else: 
+                if not max_lbl: # Assign max_lbl if we are starting segmentation
+                    max_lbl += 1 
+                new_lbls = [*range(max_lbl, max_lbl + len(new_feats))]
+                new_max = max_lbl + len(new_feats)
 
         else:
             return ([], [], max_lbl)

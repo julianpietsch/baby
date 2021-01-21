@@ -5,7 +5,7 @@ from pathlib import Path, PosixPath
 
 from baby.io import load_tiled_image
 from baby.tracker.core import CellTracker
-from baby.tracker.utils import lol_to_adj
+from baby.tracker.utils import lol_to_adj, compare_pred_truth_lols
 
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import regionprops_table
@@ -148,6 +148,9 @@ class CellBenchmarker: #TODO Simplify this by inheritance
             return (frac_correct, error_cid)
 
     def predict_all(self):
+        '''
+        Predict all datasets defined in self.traps_loc
+        '''
         stepsback = [2]
         threshs = [0.9]
         self.predictions  = {}
@@ -162,6 +165,9 @@ class CellBenchmarker: #TODO Simplify this by inheritance
                     self.predictions[(nstepsback, thresh, address)] = self.predict_set(*address)
 
     def calculate_errsum(self):
+        '''
+        Calculate all errors, addresses of images with errors and error fractions. 
+        '''
         frac_errs = {}
         all_errs = {}
         nerrs = {}
@@ -191,27 +197,6 @@ class CellBenchmarker: #TODO Simplify this by inheritance
 
         return (frac_errs, all_errs, nerrs)
 
-    def gen_errorplots(self):
-        '''
-        Calculates the trap-wise error and averages across a position.
-       '''
-        self.frac_errs, self.all_errs, self.nerrs = self.calculate_errsum()
-
-        nerrs_df = pd.DataFrame(self.nerrs).melt()
-        frac_df = pd.DataFrame(self.frac_errs).melt()
-
-        from matplotlib import pyplot as plt
-        import seaborn as sns
-
-        # ax = sns.barplot(x='variable_0', y='value', data=frac_df)
-        ax = sns.barplot(x='variable_1', y='value', hue='variable_0', data=frac_df);
-        ax.set(xlabel='Backtrace depth',
-               ylabel='Fraction of correct assignments',
-               ylim=(0.9, 1))
-        plt.legend(title="Threshold")
-        plt.savefig('tracker_benchmark_btdepth.png')
-        plt.show()
-    
 
     def get_truth_matrix_from_pair(self, pair):
         '''
@@ -220,7 +205,7 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         args:
         :pair: tuple of size 4 (experimentID, position, trap (tp1, tp2))
 
-        output
+        returns
 
        :truth_mat: boolean ndarray of shape (ncells(tp1) x ncells(tp2)
         links cells in tp1 to cells in tp2
@@ -234,6 +219,9 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         return truth_mat
 
     def gen_cm_stats(self, pair, thresh=0.7):
+        '''
+        Calculate confusion matrix for a pair of pos-timepoints
+        '''
 
         masks = [self.masks[i] for i in self.meta.loc[pair,'cont_list_index']]
         feats = [self.tracker.calc_feats_from_mask(mask) for mask in masks]
@@ -270,6 +258,9 @@ class CellBenchmarker: #TODO Simplify this by inheritance
 
         return pairs
 
+    def gen_pairlist(self):
+        self.pairs = [self.extract_pairs_from_trap(trap) for trap in self.traps_loc]
+
     def gen_cm_from_pairs(self, thresh=0.5):
         con_mat = {}
         con_mat['tp'] = 0
@@ -286,9 +277,30 @@ class CellBenchmarker: #TODO Simplify this by inheritance
         self._con_mat = con_mat
         return self._con_mat
 
-    def gen_pairlist(self):
-        self.pairs = [self.extract_pairs_from_trap(trap) for trap in self.traps_loc]
 
+    def gen_errorplots(self):
+        '''
+        Calculates the trap-wise error and averages across a position.
+       '''
+        self.frac_errs, self.all_errs, self.nerrs = self.calculate_errsum()
+
+        nerrs_df = pd.DataFrame(self.nerrs).melt()
+        frac_df = pd.DataFrame(self.frac_errs).melt()
+
+        from matplotlib import pyplot as plt
+        import seaborn as sns
+
+        # ax = sns.barplot(x='variable_0', y='value', data=frac_df)
+        ax = sns.barplot(x='variable_1', y='value', hue='variable_0', data=frac_df);
+        ax.set(xlabel='Backtrace depth',
+               ylabel='Fraction of correct assignments',
+               ylim=(0.9, 1))
+        plt.legend(title="Threshold")
+        plt.savefig('tracker_benchmark_btdepth.png')
+        plt.show()
+
+    # def plot_pair(self, address)
+    
 def gen_boolmat_from_clabs(clabs1, clabs2):
     if not np.any(clabs1) and not np.any(clabs2):
         return(np.array([]))
