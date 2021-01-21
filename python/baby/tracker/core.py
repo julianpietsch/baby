@@ -235,10 +235,10 @@ class CellTracker(FeatureCalculator):
         if feats2use is None:
             if model is None:
                 model = self.load_model( models_path,
-                                         'ct_rf_20210105_10.pkl')
+                                         'ct_rf_20210120_9.pkl')
             if bak_model is None:
                 bak_model = self.load_model( models_path,
-                                         'ct_rf_20210105_10.pkl')
+                                         'ct_rf_20210120_9.pkl')
             self.model = model
             self.bak_model = bak_model
 
@@ -847,6 +847,10 @@ def switch_case_nfeats(nfeats):
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area', 'perimeter'), (),
                                                     ('distance',)],
+        9 : [(
+            'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
+            'bbox_area', 'perimeter'), ('baryangle', 'barydist'),
+                                                    ()],
         10 : [(
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area', 'perimeter'), ('baryangle', 'barydist'),
