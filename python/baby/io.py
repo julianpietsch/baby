@@ -339,7 +339,7 @@ class TrainValTestPairs(object):
     @testing.setter
     def testing(self, pairs):
         if not isinstance(pairs, list):
-            raise ValueError('"validation" must be a list')
+            raise ValueError('"testing" must be a list')
         self._test_pairs = pairs
         self._metadata = None  
 
@@ -428,7 +428,7 @@ class TrainValTestPairs(object):
         else:
             train_pairs = trainvaltest.get('training', [])
             val_pairs = trainvaltest.get('validation', [])
-            test_pairs = trainvaltest.get('validation', [])
+            test_pairs = trainvaltest.get('testing', [])
         train_pairs = [(base_dir / img, base_dir / lbl)
                        for img, lbl in train_pairs]
         val_pairs = [(base_dir / img, base_dir / lbl)
