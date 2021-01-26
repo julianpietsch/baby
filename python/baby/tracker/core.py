@@ -260,12 +260,9 @@ class CellTracker(FeatureCalculator):
                 tuple(set(main).union(bak)) for main,bak
                                                  in zip(main_feats, bak_feats)]
 
-            # self.bak_noutfeats = len(self.bak_model.all_ofeats)
-
             
         # Training AND non-training part
         super().__init__(feats2use, trapfeats=trapfeats, **kwargs)
-
 
         self.extra_feats = extra_feats
 
@@ -276,15 +273,7 @@ class CellTracker(FeatureCalculator):
         
         if hasattr(self, 'bak_model'): # Back to non-training only
 
-            # main_of = self.get_outfeats(feats2use)
-
-            # all_mainof = main_of + main_feats[1] + main_feats[2]
-
             self.mainof_ids = [self.all_ofeats.index(f) for f in self.model.all_ofeats]
-
-            # bak_of = self.get_outfeats(bak_feats)
-
-            # all_bakof = bak_of + bak_feats[1] + bak_feats[2]
 
             self.bakof_ids = [self.all_ofeats.index(f) for f in self.bak_model.all_ofeats]
 
