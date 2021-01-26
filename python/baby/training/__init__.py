@@ -26,6 +26,6 @@ else:
     from .hyper_parameter_trainer import HyperParameterTrainer
 from .cnn_trainer import CNNTrainer
 
-from .training import *
+from baby.tracker.training import *
 from .utils import fix_tf_rtx_gpu_bug
 

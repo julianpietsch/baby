@@ -42,13 +42,23 @@ class FeatureCalculator:
             px_size = 0.263
         self.px_size = px_size
 
-        self.outfeats = tuple(
-            regionprops_table(np.diag((1, 0)),
-                              properties=self.feats2use).keys())
+        self.outfeats = self.get_outfeats()
 
         self.tfeats = self.outfeats + self.trapfeats
         self.ntfeats = len(self.tfeats)
 
+        self.set_named_ids()
+
+    def get_outfeats(self, feats2use=None):
+        if feats2use is None:
+            feats2use = self.feats2use
+        outfeats = tuple(
+            regionprops_table(np.diag((1, 0)),
+                              properties=self.feats2use).keys())
+        return(outfeats)
+
+    def set_named_ids(self):
+        # Convenience function to call important feats by name
         self.xind = self.outfeats.index('centroid-0')
         self.yind = self.outfeats.index('centroid-1')
         self.aind = self.outfeats.index('area')
@@ -231,31 +241,53 @@ class CellTracker(FeatureCalculator):
             with open(Path(bak_model), 'rb') as f:
                 bak_model = pickle.load(f)
 
-        # Use feat2use for CellTrainer subclass
-        if feats2use is None:
+        if aweights is None:
+            self.aweights = None
+
+        if feats2use is None: # Ignore this block when training
             if model is None:
                 model = self.load_model( models_path,
-                                         'ct_rf_20210120_9.pkl')
+                                         'ct_rf_20210125_9.pkl')
             if bak_model is None:
                 bak_model = self.load_model( models_path,
-                                         'ct_rf_20210120_9.pkl')
+                                         'ct_rf_20210125_9.pkl')
             self.model = model
             self.bak_model = bak_model
 
-            feats2use, trapfeats, extra_feats = self.get_feats2use()
-            
-            self.bak_noutfeats = get_nfeats_from_model(self.bak_model)
+            main_feats = model.all_ifeats
+            bak_feats = bak_model.all_ifeats
+            feats2use, trapfeats, extra_feats = [
+                tuple(set(main).union(bak)) for main,bak
+                                                 in zip(main_feats, bak_feats)]
 
-        if aweights is None:
-            self.aweights = None
+            # self.bak_noutfeats = len(self.bak_model.all_ofeats)
+
             
+        # Training AND non-training part
         super().__init__(feats2use, trapfeats=trapfeats, **kwargs)
+
 
         self.extra_feats = extra_feats
 
         self.all_ofeats = self.outfeats + trapfeats + extra_feats
 
         self.noutfeats = len(self.all_ofeats)
+
+        
+        if hasattr(self, 'bak_model'): # Back to non-training only
+
+            # main_of = self.get_outfeats(feats2use)
+
+            # all_mainof = main_of + main_feats[1] + main_feats[2]
+
+            self.mainof_ids = [self.all_ofeats.index(f) for f in self.model.all_ofeats]
+
+            # bak_of = self.get_outfeats(bak_feats)
+
+            # all_bakof = bak_of + bak_feats[1] + bak_feats[2]
+
+            self.bakof_ids = [self.all_ofeats.index(f) for f in self.bak_model.all_ofeats]
+
 
 
         if nstepsback is None:
@@ -281,9 +313,9 @@ class CellTracker(FeatureCalculator):
         '''
         nfeats = get_nfeats_from_model(self.model)
         nfeats_bak = get_nfeats_from_model(self.bak_model)
-        max_nfeats = max((nfeats, nfeats_bak))
+        # max_nfeats = max((nfeats, nfeats_bak))
 
-        return(switch_case_nfeats(max_nfeats))
+        return(switch_case_nfeats(nfeats), switch_case_nfeats(nfeats_bak))
 
     def calc_feat_ndarray(self, prev_feats, new_feats):
         '''
@@ -382,6 +414,11 @@ class CellTracker(FeatureCalculator):
         :array_3d: (ncells_tp1, ncells_tp2, out_feats) ndarray
         :boolean: bool, if False returns probability, if True returns prediction
 
+        requires
+        :self.model:
+        :self.mainof_ids: list of indices corresponding to the main model's features
+        :self.bakof_ids: list of indices corresponding to the backup model's features
+
         returns
 
         (ncells_tp1, ncells_tp2) ndarray with probabilities or prediction
@@ -403,9 +440,9 @@ class CellTracker(FeatureCalculator):
         pred_list = []
         for vec in array_3d.reshape(-1, array_3d.shape[2]):
             prob = predict_fun(
-                vec[:self.noutfeats].reshape(1,-1))[0][1]
+                vec[self.mainof_ids].reshape(1,-1))[0][1]
             if self.low_thresh < prob < self.high_thresh:
-                bak_prob = bak_pred_fun(vec[:self.bak_noutfeats].reshape(
+                bak_prob = bak_pred_fun(vec[self.bakof_ids].reshape(
                 1,-1))[0][1] 
                 prob = max(prob, bak_prob)
             pred_list.append(prob)
