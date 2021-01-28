@@ -41,9 +41,6 @@ from baby.augmentation import (Augmenter, ScalingAugmenter)
 from baby.generator import ImageLabel
 from baby.visualise import colour_segstack
 
-
-
-
 LOG_DIR = 'logs'
 
 
@@ -145,8 +142,7 @@ class BabyTrainer(object):
             self._smoothing_sigma_trainer = SmoothingModelTrainer(
                 save_dir=self.save_dir,
                 stats_file=self.parameters.smoothing_sigma_stats_file,
-                model_file=self.parameters.smoothing_sigma_model_file
-            )
+                model_file=self.parameters.smoothing_sigma_model_file)
         return self._smoothing_sigma_trainer
 
     @property
@@ -155,8 +151,7 @@ class BabyTrainer(object):
             self._flattener_trainer = FlattenerTrainer(
                 save_dir=self.save_dir,
                 stats_file=self.parameters.flattener_stats_file,
-                flattener_file=self.parameters.flattener_file
-            )
+                flattener_file=self.parameters.flattener_file)
         return self._flattener_trainer
 
     @property
@@ -190,7 +185,8 @@ class BabyTrainer(object):
     @property
     def track_trainer(self):
         if self._track_trainer is None:
-            self._track_trainer = CellTrainer(self.tracker_data._metadata, self.tracker_data)
+            self._track_trainer = CellTrainer(self.tracker_data._metadata,
+                                              self.tracker_data)
         return self._track_trainer
 
     @track_trainer.setter
@@ -252,10 +248,11 @@ class BabyTrainer(object):
             datafile = self.save_dir / self.parameters.train_val_test_pairs_file
             self._impairs.save(datafile, self.base_dir)
             self._ncells = self._impairs.ncells
-             
+
             # And for thet tracker datasets too
     def _tracker_check_for_data_update(self):
-        if getattr(self, '_tracker_ncells', None) != self._tracker_impairs.ncells:
+        if getattr(self, '_tracker_ncells',
+                   None) != self._tracker_impairs.ncells:
             datafile = self.save_dir / self.parameters.tracker_tvt_pairs_file
             self._tracker_impairs.save(datafile, self.base_dir)
             self._tracker_ncells = self._tracker_impairs.ncells
@@ -273,11 +270,13 @@ class BabyTrainer(object):
     @data.setter
     def data(self, train_val_test_pairs):
         if isinstance(train_val_test_pairs, str):
-            pairs_file = find_file(train_val_test_pairs, self.save_dir, 'data')
+            pairs_file = find_file(train_val_test_pairs, self.save_dir,
+                                   'data')
             train_val_test_pairs = TrainValTestPairs()
             train_val_test_pairs.load(pairs_file, self.base_dir)
         if not isinstance(train_val_test_pairs, TrainValTestPairs):
-            raise BadType('"data" must be of type "baby.io.TrainValTestPairs"')
+            raise BadType(
+                '"data" must be of type "baby.io.TrainValTestPairs"')
         self._impairs = train_val_test_pairs
         self._check_for_data_update()
 
@@ -294,11 +293,13 @@ class BabyTrainer(object):
     @data.setter
     def tracker_data(self, train_val_test_pairs):
         if isinstance(train_val_test_pairs, str):
-            pairs_file = find_file(train_val_test_pairs, self.save_dir, 'data')
+            pairs_file = find_file(train_val_test_pairs, self.save_dir,
+                                   'data')
             train_val_test_pairs = TrainValTestPairs()
             train_val_test_pairs.load(pairs_file, self.base_dir)
         if not isinstance(train_tvt_pairs, TrainValTestPairs):
-            raise BadType('"data" must be of type "baby.io.TrainValTestPairs"')
+            raise BadType(
+                '"data" must be of type "baby.io.TrainValTestPairs"')
         self._tracker_impairs = train_val_test_pairs
         self._tracker_check_for_data_update()
 
@@ -364,10 +365,10 @@ class BabyTrainer(object):
 
     @property
     def smoothing_sigma_stats(self):
-        warnings.warn("nursery.smoothing_sigma_stats will soon be "
-                      "deprecated, use nursery.smoothing_sigma_trainer.stats "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.smoothing_sigma_stats will soon be "
+            "deprecated, use nursery.smoothing_sigma_trainer.stats "
+            "instead", DeprecationWarning)
         return self.smoothing_sigma_trainer.stats
 
     @property
@@ -375,168 +376,166 @@ class BabyTrainer(object):
         return self.smoothing_sigma_trainer.model
 
     def generate_flattener_stats(self, max_erode=5):
-        warnings.warn("nursery.generate_flattener_stats will soon be "
-                      "deprecated, use "
-                      "nursery.flattener_trainer.generate_stats(train_gen, "
-                      "val_gen, train_aug, val_aug, max_erode=5) instead",
-                      DeprecationWarning)
-        self.flattener_trainer.generate_flattener_stats(*self.gen, *self.aug,
+        warnings.warn(
+            "nursery.generate_flattener_stats will soon be "
+            "deprecated, use "
+            "nursery.flattener_trainer.generate_stats(train_gen, "
+            "val_gen, train_aug, val_aug, max_erode=5) instead",
+            DeprecationWarning)
+
+        flattener = lambda x, y: x
+        tAug = _std_aug(self.smoothing_sigma_model, flattener,
+                        self.parameters)
+        vAug = _std_aug(self.smoothing_sigma_model,
+                        flattener,
+                        self.parameters,
+                        isval=True)
+
+        self.flattener_trainer.generate_flattener_stats(*self.gen,
+                                                        tAug,
+                                                        vAug,
                                                         max_erode=max_erode)
 
     @property
     def flattener_stats(self):
-        warnings.warn("nursery.flattener_stats will soon be "
-                      "deprecated, use nursery.flattener_trainer.stats "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.flattener_stats will soon be "
+            "deprecated, use nursery.flattener_trainer.stats "
+            "instead", DeprecationWarning)
         return self.flattener_trainer.stats
 
     @property
     def flattener(self):
-        warnings.warn("nursery.flattener will soon be "
-                      "deprecated, use nursery.flattener_trainer.flattener "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.flattener will soon be "
+            "deprecated, use nursery.flattener_trainer.flattener "
+            "instead", DeprecationWarning)
         return self.flattener_trainer.flattener
 
     @flattener.setter
     def flattener(self, f):
-        warnings.warn("nursery.flattener will soon be "
-                      "deprecated, use nursery.flattener_trainer.flattener "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.flattener will soon be "
+            "deprecated, use nursery.flattener_trainer.flattener "
+            "instead", DeprecationWarning)
         self.flattener_trainer.flattener = f
 
     @property
     def aug(self):
         p = self.parameters
-        t = ScalingAugmenter(self.smoothing_sigma_model,
-                             self.flattener,
-                             xy_out=p.xy_out,
-                             target_pixel_size=p.target_pixel_size,
-                             substacks=p.substacks,
-                             probs={
-                                 'rotate': 0.2,
-                                 'vshift': 0.25,
-                                 'hshift': 0.25
-                             })
-        v = ScalingAugmenter(self.smoothing_sigma_model,
-                             self.flattener,
-                             xy_out=p.xy_out,
-                             target_pixel_size=p.target_pixel_size,
-                             substacks=p.substacks,
-                             p_noop=1,
-                             probs={
-                                 'vshift': 0.25,
-                                 'hshift': 0.25
-                             })
+        t = _std_aug(self.smoothing_sigma_model, self.flattener,
+                     self.parameters)
+        v = _std_aug(self.smoothing_sigma_model,
+                     self.flattener,
+                     self.parameters,
+                     isval=True)
         return TrainValProperty(t, v)
 
     @property
     def cnn_fn(self):
-        warnings.warn("nursery.cnn_fn will soon be "
-                      "deprecated, use nursery.cnn_trainer.cnn_fn "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.cnn_fn will soon be "
+            "deprecated, use nursery.cnn_trainer.cnn_fn "
+            "instead", DeprecationWarning)
         return self.cnn_trainer.cnn_fn
 
     @cnn_fn.setter
     def cnn_fn(self, fn):
-        warnings.warn("nursery.cnn_fn will soon be "
-                      "deprecated, use nursery.cnn_trainer.cnn_fn "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.cnn_fn will soon be "
+            "deprecated, use nursery.cnn_trainer.cnn_fn "
+            "instead", DeprecationWarning)
         self.cnn_trainer.cnn_fn = fn
 
     @property
     def cnn_dir(self):
-        warnings.warn("nursery.cnn_dir will soon be "
-                      "deprecated, use nursery.cnn_trainer.cnn_dir "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.cnn_dir will soon be "
+            "deprecated, use nursery.cnn_trainer.cnn_dir "
+            "instead", DeprecationWarning)
         return self.cnn_trainer.cnn_dir
 
     @property
     def cnn_name(self):
-        warnings.warn("nursery.cnn_bane will soon be "
-                      "deprecated, use nursery.cnn_trainer.cnn_name "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.cnn_bane will soon be "
+            "deprecated, use nursery.cnn_trainer.cnn_name "
+            "instead", DeprecationWarning)
         return self.cnn_trainer.cnn_name
 
     @property
     def cnn(self):
-        warnings.warn("nursery.cnn will soon be "
-                      "deprecated, use nursery.cnn_trainer.cnn "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.cnn will soon be "
+            "deprecated, use nursery.cnn_trainer.cnn "
+            "instead", DeprecationWarning)
         return self.cnn_trainer.cnn
 
     @property
     def histories(self):
-        warnings.warn("nursery.histories will soon be "
-                      "deprecated, use nursery.cnn_trainer.histories "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.histories will soon be "
+            "deprecated, use nursery.cnn_trainer.histories "
+            "instead", DeprecationWarning)
         return self.cnn_trainer.histories
 
     @property
     def cnn_opt_dir(self):
-        warnings.warn("nursery.opt_dir will soon be "
-                      "deprecated, use nursery.cnn_trainer.opt_dir "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.opt_dir will soon be "
+            "deprecated, use nursery.cnn_trainer.opt_dir "
+            "instead", DeprecationWarning)
         return self.cnn_trainer.opt_dir
 
     @property
     def cnn_opt(self):
-        warnings.warn("nursery.cnn_opt will soon be "
-                      "deprecated, use nursery.cnn_trainer.opt_cnn "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.cnn_opt will soon be "
+            "deprecated, use nursery.cnn_trainer.opt_cnn "
+            "instead", DeprecationWarning)
         return self.cnn_trainer.opt_cnn
 
     def fit_smoothing_model(self, filt='identity'):
-        warnings.warn("nursery.fit_smoothing_model will soon be "
-                      "deprecated, use nursery.smoothing_signa_trainer.fit "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.fit_smoothing_model will soon be "
+            "deprecated, use nursery.smoothing_signa_trainer.fit "
+            "instead", DeprecationWarning)
         self.smoothing_sigma_trainer.fit(filt=filt)
 
     def plot_fitted_smoothing_sigma_model(self):
-        warnings.warn("nursery.plot_fitted_smoothing_sigma_model will soon be "
-                      "deprecated, use "
-                      "nursery.smoothing_signa_trainer.plot_fitted_model "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.plot_fitted_smoothing_sigma_model will soon be "
+            "deprecated, use "
+            "nursery.smoothing_signa_trainer.plot_fitted_model "
+            "instead", DeprecationWarning)
         self.smoothing_sigma_trainer.plot_fitted_model()
 
     def fit_flattener(self, **kwargs):
-        warnings.warn("nursery.fit_flattener will soon be "
-                      "deprecated, use nursery.flattener_trainer.fit "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.fit_flattener will soon be "
+            "deprecated, use nursery.flattener_trainer.fit "
+            "instead", DeprecationWarning)
         self.flattener_trainer.fit(**kwargs)
 
     def plot_flattener_stats(self, **kwargs):
-        warnings.warn("nursery.plot_flattener_stats will soon be "
-                      "deprecated, use nursery.flattener_trainer.plot_stats "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.plot_flattener_stats will soon be "
+            "deprecated, use nursery.flattener_trainer.plot_stats "
+            "instead", DeprecationWarning)
         self.flattener_trainer.plot_stats(**kwargs)
 
     def fit_cnn(self, **kwargs):
-        warnings.warn("nursery.fit_cnn will soon be "
-                      "deprecated, use nursery.cnn_trainer.fit "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.fit_cnn will soon be "
+            "deprecated, use nursery.cnn_trainer.fit "
+            "instead", DeprecationWarning)
         self.cnn_trainer.fit(**kwargs)
 
     def plot_histories(self, **kwargs):
-        warnings.warn("nursery.plot_histories will soon be "
-                      "deprecated, use nursery.cnn_trainer.plot_histories "
-                      "instead",
-                      DeprecationWarning)
+        warnings.warn(
+            "nursery.plot_histories will soon be "
+            "deprecated, use nursery.cnn_trainer.plot_histories "
+            "instead", DeprecationWarning)
         self.cnn_trainer.plot_histories(**kwargs)
 
     # TODO: move to Segmentation Param Trainer
@@ -798,6 +797,7 @@ def get_best_and_worst(model, gen):
 
     return best, worst
 
+
 def _seg_filter_optim(g,
                       p,
                       pk,
@@ -805,8 +805,7 @@ def _seg_filter_optim(g,
                       seg_gen,
                       base_params=default_params,
                       scoring='F0_5'):
-    p = _sub_params({(k, g): v for k, v in zip(pk, p)},
-                    base_params)
+    p = _sub_params({(k, g): v for k, v in zip(pk, p)}, base_params)
     sfpo = SegFilterParamOptim(flattener, basic_params=p, scoring=scoring)
     sfpo.generate_stat_table(seg_gen)
     sfpo.fit_filter_params(lazy=True, bootstrap=False)
@@ -818,6 +817,18 @@ def _seg_filter_optim(g,
     }
 
 
+def _std_aug(ssm, flattener, p, isval=False):
+    probs = {'vshift': 0.25, 'hshift': 0.25}
+    extra_args = {}
+    if isval:
+        extra_args['p_noop'] = 1
+    else:
+        probs['rotate'] = 0.2
 
-
-
+    return ScalingAugmenter(ssm,
+                            flattener,
+                            xy_out=p.xy_out,
+                            target_pixel_size=p.target_pixel_size,
+                            substacks=p.substacks,
+                            probs=probs,
+                            **extra_args)
