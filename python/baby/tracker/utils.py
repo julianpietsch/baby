@@ -59,12 +59,13 @@ def lol_to_adj(lol):
 
     returns
 
+    :adj_matrix: (n, n) ndarray where n is the number of cells
     
     '''
     n = len([y for x in lol for y in x])
     adj_mat = np.zeros((n,n))
 
-    prev = []
+    prev = None
     cur = 0
     for l in lol:
         if not prev:
@@ -72,8 +73,25 @@ def lol_to_adj(lol):
         else:
             for i, el in enumerate(l):
                 prev_idx = prev.index(el) if el in prev else None
-                if prev_idx:
+                if prev_idx is not None:
                     adj_mat[cur + len(prev) + i, cur + prev_idx] = True
             cur += len(l)
 
     return adj_mat
+
+def compare_pred_truth_lols(prediction, truth):
+    '''
+    input
+
+    :prediction: list of lists with predicted cell ids
+    :truth: list of lists with real cell ids
+
+    returns
+
+    number of diferences between equivalent truth matrices
+
+    '''
+    adj_pred = lol_to_adj(prediction)
+    adj_truth = lol_to_adj(truth)
+
+    return(int(((adj_pred - adj_truth) != 0).sum()))

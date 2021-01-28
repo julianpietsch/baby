@@ -251,6 +251,9 @@ class CellTrainer(CellTracker):
 
         self.model = GridSearchCV(estimator=model, param_grid=param_grid, cv=5)
         self.model.fit(data, truth)
+        # Add data on the features and their order
+        self.model.best_estimator_.all_ofeats = self.all_ofeats
+        self.model.best_estimator_.all_ifeats = [self.feats2use, self.trapfeats, self.extra_feats]
         print(self.model.best_score_, self.model.best_params_)
 
     def save_model(self, filename):
