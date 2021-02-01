@@ -59,9 +59,12 @@ class FeatureCalculator:
 
     def set_named_ids(self):
         # Convenience function to call important feats by name
-        self.xind = self.outfeats.index('centroid-0')
-        self.yind = self.outfeats.index('centroid-1')
-        self.aind = self.outfeats.index('area')
+        if 'centroid-0' in self.outfeats:
+            self.xind = self.outfeats.index('centroid-0')
+        if 'centroid-1' in self.outfeats:
+            self.yind = self.outfeats.index('centroid-1')
+        if 'area' in self.outfeats:
+            self.aind = self.outfeats.index('area')
 
     def load_model(self, path, fname):
             model_file = join(path, fname)
