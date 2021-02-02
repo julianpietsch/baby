@@ -290,7 +290,7 @@ class BabyBrain(object):
 
                 # Return output as a dict
                 output.update({
-                    'centres': centres,
+                    'centres': [list(c) for c in centres],
                     'angles': [a.tolist() for a in angles],
                     'radii': [r.tolist() for r in radii]
                 })
