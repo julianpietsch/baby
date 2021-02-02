@@ -341,7 +341,7 @@ class TrainValTestPairs(object):
         if not isinstance(pairs, list):
             raise ValueError('"testing" must be a list')
         self._test_pairs = pairs
-        self._metadata = None  
+        self._metadata = None
 
     @property
     def ncells(self):
@@ -354,6 +354,9 @@ class TrainValTestPairs(object):
                 list(repeat(t, n))
                 for n, t in zip(map(len, meta.cellLabels), meta.train_val)
             ]))
+        ntrainval.setdefault('training', 0)
+        ntrainval.setdefault('validation', 0)
+        ntrainval.setdefault('testing', 0)
         return ncells_tuple(**ntrainval)
 
     @property
@@ -389,7 +392,7 @@ class TrainValTestPairs(object):
             self._metadata_tp = self._metadata.set_index('tp', append=True)
 
             # TODO: assert that all indices have the same  trainval field
-            # 
+            #
         return self._metadata
 
     @property
@@ -589,4 +592,3 @@ def find_indices(groups, chunk_size, return_max=True):
         maxind = sizes.index(np.max(sizes))
         indices = indices[maxind]
     return indices
-

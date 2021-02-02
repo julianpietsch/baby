@@ -59,9 +59,12 @@ class FeatureCalculator:
 
     def set_named_ids(self):
         # Convenience function to call important feats by name
-        self.xind = self.outfeats.index('centroid-0')
-        self.yind = self.outfeats.index('centroid-1')
-        self.aind = self.outfeats.index('area')
+        if 'centroid-0' in self.outfeats:
+            self.xind = self.outfeats.index('centroid-0')
+        if 'centroid-1' in self.outfeats:
+            self.yind = self.outfeats.index('centroid-1')
+        if 'area' in self.outfeats:
+            self.aind = self.outfeats.index('area')
 
     def load_model(self, path, fname):
             model_file = join(path, fname)
@@ -247,7 +250,7 @@ class CellTracker(FeatureCalculator):
         if feats2use is None: # Ignore this block when training
             if model is None:
                 model = self.load_model( models_path,
-                                         'ct_rf_20210125_9.pkl')
+                                         'ct_rf_20210201_12.pkl')
             if bak_model is None:
                 bak_model = self.load_model( models_path,
                                          'ct_rf_20210125_9.pkl')
@@ -886,6 +889,11 @@ def switch_case_nfeats(nfeats):
             'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
             'extent',
             'orientation', 'perimeter'), (), ()],
+        14 : [(
+            'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
+            'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
+            'extent',
+            'orientation', 'perimeter'), ('baryangle', 'barydist'), ()],
         15 : [(
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
