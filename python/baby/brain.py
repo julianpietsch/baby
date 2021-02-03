@@ -75,6 +75,8 @@ class BabyBrain(object):
                  pixel_size=0.263,
                  default_image_size=None,
                  params=default_params,
+                 min_bud_tps=3,
+                 isbud_thresh=0.5,
                  session=None,
                  graph=None,
                  print_info=False,
@@ -162,9 +164,12 @@ class BabyBrain(object):
             celltrack_model = pickle.load(f)
         with open(budassign_model_file, 'rb') as f:
             budassign_model = pickle.load(f)
+        print(isbud_thresh)
         self.tracker = MasterTracker(
             ctrack_args={'model': celltrack_model},
             btrack_args={'model': budassign_model},
+            min_bud_tps=min_bud_tps,
+            isbud_thresh=isbud_thresh,
             px_size=pixel_size)
 
         # Run prediction on mock image to load model for prediction
@@ -290,7 +295,7 @@ class BabyBrain(object):
 
                 # Return output as a dict
                 output.update({
-                    'centres': centres,
+                    'centres': [list(c) for c in centres],
                     'angles': [a.tolist() for a in angles],
                     'radii': [r.tolist() for r in radii]
                 })

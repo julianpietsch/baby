@@ -77,6 +77,8 @@ def evolve60env(modelsets, image_dir):
     # Set up a tracker for this model set
     tracker = MasterTracker(ctrack_args={'model': ctm},
                             btrack_args={'model': bam},
+                            min_bud_tps=mset.get('min_bud_tps',3),
+                            isbud_thresh=mset.get('isbud_thresh',0.5),
                             px_size=0.263)
 
     return tracker, trkF, trkG

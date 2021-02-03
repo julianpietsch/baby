@@ -702,7 +702,11 @@ class MasterTracker(FeatureCalculator):
         if None it passes all the features to use
     :**kwargs: additional arguments passed to FeatureCalculator constructor
     '''
-    def __init__(self, ctrack_args=None, btrack_args=None,
+    def __init__(self,
+                 ctrack_args=None,
+                 btrack_args=None,
+                 min_bud_tps=3,
+                 isbud_thresh=0.5,
                  **kwargs):
         if ctrack_args is None:
             ctrack_args = {}
@@ -729,6 +733,10 @@ class MasterTracker(FeatureCalculator):
         # DONE Tests passing, TODO check if the change budtracker.outfeats to tfeats broke anything
         self.bt_idx = [self.tfeats.index(f) for f in self.bud_tracker.tfeats] 
 
+        # Save bud assignment parameters
+        self.min_bud_tps = min_bud_tps
+        print(isbud_thresh)
+        self.isbud_thresh = isbud_thresh
 
     def step_trackers(self,
                       masks,
@@ -836,9 +844,11 @@ class MasterTracker(FeatureCalculator):
             if max_lbl > 0:
                 # Calculate mother assignments for this time point
                 ma = ba_cum[0:max_lbl, 0:max_lbl].argmax(0) + 1
-                # Cell must have been a bud and been present for at least 2 tps
-                isbud = (p_was_bud[0:max_lbl] > 0.5) & (lifetime[0:max_lbl] >
-                                                        2)
+                # Cell must have been a bud and been present for at least
+                # min_bud_tps
+                print(self.isbud_thresh)
+                isbud = (p_was_bud[0:max_lbl] > self.isbud_thresh) & (
+                        lifetime[0:max_lbl] >= self.min_bud_tps)
                 ma[~isbud] = 0  # 0 indicates no assignment (lbls indexed from 1)
             else:
                 ma = np.zeros(0)
