@@ -164,7 +164,6 @@ class BabyBrain(object):
             celltrack_model = pickle.load(f)
         with open(budassign_model_file, 'rb') as f:
             budassign_model = pickle.load(f)
-        print(isbud_thresh)
         self.tracker = MasterTracker(
             ctrack_args={'model': celltrack_model},
             btrack_args={'model': budassign_model},

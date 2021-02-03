@@ -733,7 +733,6 @@ class MasterTracker(FeatureCalculator):
 
         # Save bud assignment parameters
         self.min_bud_tps = min_bud_tps
-        print(isbud_thresh)
         self.isbud_thresh = isbud_thresh
 
     def step_trackers(self,
@@ -844,7 +843,6 @@ class MasterTracker(FeatureCalculator):
                 ma = ba_cum[0:max_lbl, 0:max_lbl].argmax(0) + 1
                 # Cell must have been a bud and been present for at least
                 # min_bud_tps
-                print(self.isbud_thresh)
                 isbud = (p_was_bud[0:max_lbl] > self.isbud_thresh) & (
                         lifetime[0:max_lbl] >= self.min_bud_tps)
                 ma[~isbud] = 0  # 0 indicates no assignment (lbls indexed from 1)
