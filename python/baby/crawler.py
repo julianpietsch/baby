@@ -25,6 +25,7 @@ class BabyCrawler(object):
              return_baprobs=False,
              refine_outlines=False,
              with_volumes=False,
+             parallel=False,
              **kwargs):
         '''Process the next batch of input images
 
@@ -63,15 +64,26 @@ class BabyCrawler(object):
 
         output = []
 
-        seg_trk_gen = self.baby_brain.segment_and_track(
-            bf_img_batch,
-            tracker_states=self.tracker_states,
-            yield_next=True,
-            yield_edgemasks=with_edgemasks,
-            yield_volumes=with_volumes,
-            assign_mothers=assign_mothers,
-            return_baprobs=return_baprobs,
-            refine_outlines=refine_outlines)
+        if parallel:
+            seg_trk_gen = self.baby_brain.segment_and_track_parallel(
+                bf_img_batch,
+                tracker_states=self.tracker_states,
+                yield_next=True,
+                yield_edgemasks=with_edgemasks,
+                yield_volumes=with_volumes,
+                assign_mothers=assign_mothers,
+                return_baprobs=return_baprobs,
+                refine_outlines=refine_outlines)
+        else:
+            seg_trk_gen = self.baby_brain.segment_and_track(
+                bf_img_batch,
+                tracker_states=self.tracker_states,
+                yield_next=True,
+                yield_edgemasks=with_edgemasks,
+                yield_volumes=with_volumes,
+                assign_mothers=assign_mothers,
+                return_baprobs=return_baprobs,
+                refine_outlines=refine_outlines)
 
         for i, (seg, state) in enumerate(seg_trk_gen):
             # Update cumulative state

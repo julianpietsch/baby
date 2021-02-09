@@ -1,10 +1,7 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 from os.path import dirname, join, isfile, isdir
-from itertools import repeat
-import logging
-from time import strftime
-from uuid import uuid1
+from itertools import repeat, chain
 
 import numpy as np
 import pickle
@@ -14,12 +11,11 @@ from tensorflow.keras import models, layers
 from tensorflow.keras import backend as K
 
 from .losses import bce_dice_loss, dice_loss, dice_coeff
-from .segmentation import morph_seg_grouped
-from .tracker.core import MasterTracker
 from .preprocessing import robust_norm, SegmentationFlattening
+from .morph_thresh_seg import MorphSegGrouped
+from .tracker.core import MasterTracker
 from .utils import batch_iterator, split_batch_pred
-from .morph_thresh_seg import MorphSegGrouped, SegmentationOutput
-from .io import save_tiled_image
+from .brain_util import _segment, _track, _segment_and_track_parallel
 
 models_path = join(dirname(__file__), 'models')
 
@@ -96,8 +92,7 @@ class BabyBrain(object):
             flattener_file = join(models_path, flattener_file)
 
         if celltrack_model_file is None:
-            celltrack_model_file = join(models_path,
-                                        'ct_svc_20201106_6.pkl')
+            celltrack_model_file = join(models_path, 'ct_svc_20201106_6.pkl')
         elif not isfile(celltrack_model_file):
             celltrack_model_file = join(models_path, celltrack_model_file)
 
@@ -164,12 +159,11 @@ class BabyBrain(object):
             celltrack_model = pickle.load(f)
         with open(budassign_model_file, 'rb') as f:
             budassign_model = pickle.load(f)
-        self.tracker = MasterTracker(
-            ctrack_args={'model': celltrack_model},
-            btrack_args={'model': budassign_model},
-            min_bud_tps=min_bud_tps,
-            isbud_thresh=isbud_thresh,
-            px_size=pixel_size)
+        self.tracker = MasterTracker(ctrack_args={'model': celltrack_model},
+                                     btrack_args={'model': budassign_model},
+                                     min_bud_tps=min_bud_tps,
+                                     isbud_thresh=isbud_thresh,
+                                     px_size=pixel_size)
 
         # Run prediction on mock image to load model for prediction
         _, x, y, z = self.morph_model.input.shape
@@ -257,65 +251,10 @@ class BabyBrain(object):
             morph_preds = split_batch_pred(self.morph_predict(batch))
 
             for cnn_output in morph_preds:
-                output = {}
-
-                try:
-                    seg_result = self.morph_segmenter.segment(
-                        cnn_output,
-                        refine_outlines=refine_outlines,
-                        return_volume=yield_volumes)
-                except:
-                    # Log errors
-                    err_id = _generate_error_dump_id()
-                    if (self.error_dump_dir is not None and
-                            isdir(self.error_dump_dir)):
-                        save_tiled_image(
-                            np.uint16((2**16 - 1) * cnn_output),
-                            join(self.error_dump_dir,
-                                 err_id + '_cnn_out.png'))
-                    if self.suppress_errors:
-                        err_msg = dict(ID=err_id,
-                                       refine_outlines=refine_outlines,
-                                       return_volume=yield_volumes)
-                        err_msg = [
-                            '{}: {}'.format(k, v) for k, v in err_msg.items()
-                        ]
-                        err_msg.insert(0, 'Segmentation error')
-                        logging.exception('\n'.join(err_msg))
-                        seg_result = SegmentationOutput([])
-                        output['error'] = 'Segmentation error: ' + err_id
-                    else:
-                        raise
-
-                if len(seg_result.coords) > 0:
-                    centres, radii, angles = zip(*seg_result.coords)
-                else:
-                    centres, radii, angles = 3 * [[]]
-
-                # Return output as a dict
-                output.update({
-                    'centres': [list(c) for c in centres],
-                    'angles': [a.tolist() for a in angles],
-                    'radii': [r.tolist() for r in radii]
-                })
-
-                _0xy = (0,) + cnn_output.shape[1:3]
-                if yield_masks:
-                    if len(seg_result.masks) > 0:
-                        output['masks'] = np.stack(seg_result.masks)
-                    else:
-                        output['masks'] = np.zeros(_0xy, dtype='bool')
-                if yield_edgemasks:
-                    if len(seg_result.edges) > 0:
-                        output['edgemasks'] = np.stack(seg_result.edges)
-                    else:
-                        output['edgemasks'] = np.zeros(_0xy, dtype='bool')
-                if yield_preds:
-                    output['preds'] = cnn_output
-                if yield_volumes:
-                    output['volumes'] = seg_result.volume
-
-                yield output
+                yield _segment(self.morph_segmenter, cnn_output,
+                               refine_outlines, yield_volumes, yield_masks,
+                               yield_preds, yield_edgemasks,
+                               self.error_dump_dir, self.suppress_errors)
 
     def run(self, bf_img_batch):
         '''Implementation of legacy runner function...
@@ -408,89 +347,76 @@ class BabyBrain(object):
                                    refine_outlines=refine_outlines)
 
         for seg, state in zip(segment_gen, tracker_states):
-            try:
-                tracking = self.tracker.step_trackers(
-                    seg['masks'],
-                    seg['preds'][i_budneck],
-                    seg['preds'][i_bud],
-                    state=state,
-                    assign_mothers=assign_mothers,
-                    return_baprobs=return_baprobs)
-            except:
-                # Log errors
-                err_id = _generate_error_dump_id()
-                if (self.error_dump_dir is not None and
-                        isdir(self.error_dump_dir)):
-                    fprefix = join(self.error_dump_dir, err_id)
-                    masks = seg.get('masks', np.zeros((0, 0, 0)))
-                    if masks.size > 0:
-                        save_tiled_image(
-                            seg['masks'].transpose((2, 0, 1)).astype('uint8'),
-                            fprefix + '_masks.png')
-                    save_tiled_image(
-                        np.uint16((2**16 - 1) *
-                                  seg['preds'][i_budneck, :, :, None]),
-                        fprefix + '_budneck_pred.png')
-                    save_tiled_image(
-                        np.uint16(
-                            (2**16 - 1) * seg['preds'][i_bud, :, :, None]),
-                        fprefix + '_bud_pred.png')
-                    with open(fprefix + '_state.pkl', 'wb') as f:
-                        pickle.dump(state, f)
-                if self.suppress_errors:
-                    err_msg = dict(ID=err_id,
-                                   assign_mothers=assign_mothers,
-                                   return_baprobs=return_baprobs)
-                    err_msg = [
-                        '{}: {}'.format(k, v) for k, v in err_msg.items()
-                    ]
-                    err_msg.insert(0, 'Tracking error')
-                    logging.exception('\n'.join(err_msg))
-                    ncells = len(masks)
-                    tracking = {
-                        'cell_label': list(range(ncells)),
-                        'mother_assign': [],
-                        'p_bud_assign': np.zeros((ncells, ncells)).tolist(),
-                        'state': state,
-                    }
+            yield _track(self.tracker, seg, state, i_budneck, i_bud,
+                         assign_mothers, return_baprobs, yield_edgemasks,
+                         yield_next, self.error_dump_dir,
+                         self.suppress_errors)
 
-                    seg['error'] = 'Tracking error: ' + err_id
-                else:
-                    raise
+    def segment_and_track_parallel(self,
+                                   bf_img_batch,
+                                   tracker_states=None,
+                                   yield_next=False,
+                                   yield_edgemasks=False,
+                                   assign_mothers=False,
+                                   return_baprobs=False,
+                                   refine_outlines=False,
+                                   yield_volumes=False,
+                                   njobs=-2):
+        '''Segment and track a batch of input images using joblib
 
-            del seg['preds']
-            del seg['masks']
-            if not yield_edgemasks:
-                del seg['edgemasks']
+        :param bf_img_batch: a list of ndarray with shape (X, Y, Z), or
+            equivalently an ndarray with shape (N_images, X, Y, Z)
+        :param tracker_states: a generator of tracker states from the previous
+            time point as yielded by this function when `yield_next` is True
+        :param yield_next: whether to yield updated tracking states for
+            subsequent calls to this function
+        :param yield_edgemasks: whether to include edge masks in the output
+        :param assign_mothers: whether to include mother assignments in the
+            output
+        :param return_baprobs: whether to include the bud assignment
+            probability matrix in the output
+        :param yield_volumes: whether to calculate and include volume
+            estimates in the output
 
-            seg['cell_label'] = tracking['cell_label']
-            state = tracking['state']
+        :returns: a list containing for each image in `bf_img_batch` a dict with
+            - centres: list of float pairs corresponding to (x, y) coords for
+              each detected cell,
+            - angles: list of lists of floats corresponding, for each cell, to
+              angles (radians) used to form active contour outline in radial
+              space
+            - radii: list of lists of floats corresponding, for each cell, to
+              radii used to form active contour outline in radial space
+            - cell_label: list of int corresponding to tracked global ID for
+              each cell detected in this image (indexed from 1)
+            - mother_assign: (optional) list of int specifying for each
+              (global) cell label ID, the cell label ID of the corresponding
+              mother (0 if no mother was found)
+            - p_bud_assign: (optional) matrix as a list of lists of floats,
+              specifying the probability that a cell (outer list) is a mother
+              to another cell (inner lists) in this image
+            - edgemasks: (optional) an ndarray of dtype "bool" with shape
+              (N_cells, X, Y) specifying the rasterised edge for each
+              segmented cell
 
-            # Use the last added "previous features" in the tracker state to
-            # obtain the major and minor ellipsoid axes
-            if state is None:
-                feats = np.zeros((0, len(self.tracker.outfeats)))
-            else:
-                feats = state['prev_feats'][-1]
-            ellip_inds = tuple(
-                self.tracker.outfeats.index(p)
-                for p in ('major_axis_length', 'minor_axis_length'))
-            if feats.shape[0] > 0:
-                seg['ellipse_dims'] = feats[:, ellip_inds].tolist()
-            else:
-                seg['ellipse_dims'] = []
+            If `yield_next` is True, returns the dict described above and
+            tracker states for this time point as a tuple
+        '''
 
-            if assign_mothers:
-                seg['mother_assign'] = tracking['mother_assign']
+        # First preprocess each brightfield image in batch
+        bf_img_batch = np.stack(
+            [robust_norm(img, {}) for img in bf_img_batch])
 
-            if return_baprobs:
-                seg['p_bud_assign'] = tracking['p_bud_assign']
+        # Do not run the CNN in parallel
+        morph_preds = list(
+            chain(*(split_batch_pred(self.morph_predict(batch))
+                    for batch in batch_iterator(bf_img_batch))))
 
-            if yield_next:
-                yield seg, state
-            else:
-                yield seg
+        if tracker_states is None:
+            tracker_states = repeat(None)
 
-
-def _generate_error_dump_id():
-    return strftime('%Y-%m-%d_%H-%M-%S_') + str(uuid1())
+        trackout = _segment_and_track_parallel(self.morph_segmenter,
+                self.tracker, self.flattener, morph_preds, tracker_states,
+                refine_outlines, yield_volumes, yield_edgemasks,
+                assign_mothers, return_baprobs, yield_next, njobs,
+                self.error_dump_dir, self.suppress_errors)
+        return trackout

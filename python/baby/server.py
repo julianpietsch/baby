@@ -185,7 +185,7 @@ class TaskMaster(object):
         #     tf.keras.backend.set_session(self.tf_session)
 
         t_start = time.perf_counter()
-        pred = crawler.step(img, **kwargs)
+        pred = crawler.step(img, parallel=True, **kwargs)
         t_elapsed = time.perf_counter() - t_start
 
         print('...images segmented in {:.3f} seconds.'.format(t_elapsed))
