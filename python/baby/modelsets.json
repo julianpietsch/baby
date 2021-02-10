@@ -44,7 +44,7 @@
   },
   "evolve_brightfield_60x_1z": {
     "morph_model_file": "I1_evolve_unet_4s_20200630.hdf5",
-    "flattener_file": "flattener_60x_prime_20200630.json",
+    "flattener_file": "flattener_60x_evolve_20200630.json",
     "celltrack_model_file": "ct_rf_20210201_12.pkl",
     "budassign_model_file": "mb_model_20201022.pkl",
     "pixel_size": 0.263,
@@ -60,7 +60,7 @@
   },
   "evolve_brightfield_60x_3z": {
     "morph_model_file": "I3_evolve_unet_4s_20200903.hdf5",
-    "flattener_file": "flattener_60x_prime_20200630.json",
+    "flattener_file": "flattener_60x_evolve_20200630.json",
     "celltrack_model_file": "ct_rf_20210201_12.pkl",
     "budassign_model_file": "mb_model_20201022.pkl",
     "pixel_size": 0.263,
