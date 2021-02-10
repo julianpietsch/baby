@@ -3,6 +3,7 @@ import pytest
 import re
 import inspect
 import numpy as np
+import json
 
 import baby
 from baby.brain import BabyBrain
@@ -81,9 +82,10 @@ def test_evolve_segment_and_track(bb, imgstack, imgs_evolve60):
     # Test stateless version
     output = bb.segment_and_track(imgstack,
                                   yield_volumes=True,
-                                  refine_outlines=True)
+                                  refine_outlines=True,
+                                  return_baprobs=True)
     for o in output:
-        print(o)
+        # print(json.dumps(o, indent=2))
         assert all(
             [len(o['centres']) == len(o[k]) for k in o if k in eqlen_outkeys])
 
@@ -111,4 +113,53 @@ def test_evolve_segment_and_track(bb, imgstack, imgs_evolve60):
                                                yield_next=True,
                                                yield_volumes=True,
                                                refine_outlines=True))
+    list(output4)  # NB: required since output is from a generator
+
+
+def test_evolve_segment_and_track_parallel(bb, imgstack, imgs_evolve60):
+    # Compare non-parallel with parallel
+    output_np, state_np = zip(*bb.segment_and_track(imgstack,
+                                                    yield_next=True,
+                                                    yield_volumes=True,
+                                                    refine_outlines=True,
+                                                    yield_edgemasks=True))
+
+    output0, state = zip(*bb.segment_and_track_parallel(imgstack,
+                                                        yield_next=True,
+                                                        yield_volumes=True,
+                                                        refine_outlines=True,
+                                                        yield_edgemasks=True))
+
+    for onp, o0 in zip(output_np, output0):
+        assert (np.array(onp['centres']) == np.array(o0['centres'])).all()
+        assert (np.array(onp['edgemasks']) == np.array(o0['edgemasks'])).all()
+
+    for snp, s0 in zip(state_np, state):
+        assert (np.array(snp['max_lbl']) == np.array(s0['max_lbl'])).all()
+        assert (np.array(snp['cell_lbls']) == np.array(s0['cell_lbls'])).all()
+        assert (np.array(snp['lifetime']) == np.array(s0['lifetime'])).all()
+        # assert np.array(snp['ba_cum']).sum() == np.array(s0['ba_cum']).sum()
+        # assert (np.array(snp['prev_feats']) == np.array(
+        #     s0['prev_feats'])).all()
+
+    # Step once to the same image (cells should track exactly)
+    output1, _ = zip(*bb.segment_and_track_parallel(imgstack,
+                                                    tracker_states=state,
+                                                    yield_next=True,
+                                                    yield_volumes=True,
+                                                    refine_outlines=True))
+    for o1, o0 in zip(output1, output0):
+        assert np.all(
+            np.array(o0['cell_label']) == np.array(o1['cell_label']))
+
+    # Test stateful version stepping between real time points
+    tp3 = imgs_evolve60['evolve_testF_tp3']['Brightfield'][0][None, ...]
+    tp4 = imgs_evolve60['evolve_testF_tp4']['Brightfield'][0][None, ...]
+    output3, state = zip(*bb.segment_and_track_parallel(
+        tp3, yield_next=True, yield_volumes=True, refine_outlines=True))
+    output4, state = zip(*bb.segment_and_track_parallel(tp4,
+                                                        tracker_states=state,
+                                                        yield_next=True,
+                                                        yield_volumes=True,
+                                                        refine_outlines=True))
     list(output4)  # NB: required since output is from a generator

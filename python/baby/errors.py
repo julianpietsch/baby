@@ -20,3 +20,7 @@ class BadType(TypeError):
 
 class BadProcess(Exception):
     pass
+
+
+class BadOutput(Exception):
+    pass

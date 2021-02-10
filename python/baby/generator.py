@@ -2,6 +2,7 @@ from pathlib import Path
 import numpy as np
 from functools import namedtuple
 from tensorflow.python.keras.utils.data_utils import Sequence
+from tqdm import tqdm
 
 from .io import load_tiled_image
 from .augmentation import Augmenter
@@ -13,7 +14,6 @@ from .preprocessing import segoutline_flattening as preprocess_segim
 
 
 ImageLabelShapes = namedtuple('ImageLabelShapes', ('input', 'output'))
-
 
 class ImageLabel(Sequence):
     def __init__(self, paths, batch_size, aug, preprocess=None,
@@ -55,7 +55,7 @@ class ImageLabel(Sequence):
         if self.in_memory:
             self.images = [
                 [ppf(*load_tiled_image(img)) for ppf, img
-                 in zip(self.preprocess, imgs)] for imgs in self.paths
+                 in zip(self.preprocess, imgs)] for imgs in tqdm(self.paths)
             ]
 
         # Initialise ordering
@@ -81,14 +81,21 @@ class ImageLabel(Sequence):
         Nsamples = len(self.paths)
         self.ordering = np.random.choice(Nsamples, Nsamples, replace=False)
 
-    def get_by_index(self, i):
+    @property
+    def n_pairs(self):
+        return len(self.paths)
+
+    def get_by_index(self, i, aug=None):
         if self.in_memory:
             img, lbl = self.images[i]
         else:
             img, lbl = [ppf(*load_tiled_image(im)) for ppf, im
                         in zip(self.preprocess, self.paths[i])]
 
-        return self.aug(img, lbl)
+        if aug is None:
+            return self.aug(img, lbl)
+        else:
+            return aug(img, lbl)
 
     def __getitem__(self, idx):
         Nbatch = self.batch_size

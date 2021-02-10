@@ -8,3 +8,8 @@ __pycache__
 .ropeproject
 *.egg-info
 baby-server-test.png
+**/scratch/
+**/data/*
+*.egg-info/
+**/venv/
+/tf1_venv/
