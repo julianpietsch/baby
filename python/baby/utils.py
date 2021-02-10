@@ -1,8 +1,10 @@
 import time
 import json
 from pathlib import Path
+from typing import NamedTuple, Any
 from importlib import import_module
 import numpy as np
+from baby.errors import BadParam
 
 
 class Timer(object):
@@ -54,6 +56,8 @@ def EncodableNamedTuple(obj):
 def jsonify(obj):
     if hasattr(obj, 'toJSON'):
         return obj.toJSON()
+    elif hasattr(obj, 'dtype') and hasattr(obj, 'tolist'):
+        return obj.tolist()
     elif isinstance(obj, tuple):
         return {'_python_tuple': list(obj)}
     if isinstance(obj, set):

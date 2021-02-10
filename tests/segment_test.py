@@ -109,7 +109,8 @@ def evolve60env(modelsets, model_dir, image_dir):
 def save_segoutlines(tmp_path, save_segment_outlines):
 
     def savefn(segoutputs, imnames):
-        for (edgemasks, _, _), l in zip(segoutputs, imnames):
+        for segoutput, l in zip(segoutputs, imnames):
+            edgemasks = segoutput.edges
             if len(edgemasks) == 0:
                 continue
             save_tiled_image(np.dstack(edgemasks).astype('uint8'),

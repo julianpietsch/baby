@@ -1,19 +1,21 @@
 from tensorflow.python.keras.layers import (
     Conv2D, BatchNormalization, Activation, MaxPooling2D,
-    Conv2DTranspose, concatenate
+    Conv2DTranspose, concatenate, Dropout
 )
 
 
 ### U-NET layers ###
 
 
-def conv_block(input_tensor, num_filters, stage, batchnorm=True):
+def conv_block(input_tensor, num_filters, stage, batchnorm=True, dropout=0.):
     postfix = '_{}a'.format(stage + 1)
     encoder = Conv2D(num_filters, (3, 3), padding='same',
                      name='enc_conv' + postfix)(input_tensor)
     if batchnorm:
         encoder = BatchNormalization(name='enc_bn' + postfix)(encoder)
     encoder = Activation('relu', name='enc_act' + postfix)(encoder)
+    if dropout > 0:
+        encoder = Dropout(dropout, name='enc_dropout' + postfix)(encoder)
 
     postfix = '_{}b'.format(stage + 1)
     encoder = Conv2D(num_filters, (3, 3), padding='same',
@@ -25,15 +27,18 @@ def conv_block(input_tensor, num_filters, stage, batchnorm=True):
     return encoder
 
 
-def encoder_block(input_tensor, num_filters, stage, batchnorm=True):
-    encoder = conv_block(input_tensor, num_filters, stage, batchnorm=batchnorm)
+def encoder_block(input_tensor, num_filters, stage, batchnorm=True,
+                  dropout=0.):
+    encoder = conv_block(input_tensor, num_filters, stage,
+                         batchnorm=batchnorm,
+                         dropout=dropout)
     encoder_pool = MaxPooling2D(
         (2, 2), strides=(2, 2), name='down_{}'.format(stage + 1))(encoder)
     return encoder_pool, encoder
 
 
 def decoder_block(input_tensor, concat_tensor, num_filters, stage,
-                  batchnorm=True, prename=''):
+                  batchnorm=True, prename='', dropout=0.):
     postfix = '_{}'.format(stage + 1)
     decoder = Conv2DTranspose(num_filters, (2, 2), strides=(2, 2), padding='same',
                               name=prename + 'up' + postfix)(input_tensor)
@@ -42,6 +47,8 @@ def decoder_block(input_tensor, concat_tensor, num_filters, stage,
     if batchnorm:
         decoder = BatchNormalization(name=prename + 'up_bn' + postfix)(decoder)
     decoder = Activation('relu', name=prename + 'up_act' + postfix)(decoder)
+    if dropout > 0:
+        decoder = Dropout(dropout, name='dec_dropout' + postfix)(decoder)
 
     postfix = '_{}a'.format(stage + 1)
     decoder = Conv2D(num_filters, (3, 3), padding='same',
@@ -49,6 +56,8 @@ def decoder_block(input_tensor, concat_tensor, num_filters, stage,
     if batchnorm:
         decoder = BatchNormalization(name=prename + 'dec_bn' + postfix)(decoder)
     decoder = Activation('relu', name=prename + 'dec_act' + postfix)(decoder)
+    if dropout > 0:
+        decoder = Dropout(dropout, name='dec_dropout' + postfix)(decoder)
 
     postfix = '_{}b'.format(stage + 1)
     decoder = Conv2D(num_filters, (3, 3), padding='same',
@@ -56,26 +65,30 @@ def decoder_block(input_tensor, concat_tensor, num_filters, stage,
     if batchnorm:
         decoder = BatchNormalization(name=prename + 'dec_bn' + postfix)(decoder)
     decoder = Activation('relu', name=prename + 'dec_act' + postfix)(decoder)
+    if dropout > 0:
+        decoder = Dropout(dropout, name='dec_dropout' + postfix)(decoder)
     return decoder
 
 
-def unet_block(input_tensor, layer_sizes, batchnorm=True):
+def unet_block(input_tensor, layer_sizes, batchnorm=True, dropout=0.):
     # Encoding
     upper_layer = input_tensor
     encoding_layers = []
     for i, num_filters in enumerate(layer_sizes[:-1]):
         upper_layer, encoder = encoder_block(upper_layer, num_filters, i,
-                                             batchnorm=batchnorm)
+                                             batchnorm=batchnorm,
+                                             dropout=dropout)
         encoding_layers.append(encoder)
 
     # Centre
     lower_layer = conv_block(upper_layer, layer_sizes[-1], len(layer_sizes) - 1,
-                             batchnorm=batchnorm)
+                             batchnorm=batchnorm, dropout=dropout)
 
     # Decoding
     for i, num_filters in reversed(list(enumerate(layer_sizes[:-1]))):
         lower_layer = decoder_block(lower_layer, encoding_layers[i],
-                                    num_filters, i, batchnorm=batchnorm)
+                                    num_filters, i, batchnorm=batchnorm,
+                                    dropout=dropout)
 
     return lower_layer
 

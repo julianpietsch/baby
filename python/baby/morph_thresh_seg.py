@@ -58,7 +58,7 @@ class Cell:
             rprop = single_region_prop(self.mask)
             coords, edge = outline_to_radial(self.edge, rprop,
                                              return_outline=True)
-            self.mask = ndimage.binary_fill_holes(self.edge)
+            self.mask = ndimage.binary_fill_holes(edge)
         else:
             edge = self._edge | (self.border_rect & self.mask)
             coords = tuple()
@@ -144,15 +144,24 @@ class Target:
 
 
 class Group:
-    def __init__(self, targets, min_area=10.,
-                 use_thresh=False, thresh_expansion=0.,
-                 interior_threshold=0.5, n_closing=0, n_opening=0,
-                 connectivity=2, edge_sub_dilations=None):
+
+    def __init__(self,
+                 targets,
+                 min_area=10.,
+                 use_thresh=False,
+                 thresh_expansion=0.,
+                 pedge_thresh=None,
+                 interior_threshold=0.5,
+                 n_closing=0,
+                 n_opening=0,
+                 connectivity=2,
+                 edge_sub_dilations=None):
         # Parameter assignment
         self.__connectivity = connectivity
         self.__min_area = min_area
         self.__use_thresh = use_thresh
         self.__thresh_expansion = thresh_expansion
+        self.__pedge_thresh = pedge_thresh
         self.__n_closing = n_closing
         self.__n_opening = n_opening
         self.__interior_threshold = interior_threshold
@@ -263,6 +272,10 @@ class Group:
                        if self.lower <= a < self.upper]
         self.cells = [Cell(a, m, pred_edge, border_rect, fit_radial=fit_radial)
                       for m, a in masks_areas]
+        # Remove cells that do not exceed the p_edge threshold
+        if self.__pedge_thresh is not None:
+            self.cells = [cell for cell in self.cells
+                          if cell.edge_score > self.__pedge_thresh]
 
 
 def broadcast_arg(arg: Union[Iterable, Any],
@@ -331,9 +344,17 @@ class MorphSegGrouped:
         n_opening = broadcast_arg(nopening, 'nopening', n_groups)
         min_area = broadcast_arg(min_area, 'min_area', n_groups)
         connectivity = broadcast_arg(connectivity, 'connectivity', n_groups)
+        pedge_thresh = broadcast_arg(pedge_thresh, 'pedge_thresh', n_groups)
+        group_thresh_expansion = broadcast_arg(group_thresh_expansion,
+                                               'group_thresh_expansion',
+                                               n_groups)
         edge_sub_dilations = broadcast_arg(edge_sub_dilations,
                                            'edge_substraction_dilations',
                                            n_groups)
+
+        # Minimum area must be larger than 1 to avoid generating cells with
+        # no size:
+        min_area = [np.max([a, 1]) for a in min_area]
 
         # Initialize the different groups and their targets
         self.groups = []
@@ -341,7 +362,8 @@ class MorphSegGrouped:
             targets = [Target(name, flattener) for name in target_names]
             self.groups.append(Group(targets, min_area=min_area[i],
                                      use_thresh=use_group_thresh,
-                                     thresh_expansion=group_thresh_expansion,
+                                     thresh_expansion=group_thresh_expansion[i],
+                                     pedge_thresh=pedge_thresh[i],
                                      interior_threshold=interior_threshold[i],
                                      n_closing=n_closing[i],
                                      n_opening=n_opening[i],
@@ -379,15 +401,22 @@ class MorphSegGrouped:
                      if self.contains(lower.mask, upper.mask)]
 
             for lower, upper in pairs:
-                if accessor(lower) < accessor(upper):
-                    lower_group.cells.remove(lower)
-                else:
-                    upper_group.cells.remove(upper)
+                # Check that one of the cells hasn't already been removed in
+                # previous pairs
+                if lower in lower_group.cells and upper in upper_group.cells:
+                    if accessor(lower) < accessor(upper):
+                        lower_group.cells.remove(lower)
+                    else:
+                        upper_group.cells.remove(upper)
 
     # Todo: rename
     def extract_edges(self, pred, shape, refine_outlines, return_volume):
         masks = [[]]
         if refine_outlines:
+            if not self.fit_radial:
+                raise BadParam(
+                    '"refine_outlines" requires "fit_radial" to have been specified'
+                )
             # Refine outlines using edge predictions
             grouped_coords = [[cell.coords for cell in group.cells]
                               for group in self.groups]
@@ -447,10 +476,6 @@ class MorphSegGrouped:
 
         for group in self.groups:
             group.segment(pred, border_rect, fit_radial=self.fit_radial)
-            # Remove cells that do not exceed the p_edge threshold
-            if self.pedge_thresh is not None:
-                group.cells = [cell for cell in group.cells
-                               if cell.edge_score > self.pedge_thresh]
 
         # Remove cells that are duplicated in several groups
         self.remove_duplicates()
@@ -462,10 +487,10 @@ class MorphSegGrouped:
         # Todo: return_masks and return_coords seem useless as always set
         #  necessary for brain.segment and tracker
         output = SegmentationOutput(*result)
-                                                       # [True,
-                                                       #  self.return_masks,
-                                                       #  self.return_coords,
-                                                       #  self.return_volume]))
+        # [True,
+        #  self.return_masks,
+        #  self.return_coords,
+        #  self.return_volume]))
 
         return output
         # if len(output) > 1:
@@ -479,4 +504,3 @@ class SegmentationOutput(NamedTuple):
     masks: list = []
     coords: list = []
     volume: list = []
-

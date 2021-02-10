@@ -12,11 +12,12 @@ def named_model_fn(name):
     def wrap(f):
 
         @named_obj(name)
-        def model_fn(generator, flattener, weights={}):
+        def model_fn(generator, flattener, weights={}, **kwargs):
             weights = {n: weights.get(n, 1) for n in flattener.names()}
             inputs = Input(shape=generator.shapes.input[1:])
             model = Model(inputs=[inputs],
-                          outputs=make_outputs(f(inputs), flattener.names()))
+                          outputs=make_outputs(f(inputs, **kwargs),
+                                               flattener.names()))
             model.compile(optimizer=Adam(amsgrad=False),
                           metrics=[dice_coeff],
                           loss=bce_dice_loss,
@@ -30,9 +31,24 @@ def named_model_fn(name):
 
 @named_model_fn('MSD D80')
 def msd_d80(inputs):
+    # Todo Remove or add deprecation warning
     return msd_block(inputs, 80, 1, [1, 2, 4, 8])
 
 
 @named_model_fn('Unet 4s')
 def unet_4s(inputs):
+    # Todo Remove or add deprecation warning
     return unet_block(inputs, [8, 16, 32, 64], batchnorm=True)
+
+
+@named_model_fn('unet')
+def unet(inputs, depth=4, layer_size=8, batchnorm=True, dropout=0.):
+    layer_sizes = [layer_size*(2**i) for i in range(depth)]
+    return unet_block(inputs, layer_sizes,
+                      dropout=dropout, batchnorm=batchnorm)
+
+
+@named_model_fn('msd')
+def msd(inputs, depth=80, width=1, n_dilations=4, dilation=1, batchnorm=True):
+    dilations = [dilation * (2 ** i) for i in range(n_dilations)]
+    return msd_block(inputs, depth, width, dilations, batchnorm=batchnorm)

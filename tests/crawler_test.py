@@ -16,7 +16,7 @@ def save_output(tmp_path, save_crawler_output):
                 continue
             filename = '_'.join(([l, suffix] if suffix else [l]) +
                                 ['segoutlines.png'])
-            save_tiled_image(edges.transpose([1, 2, 0]).astype('uint8'),
+            save_tiled_image(edges.transpose([1, 2, 0]).astype('float'),
                              tmp_path / filename,
                              {k: o[k] for k in info_keys},
                              layout=(1, None))
@@ -38,6 +38,8 @@ def test_evolve_crawl(bb_evolve60, imgs_evolve60, save_output):
     for o in output0:
         assert all([len(o['centres']) == len(o[k]) for k in eqlen_outkeys])
         assert o['edgemasks'].shape[1:3] == imgstack.shape[1:3]
+        if o['edgemasks'].shape[0] > 0:
+            assert o['edgemasks'].any()
 
     save_output(output0, imgs_evolve60.keys())
 

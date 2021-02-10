@@ -318,7 +318,8 @@ class SegmentationFlattening(object):
                 labels = [labels]
             assert len(labels) == len(areas)
             bmpairs = [(m, labels.index(bl))
-                        for m, bl in enumerate(buds) if bl > 0]
+                       for m, bl in enumerate(buds)
+                       if bl > 0 and bl in labels]
             buds = set(buds).difference((0,))
             labels = list(labels)
             isbud = np.array([l in buds for l in labels], dtype='bool')

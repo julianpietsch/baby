@@ -241,8 +241,11 @@ def subtask_timings(timing, seg_expt, bb, ntps=5, refine_outlines=True,
             seg_result = bb.morph_segmenter.segment(
                 cnn_output, refine_outlines=refine_outlines,
                 return_volume=return_volume)
-            if seg_result.masks is not None: #Todo: shouldn't be necessary
-                seg_masks.append(seg_result.masks)
+            _0xy = (0,) + cnn_output.shape[1:3]
+            if len(seg_result.masks) > 0:
+                seg_masks.append(np.stack(seg_result.masks))
+            else:
+                seg_masks.append(np.zeros(_0xy, dtype='bool'))
         tp_seg_masks.append(seg_masks)
         timing.finish()
 

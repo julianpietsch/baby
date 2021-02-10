@@ -61,37 +61,42 @@ def my_ball(radius):
     X += Z
     return X <= radius * radius
 
+
 def circle_outline(r):
     return ellipse_perimeter(r, r)
 
+
 def ellipse_perimeter(x, y):
-    im_shape = int(2*max(x, y) + 1)
+    im_shape = int(2 * max(x, y) + 1)
     img = np.zeros((im_shape, im_shape), dtype=np.uint8)
-    rr, cc = draw.ellipse_perimeter(int(im_shape//2), int(im_shape//2),
+    rr, cc = draw.ellipse_perimeter(int(im_shape // 2), int(im_shape // 2),
                                     int(x), int(y))
     img[rr, cc] = 1
     return np.pad(img, 1)
 
+
 def capped_cylinder(x, y):
-    max_size = (y + 2*x + 2)
+    max_size = (y + 2 * x + 2)
     pixels = np.zeros((max_size, max_size))
 
-    rect_start = ((max_size-x)//2, x + 1)
+    rect_start = ((max_size - x) // 2, x + 1)
     rr, cc = draw.rectangle_perimeter(rect_start, extent=(x, y),
-                                     shape=(max_size, max_size))
+                                      shape=(max_size, max_size))
     pixels[rr, cc] = 1
-    circle_centres = [(max_size//2 - 1, x),
-                      (max_size//2 - 1, max_size - x - 1 )]
+    circle_centres = [(max_size // 2 - 1, x),
+                      (max_size // 2 - 1, max_size - x - 1)]
     for r, c in circle_centres:
-        rr, cc = draw.circle_perimeter(r, c, (x + 1)//2,
+        rr, cc = draw.circle_perimeter(r, c, (x + 1) // 2,
                                        shape=(max_size, max_size))
         pixels[rr, cc] = 1
     pixels = ndimage.morphology.binary_fill_holes(pixels)
     pixels ^= erosion(pixels)
     return pixels
 
+
 def volume_of_sphere(radius):
-    return 4 / 3 * np.pi * radius**3
+    return 4 / 3 * np.pi * radius ** 3
+
 
 def plot_voxels(voxels):
     verts, faces, normals, values = measure.marching_cubes_lewiner(
@@ -107,6 +112,7 @@ def plot_voxels(voxels):
     plt.tight_layout()
     plt.show()
 
+
 # Volume estimation
 def union_of_spheres(outline, shape='my_ball', debug=False):
     filled = ndimage.binary_fill_holes(outline)
@@ -114,8 +120,8 @@ def union_of_spheres(outline, shape='my_ball', debug=False):
         outline == 0) * filled
     voxels = np.zeros((filled.shape[0], filled.shape[1], max(filled.shape)))
     c_z = voxels.shape[2] // 2
-    for x,y in zip(*np.where(filled)):
-        radius = nearest_neighbor[(x,y)]
+    for x, y in zip(*np.where(filled)):
+        radius = nearest_neighbor[(x, y)]
         if radius > 0:
             if shape == 'ball':
                 b = ball(radius)
@@ -126,12 +132,13 @@ def union_of_spheres(outline, shape='my_ball', debug=False):
                                  f"shape.")
             centre_b = ndimage.measurements.center_of_mass(b)
 
-            I,J,K = np.ogrid[:b.shape[0], :b.shape[1], :b.shape[2]]
+            I, J, K = np.ogrid[:b.shape[0], :b.shape[1], :b.shape[2]]
             voxels[I + int(x - centre_b[0]), J + int(y - centre_b[1]),
                    K + int(c_z - centre_b[2])] += b
     if debug:
         plot_voxels(voxels)
     return voxels.astype(bool).sum()
+
 
 def improved_uos(outline, shape='my_ball', debug=False):
     filled = ndimage.binary_fill_holes(outline)
@@ -163,9 +170,11 @@ def improved_uos(outline, shape='my_ball', debug=False):
         plot_voxels(voxels)
     return voxels.astype(bool).sum()
 
+
 def conical(outline, debug=False):
+    filled = ndimage.binary_fill_holes(outline)
     nearest_neighbor = ndimage.morphology.distance_transform_edt(
-        outline == 0) * ndimage.binary_fill_holes(outline)
+        outline == 0) * filled
     if debug:
         hf = plt.figure()
         ha = hf.add_subplot(111, projection='3d')
@@ -174,15 +183,13 @@ def conical(outline, debug=False):
                            np.arange(nearest_neighbor.shape[1]))
         ha.plot_surface(X, Y, nearest_neighbor)
         plt.show()
-    return 4 * nearest_neighbor.sum()
+    return 4 * nearest_neighbor.sum() + filled.sum()
+
 
 def volume(outline, method='spheres'):
-    if method=='conical':
+    if method == 'conical':
         return conical(outline)
-    elif method=='spheres':
+    elif method == 'spheres':
         return union_of_spheres(outline)
     else:
         raise ValueError(f"Method {method} not implemented.")
-
-def circularity(outline):
-    pass
