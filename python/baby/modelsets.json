@@ -11,7 +11,7 @@
       "nclosing": [0, 0, 0], "nopening": [2, 0, 0],
       "connectivity": [1, 1, 2],
       "edge_sub_dilations": [0, 0, 0],
-      "containment_thresh": 0.95, "min_area": 19,
+      "containment_thresh": 0.85, "min_area": 19,
       "pedge_thresh": [0.0, 0.0028, 0.0012],
       "group_thresh_expansion": [0.28, 0.06, 0.32]
     }
