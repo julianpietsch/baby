@@ -880,6 +880,12 @@ def switch_case_nfeats(nfeats):
         4 : [(
             'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area'), (), ()],
+        5 : [(
+            'area', 'minor_axis_length', 'major_axis_length', 
+            'bbox_area', 'perimeter'), (), ()],
+        6 : [(
+            'area', 'minor_axis_length', 'major_axis_length', 
+            'bbox_area', 'perimeter'), (), ('distance',)],
             # Including centroid
         7 : [('centroid', 'area', 'minor_axis_length', 'major_axis_length',
               'bbox_area', 'perimeter'), () , ()],
