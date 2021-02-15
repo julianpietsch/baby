@@ -183,7 +183,7 @@ def conical(outline, debug=False):
                            np.arange(nearest_neighbor.shape[1]))
         ha.plot_surface(X, Y, nearest_neighbor)
         plt.show()
-    return 4 * nearest_neighbor.sum() + filled
+    return 4 * nearest_neighbor.sum() + filled.sum()
 
 
 def volume(outline, method='spheres'):

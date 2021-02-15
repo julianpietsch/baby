@@ -720,8 +720,8 @@ class MasterTracker(FeatureCalculator):
             btrack_args['px_size'] = kwargs['px_size']
         self.bud_tracker = BudTracker(**btrack_args)
 
-        feats2use = set(self.cell_tracker.feats2use).union(set(
-                self.bud_tracker.feats2use))
+        feats2use = tuple(set(self.cell_tracker.feats2use).union(set(
+                self.bud_tracker.feats2use)))
 
         trapfeats = tuple(set(self.cell_tracker.trapfeats).union(set(
                 self.bud_tracker.trapfeats)))
