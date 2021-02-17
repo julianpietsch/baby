@@ -743,7 +743,8 @@ class MasterTracker(FeatureCalculator):
                       p_bud,
                       state=None,
                       assign_mothers=False,
-                      return_baprobs=False):
+                      return_baprobs=False,
+                      keep_full_state=False):
         '''
         Calculate features and track cells and budassignments
 
@@ -822,6 +823,10 @@ class MasterTracker(FeatureCalculator):
                 lblinds)] += ba_probs * (1 - p_is_mother[lblinds][None, ])
         else:
             ba_probs = np.zeros((0, 0))
+
+        if not keep_full_state:
+            cell_lbls = lastn_lbls
+            prev_feats = prev_feats[-nstepsback:]
 
         # Finally update the state
         state = {
