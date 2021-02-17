@@ -16,7 +16,16 @@ _logger = None
 def _get_logger():
     global _logger
     if _logger is None:
-        _logger = logging.getLogger()
+        # TODO: share logging to the main thread using something like a
+        # multiprocessing Manager...
+        _logger = logging.getLogger('brain_logger')
+        _logger.propagate = False
+        lfh = logging.StreamHandler()
+        lfh.setLevel(logging.ERROR)
+        lff = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        lfh.setFormatter(lff)
+        _logger.addHandler(lfh)
     return _logger
 
 
