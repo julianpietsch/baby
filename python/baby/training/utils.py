@@ -36,6 +36,12 @@ class TrainValProperty(NamedTuple):
     val: Any
 
 
+class TrainValTestProperty(NamedTuple):
+    train: Any
+    val: Any
+    test: Any
+
+
 @EncodableNamedTuple
 class BabyTrainerParameters(NamedTuple):
     """Global parameters for training BABY models

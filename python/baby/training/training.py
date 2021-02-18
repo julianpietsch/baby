@@ -27,7 +27,7 @@ else:
     from .v1_hyper_parameter_trainer import HyperParamV1 as \
         HyperParameterTrainer
 
-from .utils import BabyTrainerParameters, TrainValProperty, \
+from .utils import BabyTrainerParameters, TrainValTestProperty, \
     augmented_generator
 from .smoothing_model_trainer import SmoothingModelTrainer
 from .flattener_trainer import FlattenerTrainer
@@ -328,7 +328,18 @@ class BabyTrainer(object):
                                        preprocess=(robust_norm, seg_norm),
                                        in_memory=p.in_memory)
 
-        return TrainValProperty(self._gen_train, self._gen_val)
+        if not getattr(self, '_gen_test', None):
+            if len(self.data.testing) == 0:
+                raise BadProcess('No testing images have been added')
+            # Initialise generator for testing images
+            self._gen_test = ImageLabel(self.data.testing,
+                                       batch_size=p.batch_size,
+                                       aug=Augmenter(),
+                                       preprocess=(robust_norm, seg_norm),
+                                       in_memory=p.in_memory)
+
+        return TrainValTestProperty(self._gen_train, self._gen_val,
+                                    self._gen_test)
 
     def plot_gen_sample(self, validation=False):
         # TODO: Move to flattener?
@@ -429,7 +440,11 @@ class BabyTrainer(object):
                      self.flattener,
                      self.parameters,
                      isval=True)
-        return TrainValProperty(t, v)
+        w = _std_aug(self.smoothing_sigma_model,
+                     self.flattener,
+                     self.parameters,
+                     isval=True)
+        return TrainValTestProperty(t, v, w)
 
     @property
     def cnn_fn(self):
@@ -593,15 +608,18 @@ class BabyTrainer(object):
 
         if self.in_memory:
             if getattr(self, '_seg_examples', None) is None:
-                self._seg_examples = TrainValProperty(
+                self._seg_examples = TrainValTestProperty(
                     list(example_generator(self.gen.train)),
-                    list(example_generator(self.gen.val)))
-            return TrainValProperty((e for e in self._seg_examples.train),
-                                    (e for e in self._seg_examples.val))
+                    list(example_generator(self.gen.val)),
+                    list(example_generator(self.gen.test)))
+            return TrainValTestProperty((e for e in self._seg_examples.train),
+                                        (e for e in self._seg_examples.val),
+                                        (e for e in self._seg_examples.test))
         else:
             self._seg_examples = None
-            return TrainValProperty(example_generator(self.gen.train),
-                                    example_generator(self.gen.val))
+            return TrainValTestProperty(example_generator(self.gen.train),
+                                        example_generator(self.gen.val),
+                                        example_generator(self.gen.test))
 
     # TODO Move to Segmentation Parameter TRainer
     @property
