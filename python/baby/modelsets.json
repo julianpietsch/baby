@@ -51,19 +51,36 @@
     "default_image_size": [81, 81]
   },
   "prime95b_brightfield_60x_3z": {
-    "morph_model_file": "I3_prime_unet_4s_20200903.hdf5",
-    "flattener_file": "flattener_60x_prime_20200630.json",
+    "morph_model_file": "I3_prime_unet_4s_20210215.hdf5",
+    "flattener_file": "flattener_60x_3z_prime_20210215.json",
     "celltrack_model_file": "ct_rf_20210201_12.pkl",
-    "budassign_model_file": "mb_model_20201022.pkl",
+    "budassign_model_file": "mb_model_60x_3z_prime_20210215.pkl",
     "pixel_size": 0.182,
-    "default_image_size": [117, 117]
+    "default_image_size": [117, 117],
+    "params": {
+      "interior_threshold": [0.65, 0.9, 0.3],
+      "nclosing": [0, 0, 0], "nopening": [1, 2, 1],
+      "connectivity": [1, 1, 1],
+      "edge_sub_dilations": [0, 0, 0],
+      "containment_thresh": 0.6, "min_area": 19,
+      "pedge_thresh": [0.0, 0.0, 0.0012],
+      "group_thresh_expansion": [0.12, 0.4, 0.3]
+    }
   },
   "evolve_brightfield_60x_3z": {
-    "morph_model_file": "I3_evolve_unet_4s_20200903.hdf5",
-    "flattener_file": "flattener_60x_evolve_20200630.json",
+    "morph_model_file": "I3_evolve_unet_4s_20210215.hdf5",
+    "flattener_file": "flattener_60x_3z_evolve_20210215.json",
     "celltrack_model_file": "ct_rf_20210201_12.pkl",
-    "budassign_model_file": "mb_model_20201022.pkl",
+    "budassign_model_file": "mb_model_60x_3z_evolve_20210215.pkl",
     "pixel_size": 0.263,
-    "default_image_size": [81, 81]
+    "default_image_size": [81, 81],
+    "params": {
+      "interior_threshold": [0.75, 0.4, 0.45],
+      "nclosing": [0, 0, 0], "nopening": [0, 2, 0],
+      "connectivity": [1, 1, 1], "edge_sub_dilations": [0, 0, 0],
+      "containment_thresh": 0.9, "min_area": 9,
+      "pedge_thresh": [0.0, 0.0015, 0.0],
+      "group_thresh_expansion": [0.28, 0.38, 0.22]
+    }
   }
 }

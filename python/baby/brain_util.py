@@ -12,19 +12,40 @@ from .io import save_tiled_image
 
 _logger = None
 
+
 def _get_logger():
     global _logger
     if _logger is None:
-        _logger = logging.getLogger()
+        # TODO: share logging to the main thread using something like a
+        # multiprocessing Manager...
+        _logger = logging.getLogger('brain_logger')
+        _logger.propagate = False
+        lfh = logging.StreamHandler()
+        lfh.setLevel(logging.ERROR)
+        lff = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        lfh.setFormatter(lff)
+        _logger.addHandler(lfh)
     return _logger
+
 
 def _generate_error_dump_id():
     return strftime('%Y-%m-%d_%H-%M-%S_') + str(uuid1())
 
 
-def _segment(segmenter, cnn_output, refine_outlines, yield_volumes,
-             yield_masks, yield_preds, yield_edgemasks, error_dump_dir,
-             suppress_errors):
+def _segment(segmenter,
+             cnn_output,
+             refine_outlines,
+             yield_volumes,
+             yield_masks,
+             yield_preds,
+             yield_edgemasks,
+             error_dump_dir,
+             suppress_errors,
+             logger=None):
+    if logger is None:
+        logger = _get_logger()
+
     output = {}
 
     try:
@@ -43,7 +64,7 @@ def _segment(segmenter, cnn_output, refine_outlines, yield_volumes,
                            return_volume=yield_volumes)
             err_msg = ['{}: {}'.format(k, v) for k, v in err_msg.items()]
             err_msg.insert(0, 'Segmentation error')
-            _get_logger().exception('\n'.join(err_msg))
+            logger.exception('\n'.join(err_msg))
             seg_result = SegmentationOutput([])
             output['error'] = 'Segmentation error: ' + err_id
         else:
@@ -80,9 +101,21 @@ def _segment(segmenter, cnn_output, refine_outlines, yield_volumes,
     return output
 
 
-def _track(tracker, seg, state, i_budneck, i_bud, assign_mothers,
-           return_baprobs, yield_edgemasks, yield_next, error_dump_dir,
-           suppress_errors):
+def _track(tracker,
+           seg,
+           state,
+           i_budneck,
+           i_bud,
+           assign_mothers,
+           return_baprobs,
+           yield_edgemasks,
+           yield_next,
+           error_dump_dir,
+           suppress_errors,
+           logger=None):
+    if logger is None:
+        logger = _get_logger()
+
     try:
         tracking = tracker.step_trackers(seg['masks'],
                                          seg['preds'][i_budneck],
@@ -114,7 +147,7 @@ def _track(tracker, seg, state, i_budneck, i_bud, assign_mothers,
                            return_baprobs=return_baprobs)
             err_msg = ['{}: {}'.format(k, v) for k, v in err_msg.items()]
             err_msg.insert(0, 'Tracking error')
-            _get_logger().exception('\n'.join(err_msg))
+            logger.exception('\n'.join(err_msg))
             ncells = len(masks)
             tracking = {
                 'cell_label': list(range(ncells)),
@@ -161,16 +194,46 @@ def _track(tracker, seg, state, i_budneck, i_bud, assign_mothers,
         return seg
 
 
-def _segment_and_track(segmenter, tracker, cnn_output, state, i_budneck,
-                       i_bud, refine_outlines, yield_volumes, yield_edgemasks,
-                       assign_mothers, return_baprobs, yield_next,
-                       error_dump_dir, suppress_errors):
-    segout = _segment(segmenter, cnn_output, refine_outlines, yield_volumes,
-                      True, True, yield_edgemasks, error_dump_dir,
-                      suppress_errors)
-    return _track(tracker, segout, state, i_budneck, i_bud, assign_mothers,
-                  return_baprobs, yield_edgemasks, yield_next, error_dump_dir,
-                  suppress_errors)
+def _segment_and_track(segmenter,
+                       tracker,
+                       cnn_output,
+                       state,
+                       i_budneck,
+                       i_bud,
+                       refine_outlines,
+                       yield_volumes,
+                       yield_edgemasks,
+                       assign_mothers,
+                       return_baprobs,
+                       yield_next,
+                       error_dump_dir,
+                       suppress_errors,
+                       logger=None):
+    if logger is None:
+        logger = _get_logger()
+
+    segout = _segment(segmenter,
+                      cnn_output,
+                      refine_outlines,
+                      yield_volumes,
+                      True,
+                      True,
+                      yield_edgemasks,
+                      error_dump_dir,
+                      suppress_errors,
+                      logger=logger)
+    return _track(tracker,
+                  segout,
+                  state,
+                  i_budneck,
+                  i_bud,
+                  assign_mothers,
+                  return_baprobs,
+                  yield_edgemasks,
+                  yield_next,
+                  error_dump_dir,
+                  suppress_errors,
+                  logger=logger)
 
 
 def _segment_and_track_parallel(segmenter, tracker, flattener, morph_preds,
@@ -178,6 +241,9 @@ def _segment_and_track_parallel(segmenter, tracker, flattener, morph_preds,
                                 yield_volumes, yield_edgemasks,
                                 assign_mothers, return_baprobs, yield_next,
                                 njobs, error_dump_dir, suppress_errors):
+
+    # logger = _get_logger()
+
     tnames = flattener.names()
     i_budneck = tnames.index('bud_neck')
     bud_target = 'sml_fill' if 'sml_fill' in tnames else 'sml_inte'
@@ -185,7 +251,7 @@ def _segment_and_track_parallel(segmenter, tracker, flattener, morph_preds,
 
     # Run segmentation and tracking in parallel
     from joblib import Parallel, delayed
-    return Parallel(n_jobs=njobs)(
+    return Parallel(n_jobs=njobs, mmap_mode='c')(
         delayed(_segment_and_track)
         (segmenter, tracker, cnn_output, state, i_budneck, i_bud,
          refine_outlines, yield_volumes, yield_edgemasks, assign_mothers,
