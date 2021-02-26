@@ -1,23 +1,3 @@
-from setuptools import setup, find_packages
-
-setup(
-    name='baby',
-    version='0.23',
-    packages=find_packages('python'),
-    package_dir={'': 'python'},
-    include_package_data=True,
-    entry_points={
-        'console_scripts': [
-            'baby-phone = baby.server:main',
-            'baby-race = baby.speed_tests:main'
-            ]
-        },
-    url='',
-    license='MIT License',
-    author='Julian Pietsch',
-    author_email='julian.pietsch@ed.ac.uk',
-    description='Birth Annotator for Budding Yeast',
-    long_description='''
 If you publish results that make use this software or the Birth Annotator for
 Budding Yeast algorithm, please cite:
 Julian M J Pietsch, Diane Adjavon, Alán Munoz, Peter S Swain, 2021, Birth
@@ -45,15 +25,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-    ''',
-    install_requires=['scipy',
-                      'numpy',
-                      'pandas',
-                      'scikit-image',
-                      'scikit-learn==0.22.2',
-                      'tqdm',
-                      'tensorflow>=1.14',
-                      'imageio',
-                      'pillow',
-                      'matplotlib']
-)
