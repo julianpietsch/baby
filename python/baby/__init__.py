@@ -28,6 +28,8 @@
 """Mostly used to access models and model-sets"""
 from pathlib import Path
 import json
+from .brain import BabyBrain
+from .crawler import BabyCrawler
 
 BASE_DIR = Path(__file__).parent
 MODEL_DIR = BASE_DIR / 'models'
