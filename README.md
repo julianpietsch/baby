@@ -42,7 +42,58 @@ baby/`.
 > pip install -e baby/
 ```
 
-## Running the server
+## Run using the Python API
+
+Create a new `BabyBrain` with one of the model sets. The `brain` contains
+all the models and parameters for segmenting and tracking cells.
+
+```python
+>>> from baby import BabyBrain, BabyCrawler, modelsets
+>>> modelset = modelsets()['evolve_brightfield_60x_5z']
+>>> brain = BabyBrain(**modelset)
+```
+
+For each time course you want to process, instantiate a new `BabyCrawler`. The
+crawler keeps track of cells between time steps.
+
+```python
+>>> crawler = BabyCrawler(brain)
+```
+
+Load an image time series (from the `tests` subdirectory in this example). The
+image should have shape (x, y, z).
+
+```python
+>>> from baby.io import load_tiled_image
+>>> image_series = [load_tiled_image(
+...     'tests/images/evolve_testG_tp{:d}_Brightfield.png'.format(t))
+...     for t in range(1,6)]
+```
+
+Send images to the crawler in time-order. Here we additionally request that
+outlines are optimised to edge predictions, and that lineage assignments,
+binary edge-masks and volume estimates (using the conical method) should be
+output at each time point. 
+
+```python
+>>> segmented_series = [crawler.step(
+...     img[None, ...], refine_outlines=True, assign_mothers=True,
+...     with_edgemasks=True, with_volumes=True)
+...     for img, _ in image_series]
+```
+
+Finally, save the segmentation outlines, labels and lineage assignments as an
+annotated tiled png:
+
+```python
+>>> from baby.io import save_tiled_image
+>>> for t, s in enumerate(segmented_series): 
+...     save_tiled_image(255 * s[0]['edgemasks'].astype('uint8').transpose((1, 2, 0)), 
+...     '../segout_tp{:d}.png'.format(t + 1), 
+...     {k: s[0][k] for k in ('cell_label', 'mother_assign')})
+```
+
+## Run via a server
 
 Once installed, you should be able to start a server to accept segmentation
 requests using:
@@ -56,6 +107,10 @@ or on windows:
 ```
 > baby-phone.exe
 ```
+
+Server runs by default on [http://0.0.0.0:5101](). HTTP requests need to be
+sent to the correct URL endpoint, but the HTTP API is currently undocumented.
+The primary client implementation is in Matlab.
 
 ## Jupyter notebooks
 
