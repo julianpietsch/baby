@@ -40,7 +40,7 @@ from typing import NamedTuple
 
 from baby.io import load_tiled_image
 from baby.tracker.utils import pick_baryfun, calc_barycentre
-from baby.training.utils import TrainValProperty
+from baby.training.utils import TrainValProperty, TrainValTestProperty
 from baby.errors import BadProcess, BadParam
 from .core import CellTracker, BudTracker
 
@@ -378,7 +378,7 @@ class BudTrainer(BudTracker):
 
         if val_data is not None:
             data = TrainValProperty(data, val_data)
-        if isinstance(data, TrainValProperty):
+        if isinstance(data, (TrainValProperty, TrainValTestProperty)):
             data = chain(zip(repeat(False), data.train),
                          zip(repeat(True), data.val))
         else:
