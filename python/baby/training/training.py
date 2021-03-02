@@ -745,7 +745,7 @@ class BabyTrainer(object):
         sfpo = SegFilterParamOptim(self.flattener,
                                    basic_params=merged_params,
                                    scoring=scoring)
-        sfpo.generate_stat_table(self.seg_examples.train)
+        sfpo.generate_stat_table(self.seg_examples.val)
 
         sfpo.fit_filter_params(lazy=lazy, bootstrap=bootstrap)
         merged_params.update(sfpo.opt_params)
