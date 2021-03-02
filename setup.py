@@ -18,15 +18,15 @@ setup(
     author_email='julian.pietsch@ed.ac.uk',
     description='Birth Annotator for Budding Yeast',
     long_description='''
-If you publish results that make use this software or the Birth Annotator for
-Budding Yeast algorithm, please cite:
-Julian M J Pietsch, Diane Adjavon, Alán Munoz, Peter S Swain, 2021, Birth
-Annotator for Budding Yeast (in preparation).
+If you publish results that make use of this software or the Birth Annotator
+for Budding Yeast algorithm, please cite:
+Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S Swain,
+2021, Birth Annotator for Budding Yeast (in preparation).
 
 
 The MIT License (MIT)
 
-Copyright (c) Julian Pietsch, Diane Adjavon and Alán Munoz 2021
+Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
