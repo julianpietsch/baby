@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='baby',
-    version='0.23',
+    version='0.24',
     packages=find_packages('python'),
     package_dir={'': 'python'},
     include_package_data=True,
