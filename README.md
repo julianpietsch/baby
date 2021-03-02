@@ -70,10 +70,10 @@ image should have shape (x, y, z).
 ...     for t in range(1,6)]
 ```
 
-Send images to the crawler in time-order. Here we additionally request that
-outlines are optimised to edge predictions, and that lineage assignments,
-binary edge-masks and volume estimates (using the conical method) should be
-output at each time point. 
+Send images to the crawler in time-order (here a batch of size 1). We 
+additionally request that outlines are optimised to edge predictions, and that 
+lineage assignments, binary edge-masks and volume estimates (using the conical
+method) should be output at each time point.
 
 ```python
 >>> segmented_series = [crawler.step(
@@ -82,15 +82,15 @@ output at each time point.
 ...     for img, _ in image_series]
 ```
 
-Finally, save the segmentation outlines, labels and lineage assignments as an
-annotated tiled png:
+Finally, save the segmentation outlines, labels, volumes and lineage assignments
+as an annotated tiled png:
 
 ```python
 >>> from baby.io import save_tiled_image
 >>> for t, s in enumerate(segmented_series): 
 ...     save_tiled_image(255 * s[0]['edgemasks'].astype('uint8').transpose((1, 2, 0)), 
 ...     '../segout_tp{:d}.png'.format(t + 1), 
-...     {k: s[0][k] for k in ('cell_label', 'mother_assign')})
+...     {k: s[0][k] for k in ('cell_label', 'mother_assign', 'volumes')})
 ```
 
 ## Run via a server
