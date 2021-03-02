@@ -429,7 +429,7 @@ class BabyTrainer(object):
                         self.parameters,
                         isval=True)
 
-        self.flattener_trainer.generate_flattener_stats(*self.gen,
+        self.flattener_trainer.generate_flattener_stats(*self.gen[:2],
                                                         tAug,
                                                         vAug,
                                                         max_erode=max_erode)
