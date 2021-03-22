@@ -922,6 +922,7 @@ def switch_case_nfeats(nfeats):
                                                     ('distance',)]
     }
 
+    assert nfeats in main_feats.keys(), 'invalid nfeats'
     return(main_feats.get(nfeats, []))
 
 def get_nfeats_from_model(model):
