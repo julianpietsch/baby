@@ -41,14 +41,14 @@ class CellTrainer(CellTracker):
         if all_feats2use is None:
             feats2use = ('centroid', 'area', 'minor_axis_length',
                          'major_axis_length', 'convex_area')
-            trap_feats = ('baryangle', 'barydist')
-            extra_feats = ('distance',)
+            trapfeats = ('baryangle', 'barydist')
+            extrafeats = ('distance',)
 
         else:
-            feats2use, trapfeats, extra_feats = all_feats2use
+            feats2use, trapfeats, extrafeats = all_feats2use
 
         super().__init__(feats2use = feats2use, trapfeats = trapfeats,
-                         extra_feats = extra_feats)
+                         extrafeats = extrafeats)
         self.px_size = None
 
         self.indices = ['experimentID', 'position', 'trap', 'tp']
@@ -225,7 +225,7 @@ class CellTrainer(CellTracker):
         truth, data = *zip(*self.train),
         if self.model_type is 'SVC':
             model = SVC(probability = True, shrinking=False,
-                        verbose=True, random_state=1)
+                        verbose=True, random_state=1,)
             param_grid = {
               # 'method': ['sigmoid', 'isotonic']
               # 'class_weight':['balanced', None],
@@ -249,11 +249,12 @@ class CellTrainer(CellTracker):
         else:
             raise("model_type not found")
 
-        self.model = GridSearchCV(estimator=model, param_grid=param_grid, cv=5)
+        self.model = GridSearchCV(estimator=model, param_grid=param_grid, cv=5,
+                                  n_jobs=-1)
         self.model.fit(data, truth)
         # Add data on the features and their order
         self.model.best_estimator_.all_ofeats = self.all_ofeats
-        self.model.best_estimator_.all_ifeats = [self.feats2use, self.trapfeats, self.extra_feats]
+        self.model.best_estimator_.all_ifeats = [self.feats2use, self.trapfeats, self.extrafeats]
         print(self.model.best_score_, self.model.best_params_)
 
     def save_model(self, filename):

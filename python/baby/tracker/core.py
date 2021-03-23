@@ -25,7 +25,7 @@ class FeatureCalculator:
 
     This class is not to be used directly
     '''
-    def __init__(self, feats2use, trapfeats=None, aweights=None,
+    def __init__(self, feats2use, trapfeats=None, extrafeats=None, aweights=None,
                  px_size=None):
 
         self.feats2use = feats2use
@@ -33,6 +33,10 @@ class FeatureCalculator:
         if trapfeats is None:
             trapfeats=()
         self.trapfeats = trapfeats
+
+        if extrafeats is None:
+            extrafeats=()
+        self.extrafeats = extrafeats
 
         if aweights is None:
             aweights=None
@@ -44,27 +48,47 @@ class FeatureCalculator:
 
         self.outfeats = self.get_outfeats()
 
-        self.tfeats = self.outfeats + self.trapfeats
-        self.ntfeats = len(self.tfeats)
-
         self.set_named_ids()
+
+        self.tfeats = self.outfeats + self.tmp_outfeats + self.trapfeats
+        self.ntfeats = len(self.tfeats)
 
     def get_outfeats(self, feats2use=None):
         if feats2use is None:
             feats2use = self.feats2use
         outfeats = tuple(
             regionprops_table(np.diag((1, 0)),
-                              properties=self.feats2use).keys())
+                              properties=feats2use).keys())
         return(outfeats)
 
     def set_named_ids(self):
-        # Convenience function to call important feats by name
-        if 'centroid-0' in self.outfeats:
-            self.xind = self.outfeats.index('centroid-0')
-        if 'centroid-1' in self.outfeats:
-            self.yind = self.outfeats.index('centroid-1')
-        if 'area' in self.outfeats:
-            self.aind = self.outfeats.index('area')
+        # Manage calling feature outputs by name
+        d = {'centroid-0':'xind','centroid-1':'yind', 'area':'area'}
+        tmp_d = {'barydist':['centroid', 'area'],
+                          'baryangle':['centroid'],
+                 'distance':['centroid']}
+
+        nonbase_feats = self.trapfeats + self.extrafeats
+
+        tmp_infeats = np.unique([j for x in nonbase_feats for j in tmp_d[x]])
+        self.tmp_infeats = tuple([f for f in tmp_infeats if f not in self.feats2use])
+
+        # feats that are only used to calculate others
+        tmp_outfeats = self.get_outfeats(feats2use=tmp_infeats) if \
+            len(tmp_infeats) else []
+
+        self.tmp_outfeats = []
+        for feat in tmp_outfeats:
+            if feat in self.outfeats:
+                setattr(self, d[feat], self.outfeats.index(feat))
+            else: # Only add them if not in normal outfeats
+                self.tmp_outfeats.append(feat)
+                setattr(self, d[feat],
+                        len(self.outfeats) + self.tmp_outfeats.index(feat))
+
+        self.tmp_outfeats = tuple(self.tmp_outfeats)
+        self.out_merged = self.outfeats + self.tmp_outfeats
+
 
     def load_model(self, path, fname):
             model_file = join(path, fname)
@@ -96,7 +120,7 @@ class FeatureCalculator:
             px_size = self.px_size
 
         if feats2use is None:
-            feats2use = self.feats2use
+            feats2use = self.feats2use + self.tmp_infeats
 
         if trapfeats is None:
             trapfeats = self.trapfeats
@@ -112,12 +136,12 @@ class FeatureCalculator:
                 if norm:
                     cell_feats = self.norm_feats(cell_feats, px_size)
 
-                feats[i, :len(self.outfeats)] = cell_feats
+                feats[i, :len(self.out_merged)] = cell_feats[:len(self.out_merged)]
 
             if trapfeats:
             
                 tfeats = self.calc_trapfeats(feats)
-                feats[:, len(self.outfeats):self.ntfeats] = tfeats
+                feats[:, len(self.out_merged):self.ntfeats] = tfeats
         else:
 
             feats = np.zeros((0, self.ntfeats))
@@ -171,20 +195,17 @@ class FeatureCalculator:
         area = px_size**2
 
         degrees = {'linear': px_size, 'square':area}
-        degrees_feats = {'linear':['minor_axis_length',  'major_axis_length',
-                        'perimeter', 'perimeter_crofton',
+        degrees_feats = {'linear':['centroid-0', 'centroid-1',
+                                   'minor_axis_length',  'major_axis_length',
+                                   'perimeter', 'perimeter_crofton',
                                    'equivalent_diameter'],
                        'square': ['area', 'convex_area']}
-
-        if 'centroid' in self.feats2use:
-            feats[self.outfeats.index('centroid-0')] /= px_size
-            feats[self.outfeats.index('centroid-1')] /= px_size
 
 
         for deg, feat_names in degrees_feats.items():
             for feat_name in feat_names:
-                if feat_name in self.feats2use:
-                    feats[self.outfeats.index(feat_name)] /= degrees[deg]
+                if feat_name in self.out_merged:
+                    feats[self.out_merged.index(feat_name)] /= degrees[deg]
 
         return feats
 
@@ -197,7 +218,7 @@ class CellTracker(FeatureCalculator):
 
     :model: sklearn.ensemble.RandomForestClassifier object
     :trapfeats: Features to manually calculate within a trap
-    :extra_feats: Additional features to calculate
+    :extrafeats: Additional features to calculate
     :model: Model to use, if provided ignores all other args but threshs
     :bak_model: Backup mode to use when prediction is unsure
     :nstepsback: int Number of timepoints to go back
@@ -219,7 +240,7 @@ class CellTracker(FeatureCalculator):
     def __init__(self,
                  feats2use=None,
                  trapfeats=None,
-                 extra_feats=None,
+                 extrafeats=None,
                  model=None,
                  bak_model=None,
                  thresh=None,
@@ -233,8 +254,8 @@ class CellTracker(FeatureCalculator):
         if trapfeats is None:
             trapfeats = ()
 
-        if extra_feats is None:
-            extra_feats = ()
+        if extrafeats is None:
+            extrafeats = ()
 
         if type(model) is str or type(model) is PosixPath: 
             with open(Path(model), 'rb') as f:
@@ -259,17 +280,17 @@ class CellTracker(FeatureCalculator):
 
             main_feats = model.all_ifeats
             bak_feats = bak_model.all_ifeats
-            feats2use, trapfeats, extra_feats = [
+            feats2use, trapfeats, extrafeats = [
                 tuple(set(main).union(bak)) for main,bak
                                                  in zip(main_feats, bak_feats)]
 
             
         # Training AND non-training part
-        super().__init__(feats2use, trapfeats=trapfeats, **kwargs)
+        super().__init__(feats2use, trapfeats=trapfeats, extrafeats=extrafeats, **kwargs)
 
-        self.extra_feats = extra_feats
+        self.extrafeats = extrafeats
 
-        self.all_ofeats = self.outfeats + trapfeats + extra_feats
+        self.all_ofeats = self.outfeats + trapfeats + extrafeats
 
         self.noutfeats = len(self.all_ofeats)
 
@@ -328,7 +349,7 @@ class CellTracker(FeatureCalculator):
             return np.array([])
 
         n3darray = np.empty((len(prev_feats), len(new_feats),
-                             self.noutfeats ))
+                             self.ntfeats))
 
         # print('self: ', self, ' self.ntfeats: ', self.ntfeats, ' featsshape: ', new_feats.shape)
         for i in range(self.ntfeats):
@@ -347,23 +368,28 @@ class CellTracker(FeatureCalculator):
 
         input
 
-        :n3darray: ndarray (ncells_prev, ncells_new, nfeats) containing a
+        :n3darray: ndarray (ncells_prev, ncells_new, ntfeats) containing a
             cell-wise substraction of the features in the input ndarrays.
 
         returns
 
-        :n3darray: updated 3-D array with dtfeats added
+        :newarray: 3d array taking the features specified in self.outfeats and self.trapfeats
+        and adding dtfeats
         '''
+        newarray = np.empty(n3darray.shape[:-1] + (self.noutfeats,))
+        newarray[..., :len(self.outfeats)] = n3darray[..., :len(self.outfeats)]
+        newarray[..., len(self.outfeats):len(self.outfeats)+len(self.trapfeats)] = \
+        n3darray[..., len(self.out_merged):]
         for i, feat in enumerate(self.all_ofeats):
             if feat == 'distance':
-                n3darray[..., i] = np.sqrt(
+                newarray[..., i] = np.sqrt(
                     n3darray[..., self.xind]**2 +
                     n3darray[..., self.yind]**2) # TODO clean this expression
                 # n3darray[..., i] = np.sqrt(np.sum(n3darray[...,
                 # [self.xind, self.yind]]**2))
 
 
-        return(n3darray)
+        return(newarray)
 
     def assign_lbls(self, pred_3darray, prev_lbls, red_fun=None):
         '''Assign labels using a prediction matrix of nxmxl where n is the number
@@ -890,13 +916,15 @@ def switch_case_nfeats(nfeats):
             'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area', 'perimeter'), (), ('distance',)],
             # Including centroid
-        7 : [('centroid', 'area', 'minor_axis_length', 'major_axis_length',
-              'bbox_area', 'perimeter'), () , ()],
+        # 7 : [('centroid', 'area', 'minor_axis_length', 'major_axis_length',
+        #       'bbox_area', 'perimeter'), () , ()],
+        7 : [('area', 'minor_axis_length', 'major_axis_length',
+              'bbox_area', 'perimeter'), ('baryangle', 'barydist') , ()],
             # Including centroid and distance
-        8 : [(
-            'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
-            'bbox_area', 'perimeter'), (),
-                                                    ('distance',)],
+        # 8 : [(
+        #     'centroid', 'area', 'minor_axis_length', 'major_axis_length',
+        #     'bbox_area', 'perimeter'), (),
+        #                                             ('distance',)],
         9 : [(
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area', 'perimeter'), ('baryangle', 'barydist'),
@@ -905,13 +933,13 @@ def switch_case_nfeats(nfeats):
             'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
             'bbox_area', 'perimeter'), ('baryangle', 'barydist'),
                                                     ('distance',)],
+        # 12 : [(
+        #     'centroid', 'area', 'minor_axis_length', 'major_axis_length',
+        #     'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
+        #     'extent',
+        #     'orientation', 'perimeter'), (), ()],
         12 : [(
-            'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
-            'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
-            'extent',
-            'orientation', 'perimeter'), (), ()],
-        14 : [(
-            'centroid', 'area', 'minor_axis_length', 'major_axis_length', 
+            'area', 'minor_axis_length', 'major_axis_length',
             'bbox_area', 'eccentricity', 'equivalent_diameter', 'solidity',
             'extent',
             'orientation', 'perimeter'), ('baryangle', 'barydist'), ()],
