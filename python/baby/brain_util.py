@@ -153,9 +153,9 @@ def _track(tracker,
     except:
         # Log errors
         err_id = _generate_error_dump_id()
+        masks = seg.get('masks', np.zeros((0, 0, 0)))
         if (error_dump_dir is not None and isdir(error_dump_dir)):
             fprefix = join(error_dump_dir, err_id)
-            masks = seg.get('masks', np.zeros((0, 0, 0)))
             if masks.size > 0:
                 save_tiled_image(
                     seg['masks'].transpose((2, 0, 1)).astype('uint8'),
