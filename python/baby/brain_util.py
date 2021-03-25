@@ -158,7 +158,7 @@ def _track(tracker,
             fprefix = join(error_dump_dir, err_id)
             if masks.size > 0:
                 save_tiled_image(
-                    seg['masks'].transpose((2, 0, 1)).astype('uint8'),
+                    seg['masks'].transpose((1, 2, 0)).astype('uint8'),
                     fprefix + '_masks.png')
             save_tiled_image(
                 np.uint16((2**16 - 1) * seg['preds'][i_budneck, :, :, None]),
@@ -177,7 +177,7 @@ def _track(tracker,
             logger.exception('\n'.join(err_msg))
             ncells = len(masks)
             tracking = {
-                'cell_label': list(range(ncells)),
+                'cell_label': list(range(1, ncells + 1)),
                 'mother_assign': [],
                 'p_bud_assign': np.zeros((ncells, ncells)).tolist(),
                 'state': state,

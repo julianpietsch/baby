@@ -829,7 +829,7 @@ class MasterTracker(FeatureCalculator):
             v = state.get(k, v)
             l = len(v)
             if max_lbl > l:
-                state[k] = np.pad(v, (0, l - max_lbl + 32), 'constant')
+                state[k] = np.pad(v, (0, max_lbl + 32 - l), 'constant')
 
         lifetime = state.get('lifetime', init['lifetime'])
         p_is_mother = state.get('p_is_mother', init['p_is_mother'])
@@ -837,6 +837,8 @@ class MasterTracker(FeatureCalculator):
         ba_cum = state.get('ba_cum', init['ba_cum'])
 
         # Update lineage state variables
+        print(len(masks), new_lbls, max_lbl)
+        print(lifetime.shape)
         if len(masks) > 0 and len(new_lbls) > 0:
             ba_probs = self.bud_tracker.predict_mother_bud(
                 p_budneck, p_bud, masks, feats[:, self.bt_idx])
