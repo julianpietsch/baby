@@ -2,22 +2,22 @@
 # for Budding Yeast algorithm, please cite:
 # Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
 # Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
-# 
-# 
+#
+#
 # The MIT License (MIT)
-# 
+#
 # Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
-# 
+#
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
 # deal in the Software without restriction, including without limitation the
 # rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
 # sell copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
-# 
+#
 # The above copyright notice and this permission notice shall be included in
 # all copies or substantial portions of the Software.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -33,9 +33,11 @@ from uuid import uuid1
 import logging
 import numpy as np
 import pickle
+from scipy.ndimage import binary_dilation
 
 from .morph_thresh_seg import SegmentationOutput
 from .io import save_tiled_image
+from .errors import Clogging
 
 _logger = None
 
@@ -67,6 +69,7 @@ def _segment(segmenter,
              yield_masks,
              yield_preds,
              yield_edgemasks,
+             clogging_thresh,
              error_dump_dir,
              suppress_errors,
              logger=None):
@@ -76,9 +79,29 @@ def _segment(segmenter,
     output = {}
 
     try:
+        # Check if clogging has occurred in this image
+        flat_interior = []
+        for group in segmenter.groups:
+            g_interior = group.prediction(cnn_output, 'interior', True)
+            g_interior = g_interior > group.interior_threshold
+            if group.max_n_erode > 0:
+                g_interior = binary_dilation(g_interior,
+                                             iterations=group.max_n_erode)
+            flat_interior.append(g_interior)
+        flat_interior = np.stack(flat_interior).max(axis=0)
+        if flat_interior.sum() / flat_interior.size > clogging_thresh:
+            raise Clogging('clogging threshold exceeded')
+
         seg_result = segmenter.segment(cnn_output,
                                        refine_outlines=refine_outlines,
                                        return_volume=yield_volumes)
+    except Clogging:
+        if suppress_errors:
+            seg_result = SegmentationOutput([])
+            output['error'] = 'Segmentation error: clogging threshold exceeded'
+            output['clogging'] = True
+        else:
+            raise
     except:
         # Log errors
         err_id = _generate_error_dump_id()
@@ -230,6 +253,7 @@ def _segment_and_track(segmenter,
                        refine_outlines,
                        yield_volumes,
                        yield_edgemasks,
+                       clogging_thresh,
                        assign_mothers,
                        return_baprobs,
                        yield_next,
@@ -246,6 +270,7 @@ def _segment_and_track(segmenter,
                       True,
                       True,
                       yield_edgemasks,
+                      clogging_thresh,
                       error_dump_dir,
                       suppress_errors,
                       logger=logger)
@@ -266,8 +291,9 @@ def _segment_and_track(segmenter,
 def _segment_and_track_parallel(segmenter, tracker, flattener, morph_preds,
                                 tracker_states, refine_outlines,
                                 yield_volumes, yield_edgemasks,
-                                assign_mothers, return_baprobs, yield_next,
-                                njobs, error_dump_dir, suppress_errors):
+                                clogging_thresh, assign_mothers,
+                                return_baprobs, yield_next, njobs,
+                                error_dump_dir, suppress_errors):
 
     # logger = _get_logger()
 
@@ -281,6 +307,7 @@ def _segment_and_track_parallel(segmenter, tracker, flattener, morph_preds,
     return Parallel(n_jobs=njobs, mmap_mode='c')(
         delayed(_segment_and_track)
         (segmenter, tracker, cnn_output, state, i_budneck, i_bud,
-         refine_outlines, yield_volumes, yield_edgemasks, assign_mothers,
-         return_baprobs, yield_next, error_dump_dir, suppress_errors)
+         refine_outlines, yield_volumes, yield_edgemasks, clogging_thresh,
+         assign_mothers, return_baprobs, yield_next, error_dump_dir,
+         suppress_errors)
         for cnn_output, state in zip(morph_preds, tracker_states))

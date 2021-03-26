@@ -253,6 +253,10 @@ class Group:
     def n_cells(self):
         return len(self.cells)
 
+    @property
+    def interior_threshold(self):
+        return self.__interior_threshold or 0.5
+
     def prediction(self, pred, target_name, erode=False):
         predictions = [target.prediction(pred, target_name)
                        for target in self.targets]

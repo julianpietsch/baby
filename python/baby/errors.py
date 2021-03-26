@@ -51,3 +51,8 @@ class BadProcess(Exception):
 
 class BadOutput(Exception):
     pass
+
+
+class Clogging(Exception):
+    pass
+

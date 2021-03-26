@@ -61,7 +61,7 @@ SERVER_DIR = dirname(__file__)
 MAX_RUNNERS = 3
 MAX_SESSIONS = 20
 SLEEP_TIME = 0.2  # time between threaded checks for data availability
-MAX_ATTEMPTS = 150  # allows for 30s delay before timing out
+MAX_ATTEMPTS = 300  # allows for 60s delay before timing out
 MAX_IMG_SIZE = 100 * 1024 * 1024  # allows for raw image sizes up to 100 MB
 
 DIMS_ERROR_MSG = '"dims" must be a length 4 integer array: [ntraps, width, height, depth]'
@@ -428,9 +428,6 @@ async def get_segmentation(request):
         for k, v in p.items():
             if isinstance(v, np.ndarray):
                 p[k] = None # heavy ndarrays must be obtained via other routes
-            else: # Many seem to be numpy arrays in lists of lists
-                p[k] = [m.tolist() if isinstance(m, np.ndarray) else m for m
-                        in v]
 
     return web.json_response(jsonify(pred))
 

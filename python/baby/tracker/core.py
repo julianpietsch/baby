@@ -837,8 +837,6 @@ class MasterTracker(FeatureCalculator):
         ba_cum = state.get('ba_cum', init['ba_cum'])
 
         # Update lineage state variables
-        print(len(masks), new_lbls, max_lbl)
-        print(lifetime.shape)
         if len(masks) > 0 and len(new_lbls) > 0:
             ba_probs = self.bud_tracker.predict_mother_bud(
                 p_budneck, p_bud, masks, feats[:, self.bt_idx])
