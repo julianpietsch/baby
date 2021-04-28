@@ -415,6 +415,8 @@ async def get_segmentation(request):
         raise web_error('segmentation is still running or has stalled',
                         errtype=web.HTTPRequestTimeout)
 
+    # t_start = time.perf_counter()
+
     # Format pred output for JSON response (NB: pred is shallow copy from
     # taskmaster, so in-place editing of dicts is ok):
     for p in pred:
@@ -429,7 +431,12 @@ async def get_segmentation(request):
             if isinstance(v, np.ndarray):
                 p[k] = None # heavy ndarrays must be obtained via other routes
 
-    return web.json_response(jsonify(pred))
+    resp = jsonify(pred)
+
+    # t_elapsed = time.perf_counter() - t_start
+    # print('Response generated in {:.3f} seconds.'.format(t_elapsed))
+
+    return web.json_response(resp)
 
 
 app = web.Application()
