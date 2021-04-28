@@ -1,4 +1,33 @@
 #!/usr/bin/env python3
+
+# If you publish results that make use of this software or the Birth Annotator
+# for Budding Yeast algorithm, please cite:
+# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
+# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# 
+# 
+# The MIT License (MIT)
+# 
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to
+# deal in the Software without restriction, including without limitation the
+# rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+# sell copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+# IN THE SOFTWARE.
+
 from __future__ import absolute_import, division, print_function, \
     unicode_literals
 import asyncio
@@ -32,7 +61,7 @@ SERVER_DIR = dirname(__file__)
 MAX_RUNNERS = 3
 MAX_SESSIONS = 20
 SLEEP_TIME = 0.2  # time between threaded checks for data availability
-MAX_ATTEMPTS = 150  # allows for 30s delay before timing out
+MAX_ATTEMPTS = 300  # allows for 60s delay before timing out
 MAX_IMG_SIZE = 100 * 1024 * 1024  # allows for raw image sizes up to 100 MB
 
 DIMS_ERROR_MSG = '"dims" must be a length 4 integer array: [ntraps, width, height, depth]'
@@ -386,6 +415,8 @@ async def get_segmentation(request):
         raise web_error('segmentation is still running or has stalled',
                         errtype=web.HTTPRequestTimeout)
 
+    # t_start = time.perf_counter()
+
     # Format pred output for JSON response (NB: pred is shallow copy from
     # taskmaster, so in-place editing of dicts is ok):
     for p in pred:
@@ -399,11 +430,13 @@ async def get_segmentation(request):
         for k, v in p.items():
             if isinstance(v, np.ndarray):
                 p[k] = None # heavy ndarrays must be obtained via other routes
-            else: # Many seem to be numpy arrays in lists of lists
-                p[k] = [m.tolist() if isinstance(m, np.ndarray) else m for m
-                        in v]
 
-    return web.json_response(jsonify(pred))
+    resp = jsonify(pred)
+
+    # t_elapsed = time.perf_counter() - t_start
+    # print('Response generated in {:.3f} seconds.'.format(t_elapsed))
+
+    return web.json_response(resp)
 
 
 app = web.Application()

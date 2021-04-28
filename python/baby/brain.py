@@ -1,3 +1,30 @@
+# If you publish results that make use of this software or the Birth Annotator
+# for Budding Yeast algorithm, please cite:
+# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
+# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+#
+#
+# The MIT License (MIT)
+#
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to
+# deal in the Software without restriction, including without limitation the
+# rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+# sell copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+# IN THE SOFTWARE.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 from os.path import dirname, join, isfile, isdir
@@ -71,6 +98,7 @@ class BabyBrain(object):
                  pixel_size=0.263,
                  default_image_size=None,
                  params=default_params,
+                 clogging_thresh=0.75,
                  min_bud_tps=3,
                  isbud_thresh=0.5,
                  session=None,
@@ -153,6 +181,7 @@ class BabyBrain(object):
                                                **self.params)
 
         self.pixel_size = pixel_size
+        self.clogging_thresh = clogging_thresh
 
         # Load tracker models and initialise Tracker
         with open(celltrack_model_file, 'rb') as f:
@@ -254,7 +283,8 @@ class BabyBrain(object):
                 yield _segment(self.morph_segmenter, cnn_output,
                                refine_outlines, yield_volumes, yield_masks,
                                yield_preds, yield_edgemasks,
-                               self.error_dump_dir, self.suppress_errors)
+                               self.clogging_thresh, self.error_dump_dir,
+                               self.suppress_errors)
 
     def run(self, bf_img_batch):
         '''Implementation of legacy runner function...
@@ -414,9 +444,9 @@ class BabyBrain(object):
         if tracker_states is None:
             tracker_states = repeat(None)
 
-        trackout = _segment_and_track_parallel(self.morph_segmenter,
-                self.tracker, self.flattener, morph_preds, tracker_states,
-                refine_outlines, yield_volumes, yield_edgemasks,
-                assign_mothers, return_baprobs, yield_next, njobs,
-                self.error_dump_dir, self.suppress_errors)
+        trackout = _segment_and_track_parallel(
+            self.morph_segmenter, self.tracker, self.flattener, morph_preds,
+            tracker_states, refine_outlines, yield_volumes, yield_edgemasks,
+            self.clogging_thresh, assign_mothers, return_baprobs, yield_next,
+            njobs, self.error_dump_dir, self.suppress_errors)
         return trackout

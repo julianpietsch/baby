@@ -1,0 +1,5 @@
+Julian Pietsch, under the supervision of Peter Swain, wrote the original
+version of the Birth Annotator for Budding Yeast (BABY) algorithm.
+
+Alán Muñoz and Diane Adjavon made significant extensions and contributions to
+the BABY algorithm and associated Python code.

@@ -1,4 +1,33 @@
 #!/usr/bin/env python
+
+# If you publish results that make use of this software or the Birth Annotator
+# for Budding Yeast algorithm, please cite:
+# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
+# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# 
+# 
+# The MIT License (MIT)
+# 
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to
+# deal in the Software without restriction, including without limitation the
+# rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+# sell copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+# IN THE SOFTWARE.
+
 from pathlib import Path
 from itertools import repeat, chain
 import datetime
@@ -11,7 +40,7 @@ from typing import NamedTuple
 
 from baby.io import load_tiled_image
 from baby.tracker.utils import pick_baryfun, calc_barycentre
-from baby.training.utils import TrainValProperty
+from baby.training.utils import TrainValProperty, TrainValTestProperty
 from baby.errors import BadProcess, BadParam
 from .core import CellTracker, BudTracker
 
@@ -350,7 +379,7 @@ class BudTrainer(BudTracker):
 
         if val_data is not None:
             data = TrainValProperty(data, val_data)
-        if isinstance(data, TrainValProperty):
+        if isinstance(data, (TrainValProperty, TrainValTestProperty)):
             data = chain(zip(repeat(False), data.train),
                          zip(repeat(True), data.val))
         else:

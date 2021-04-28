@@ -1,3 +1,30 @@
+# If you publish results that make use of this software or the Birth Annotator
+# for Budding Yeast algorithm, please cite:
+# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
+# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# 
+# 
+# The MIT License (MIT)
+# 
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to
+# deal in the Software without restriction, including without limitation the
+# rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+# sell copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+# IN THE SOFTWARE.
 import inspect
 import json
 import pickle
@@ -27,7 +54,7 @@ else:
     from .v1_hyper_parameter_trainer import HyperParamV1 as \
         HyperParameterTrainer
 
-from .utils import BabyTrainerParameters, TrainValProperty, \
+from .utils import BabyTrainerParameters, TrainValTestProperty, \
     augmented_generator
 from .smoothing_model_trainer import SmoothingModelTrainer
 from .flattener_trainer import FlattenerTrainer
@@ -328,7 +355,18 @@ class BabyTrainer(object):
                                        preprocess=(robust_norm, seg_norm),
                                        in_memory=p.in_memory)
 
-        return TrainValProperty(self._gen_train, self._gen_val)
+        if not getattr(self, '_gen_test', None):
+            if len(self.data.testing) == 0:
+                raise BadProcess('No testing images have been added')
+            # Initialise generator for testing images
+            self._gen_test = ImageLabel(self.data.testing,
+                                       batch_size=p.batch_size,
+                                       aug=Augmenter(),
+                                       preprocess=(robust_norm, seg_norm),
+                                       in_memory=p.in_memory)
+
+        return TrainValTestProperty(self._gen_train, self._gen_val,
+                                    self._gen_test)
 
     def plot_gen_sample(self, validation=False):
         # TODO: Move to flattener?
@@ -391,7 +429,7 @@ class BabyTrainer(object):
                         self.parameters,
                         isval=True)
 
-        self.flattener_trainer.generate_flattener_stats(*self.gen,
+        self.flattener_trainer.generate_flattener_stats(*self.gen[:2],
                                                         tAug,
                                                         vAug,
                                                         max_erode=max_erode)
@@ -429,7 +467,11 @@ class BabyTrainer(object):
                      self.flattener,
                      self.parameters,
                      isval=True)
-        return TrainValProperty(t, v)
+        w = _std_aug(self.smoothing_sigma_model,
+                     self.flattener,
+                     self.parameters,
+                     isval=True)
+        return TrainValTestProperty(t, v, w)
 
     @property
     def cnn_fn(self):
@@ -593,15 +635,18 @@ class BabyTrainer(object):
 
         if self.in_memory:
             if getattr(self, '_seg_examples', None) is None:
-                self._seg_examples = TrainValProperty(
+                self._seg_examples = TrainValTestProperty(
                     list(example_generator(self.gen.train)),
-                    list(example_generator(self.gen.val)))
-            return TrainValProperty((e for e in self._seg_examples.train),
-                                    (e for e in self._seg_examples.val))
+                    list(example_generator(self.gen.val)),
+                    list(example_generator(self.gen.test)))
+            return TrainValTestProperty((e for e in self._seg_examples.train),
+                                        (e for e in self._seg_examples.val),
+                                        (e for e in self._seg_examples.test))
         else:
             self._seg_examples = None
-            return TrainValProperty(example_generator(self.gen.train),
-                                    example_generator(self.gen.val))
+            return TrainValTestProperty(example_generator(self.gen.train),
+                                        example_generator(self.gen.val),
+                                        example_generator(self.gen.test))
 
     # TODO Move to Segmentation Parameter TRainer
     @property
@@ -700,7 +745,7 @@ class BabyTrainer(object):
         sfpo = SegFilterParamOptim(self.flattener,
                                    basic_params=merged_params,
                                    scoring=scoring)
-        sfpo.generate_stat_table(self.seg_examples.train)
+        sfpo.generate_stat_table(self.seg_examples.val)
 
         sfpo.fit_filter_params(lazy=lazy, bootstrap=bootstrap)
         merged_params.update(sfpo.opt_params)
