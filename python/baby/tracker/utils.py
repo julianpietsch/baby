@@ -1,7 +1,7 @@
 import numpy as np
 
 # Calculate barycentre
-def calc_barycentre(centres, weights=None):
+def calc_barycentre(centres, weights=None, **kwargs):
     '''
     :centres: ndarray containing the (x,y) centres of each cell
     :weights: (optional) list of weights to consider for each cell
@@ -13,7 +13,7 @@ def calc_barycentre(centres, weights=None):
     return(barycentre)
 
 # Calculate distance to center
-def calc_barydists(centres, bary):
+def calc_barydists(centres, bary, **kwargs):
     '''
     Calculate distances to the barycentre
     :centre: int (2,) tuple. Centre of cell
@@ -25,16 +25,20 @@ def calc_barydists(centres, bary):
     return dists
 
 # Calculate angle to center
-def calc_baryangles(centres, bary):
+def calc_baryangles(centres, bary, areas=None, **kwargs):
     '''
     Calculate angle using centre of cell and barycentre
     :centre: int (2,) tuple. Centre of cell
     :bary: float (2,) tuple. Barycentre of image
+    :anchor_cell: int Cell id to use as angle 0.
     '''
-    
+
     angles = []
     vec2bary = centres - bary
     angles = np.apply_along_axis(lambda x: np.arctan2(*x), 1, vec2bary)
+    if areas is not None:
+        anchor_cell = np.argmax(areas)
+        angles -= angles[anchor_cell]
 
     return(angles)
 

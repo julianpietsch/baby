@@ -63,9 +63,9 @@ class FeatureCalculator:
 
     def set_named_ids(self):
         # Manage calling feature outputs by name
-        d = {'centroid-0':'xind','centroid-1':'yind', 'area':'area'}
+        d = {'centroid-0':'xind','centroid-1':'yind', 'area':'aind'}
         tmp_d = {'barydist':['centroid', 'area'],
-                          'baryangle':['centroid'],
+                 'baryangle':['centroid', 'area'],
                  'distance':['centroid']}
 
         nonbase_feats = self.trapfeats + self.extrafeats
