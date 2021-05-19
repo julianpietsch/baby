@@ -243,7 +243,7 @@ class CellTrainer(CellTracker):
 
         return array_3d
 
-    def explore_hyperparams(self, model_type="rf"):
+    def explore_hyperparams(self, model_type="HGBC"):
         self.model_type = model_type
         truth, data = (*zip(*self.train),)
         if self.model_type is "SVC":
