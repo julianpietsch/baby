@@ -314,7 +314,7 @@ class CellTrainer(CellTracker):
     def save_model(self, filename):
         date = datetime.date.today().strftime("%Y%m%d")
         nfeats = str(self.noutfeats)
-        model_type = str(type(isinstance(self.model.best_estimator_, SVC)))
+        model_type = self.model_type
 
         f = open(filename + "_".join(("ct", model_type, date, nfeats)) + ".pkl", "wb")
         pickle.dump(self.model.best_estimator_, f)
