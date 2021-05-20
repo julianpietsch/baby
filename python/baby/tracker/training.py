@@ -25,7 +25,8 @@ from sklearn.svm import SVC  # , LinearSVC
 from xgboost import XGBClassifier
 
 # from sklearn.calibration import CalibratedClassifierCV
-from sklearn.model_selection import GridSearchCV
+# from sklearn.model_selection import GridSearchCV
+from tune_sklearn import TuneSearchCV
 from sklearn.metrics import (
     make_scorer,
     fbeta_score,
@@ -285,22 +286,35 @@ class CellTrainer(CellTracker):
                     "max_depth": [None, 3, 4, 5],
                 }
             elif model_type is "XGBC":
-                model = XGBClassifier(objective="multi:softprob")
+                # A parameter grid for XGBoost
                 param_grid = {
-                    "colsample_bytree": uniform(0.7, 0.3),
-                    "gamma": uniform(0, 0.5),
-                    "learning_rate": uniform(0.03, 0.3),  # default 0.1
-                    "max_depth": randint(2, 6),  # default 3
-                    "n_estimators": randint(100, 150),  # default 100
-                    "subsample": uniform(0.6, 0.4),
+                    "min_child_weight": [1, 5, 10],
+                    "gamma": [0.5, 1, 1.5, 2, 5],
+                    "subsample": [0.6, 0.8, 1.0],
+                    "colsample_bytree": [0.6, 0.8, 1.0],
+                    "max_depth": [3, 4, 5],
                 }
 
+                model = XGBClassifier(
+                    learning_rate=0.02,
+                    n_estimators=50,
+                    objective="binary:logistic",
+                    nthread=4,
+                    # tree_method="gpu_hist"  # this enables GPU.
+                    # See https://github.com/dmlc/xgboost/issues/2819
+                )
+                data = np.array(data)
             else:
                 raise ("model_type not found")
 
-        self.model = GridSearchCV(
-            estimator=model, param_grid=param_grid, cv=5, n_jobs=-1
+        self.model = TuneSearchCV(
+            model,
+            param_distributions=param_grid,
+            n_trials=2,
+            max_iters=10,
+            search_optimization="bohb",
         )
+
         self.model.fit(data, truth)
         # Add data on the features and their order
         self.model.best_estimator_.all_ofeats = self.all_ofeats
