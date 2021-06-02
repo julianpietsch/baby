@@ -422,8 +422,10 @@ class BabyTrainer(object):
             DeprecationWarning)
 
         flattener = lambda x, y: x
+        # NB: use isval=True for training aug since we do not need extra
+        # augmentations for calibrating the flattener
         tAug = _std_aug(self.smoothing_sigma_model, flattener,
-                        self.parameters)
+                        self.parameters, isval=True)
         vAug = _std_aug(self.smoothing_sigma_model,
                         flattener,
                         self.parameters,

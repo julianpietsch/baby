@@ -2,22 +2,22 @@
 # for Budding Yeast algorithm, please cite:
 # Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
 # Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
-# 
-# 
+#
+#
 # The MIT License (MIT)
-# 
+#
 # Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
-# 
+#
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
 # deal in the Software without restriction, including without limitation the
 # rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
 # sell copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
-# 
+#
 # The above copyright notice and this permission notice shall be included in
 # all copies or substantial portions of the Software.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -41,7 +41,9 @@ from scipy.ndimage import binary_erosion
 from .utils import augmented_generator, TrainValProperty
 
 
-def _generate_flattener_stats(gen: ImageLabel, max_erode: int) -> dict:
+def _generate_flattener_stats(gen: ImageLabel,
+                              max_erode: int,
+                              keep_zero=False) -> dict:
     """ Generates flattener statistics of the data output by the generator.
 
     This function measures the size (in pixels) of segmentation mask
@@ -51,7 +53,12 @@ def _generate_flattener_stats(gen: ImageLabel, max_erode: int) -> dict:
     :param gen: the data generator on which to compute statistics
     :param max_erode: the maximum number of erosions to consider
     :return: the statistics in a dictionary with keys `overlap_sizes` and
-    `erosion_sizes`
+    `erosion_sizes`. `overlap_sizes` is a list over 0 to `max_erode`
+    applications of binary erosion, where each element contains a list of cell
+    pairs that have non-zero overlap. Each pair is expressed as a tuple
+    specifying the area of each cell (smaller first) and the fraction overlap.
+    `erosion_sizes` is a list of lists, specifying, for each cell mask, its
+    size after applying the indexed number of erosions.
     """
     nerode = list(range(max_erode + 1))
     overlap_sizes = [[] for _ in nerode]
@@ -72,10 +79,16 @@ def _generate_flattener_stats(gen: ImageLabel, max_erode: int) -> dict:
                     continue
                 for s1 in range(s0 + 1, nsegs):
                     seg1 = segs[..., s1]
-                    o = float(np.sum(seg0 & seg1) / np.sum(seg0 | seg1))
-                    if o > 0:
+                    # Calculate number of overlapping pixels
+                    nO = np.sum(seg0 & seg1)
+                    # Calculate fraction overlap
+                    fO = float(nO / np.sum(seg0 | seg1))
+                    if fO > 0 or keep_zero:
                         sizes = tuple(sorted([s_sizes[s0], s_sizes[s1]]))
-                        overlap_sizes[e].append(sizes + (o,))
+                        if keep_zero:
+                            overlap_sizes[e].append(sizes + (fO, nO))
+                        else:
+                            overlap_sizes[e].append(sizes + (fO,))
             segs = binary_erosion(segs, dwsquareconn)
         erosion_sizes.extend(esizes)
 
@@ -96,24 +109,33 @@ def _group_sizes(es, thresh, pad=0):
 
 
 def _group_overlapping(os, thresh, pad=0):
-    """#TODO not sure what this function does
+    """Filter overlap stats into groups according to a fuzzy size threshold
 
-    #TODO not sure what the parameters mean
-    :param os:
-    :param thresh:
-    :param pad:
-    :return:
+    :param os: overlap statistics  for for particular level of erosion, that
+    is, a list of tuples specifying, for each pair of overlapping outlines,
+    the area of cell 1, area of cell 2 (always at least as large as cell 1)
+    and fraction overlap (overlap area divided by union area).
+    :param thresh: size threshold to apply
+    :param pad: padding around threshold for double-grouping pairs
+    :return: A tuple of two lists, the first containing stats for all pairs
+    where both cells are smaller than the threshold + padding, the second
+    containing stats for all pairs where both cells are larger than the
+    threshold - padding.
     """
     return ([
-                (x, y, w) for x, y, w in os if
-                x < thresh + pad and y < thresh + pad
-            ], [(x, y, w) for x, y, w in os if
-                x >= thresh - pad and y >= thresh - pad
-                ])
+        (x, y, w) for x, y, w in os if x < thresh + pad and y < thresh + pad
+    ], [(x, y, w) for x, y, w in os if x >= thresh - pad and y >= thresh - pad
+       ])
 
 
 def _best_overlapping(overlapping, erosion_sizes, min_size):
-    """#TODO not sure what this function does
+    """Return overlap stats for highest level of erosion without losing cells
+
+    Binary erosion is valid if it does not reduce the area of any cells below
+    `min_size`. Any elements failing this test will be removed from
+    `overlapping`. The first element in erosion lists is never removed (it is
+    assumed to contain stats before erosion is applied). The return value is
+    the element of overlapping for which erosion is maximised.
 
     #TODO not sure what these parameters mean
     :param overlapping:
@@ -121,9 +143,11 @@ def _best_overlapping(overlapping, erosion_sizes, min_size):
     :param min_size:
     :return:
     """
+    # Rearrange `erosion_sizes` by number of applied erosions
     sz_erosions = list(zip(*erosion_sizes))
-    e_invalid = [any([c < min_size for c in e]) for e in
-                 sz_erosions[:0:-1]]
+    # Erosions are invalid if any cells drop below the minimum allowed size
+    e_invalid = [any([c < min_size for c in e]) for e in sz_erosions[:0:-1]]
+    # Return only overlap stats for valid numbers of erosions
     o_valid = [o for o, e in zip(overlapping[:0:-1], e_invalid) if not e]
     o_valid += [overlapping[0]]
     return o_valid[0]
@@ -174,10 +198,10 @@ def _best_nerode(szg, min_size):
     return ne[0] if len(ne) > 0 else 0
 
 
-
 class FlattenerTrainer:
-    def __init__(self, save_dir: pathlib.Path,
-                 stats_file: str, flattener_file: str):
+
+    def __init__(self, save_dir: pathlib.Path, stats_file: str,
+                 flattener_file: str):
         """Optimises the hyper-parameters for the `SegmentationFlattener`.
 
 
@@ -193,9 +217,11 @@ class FlattenerTrainer:
         self._flattener = None
         self._stats = None
 
-    def generate_flattener_stats(self, train_gen: ImageLabel,
+    def generate_flattener_stats(self,
+                                 train_gen: ImageLabel,
                                  val_gen: ImageLabel,
-                                 train_aug: Augmenter, val_aug: Augmenter,
+                                 train_aug: Augmenter,
+                                 val_aug: Augmenter,
                                  max_erode: int = 5):
         """Generate overlap and erosion statistics for augmented data in input.
 
@@ -224,8 +250,7 @@ class FlattenerTrainer:
         """
         if self._stats is None:
             if not self.stats_file.exists():
-                raise BadProcess(
-                    'flattener stats have not been generated')
+                raise BadProcess('flattener stats have not been generated')
             with open(self.stats_file, 'rt') as f:
                 self._stats = json.load(f)
         # Fixme: this recreates an object at each call, can we just save the
@@ -279,7 +304,7 @@ class FlattenerTrainer:
         if pad_frac > 0.25 or pad_frac < 0:
             raise BadParam('"pad_frac" must be between 0 and 0.2')
 
-        # Find the best split
+        # Load generated stats for training data
         overlapping = self.stats.train.get('overlap_sizes', [])
         erosion_sizes = self.stats.train.get('erosion_sizes', [])
         if len(overlapping) == 0 or len(erosion_sizes) == 0 or \
@@ -287,19 +312,29 @@ class FlattenerTrainer:
             raise BadProcess(
                 '"flattener_stats.json" file appears to be corrupted')
 
+        # Find the best single split point by brute force iteration over a
+        # binned version of the training data
+
+        # Use distribution of cell sizes to determine binning
         o_noerode = overlapping[0]
         x, y, _ = zip(*o_noerode)
         max_size = max(x + y)
         pad = max([pad_frac * max_size, min_size])
         edges = np.linspace(pad, max_size - pad, nbins)[1:-1]
 
+        # Use overlap stats at maximum valid level of erosion
         o_maxerode = _best_overlapping(overlapping, erosion_sizes, min_size)
+        # Then iterate over the thresholds (edges) to find which split
+        # minimises the overlap fraction
         split0, w0 = _find_best_fgroup_split(o_maxerode, edges, pad=pad)
 
-        ogL, ogH = zip(*[_group_overlapping(o, split0, pad=pad) for o in
-                         overlapping])
+        # Use the threshold to split all overlap and erosion stats into low
+        # and high groups:
+        ogL, ogH = zip(
+            *[_group_overlapping(o, split0, pad=pad) for o in overlapping])
         szgL, szgH = _group_sizes(erosion_sizes, split0, pad=pad)
 
+        # And again use the overlap stats at maximum valid level of erosion
         ogL = _best_overlapping(ogL, szgL, min_size)
         ogH = _best_overlapping(ogH, szgH, min_size)
 
@@ -329,7 +364,8 @@ class FlattenerTrainer:
         flattener = SegmentationFlattening()
 
         flattener.addGroup('small', upper=int(np.round(splits[0] + pad)))
-        flattener.addGroup('medium', lower=int(np.round(splits[0] - pad)),
+        flattener.addGroup('medium',
+                           lower=int(np.round(splits[0] - pad)),
                            upper=int(np.round(splits[1] + pad)))
         flattener.addGroup('large', lower=int(np.round(splits[1] - pad)))
         flattener.addGroup('buds', upper=bud_max, budonly=True)
@@ -365,7 +401,10 @@ class FlattenerTrainer:
                 x, y, w = zip(*os)
             else:
                 x, y, w = 3 * [[]]
-            ax.hist2d(x, y, bins=nbins, weights=w,
+            ax.hist2d(x,
+                      y,
+                      bins=nbins,
+                      weights=w,
                       range=[[0, max_size], [0, max_size]])
             ax.plot((0, max_size), (0, max_size), 'r')
             ax.set_title('nerosions = {:d}'.format(e))
