@@ -38,6 +38,35 @@ import pandas as pd
 from tqdm import trange
 from typing import NamedTuple
 
+from scipy.stats import uniform, randint
+from scipy.ndimage import binary_fill_holes
+
+from skimage.measure import regionprops_table
+
+from skimage.transform import resize
+from sklearn.experimental import enable_hist_gradient_boosting
+from sklearn.ensemble import (
+    RandomForestClassifier,
+    GradientBoostingClassifier,
+    HistGradientBoostingClassifier,
+)
+from sklearn.svm import SVC  # , LinearSVC
+from xgboost import XGBClassifier
+
+# from sklearn.calibration import CalibratedClassifierCV
+# from sklearn.model_selection import GridSearchCV
+from tune_sklearn import TuneSearchCV
+from sklearn.metrics import (
+    make_scorer,
+    fbeta_score,
+    accuracy_score,
+    balanced_accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    plot_precision_recall_curve,
+)
+
 from baby.io import load_tiled_image
 from baby.tracker.utils import pick_baryfun, calc_barycentre
 from baby.training.utils import TrainValProperty, TrainValTestProperty
@@ -46,94 +75,88 @@ from .core import CellTracker, BudTracker
 
 from .benchmark import CellBenchmarker
 
-from scipy.ndimage import binary_fill_holes
-from skimage.measure import regionprops_table
-from skimage.transform import resize
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC#, LinearSVC
-# from sklearn.calibration import CalibratedClassifierCV
-from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import (
-    make_scorer, fbeta_score, accuracy_score, balanced_accuracy_score,
-    precision_score, recall_score, f1_score, plot_precision_recall_curve
-)
 
 class CellTrainer(CellTracker):
-    '''
+    """
     :meta: Metadata Dataframe
     :traps: Dataframe with cleaned trap locations and their continuous tps
-    '''
+    """
 
-    def __init__(self, meta, data=None, masks=None,
-                 val_masks=None, all_feats2use=None):
+    def __init__(self, meta, data=None, masks=None, val_masks=None, all_feats2use=None):
 
         if all_feats2use is None:
-            feats2use = ('centroid', 'area', 'minor_axis_length',
-                         'major_axis_length', 'convex_area')
-            trapfeats = ('baryangle', 'barydist')
-            extrafeats = ('distance',)
+            feats2use = (
+                "centroid",
+                "area",
+                "minor_axis_length",
+                "major_axis_length",
+                "convex_area",
+            )
+            trapfeats = ("baryangle", "barydist")
+            extrafeats = ("distance",)
 
         else:
             feats2use, trapfeats, extrafeats = all_feats2use
 
-        super().__init__(feats2use = feats2use, trapfeats = trapfeats,
-                         extrafeats = extrafeats)
+        super().__init__(
+            feats2use=feats2use, trapfeats=trapfeats, extrafeats=extrafeats
+        )
         self.px_size = None
 
-        self.indices = ['experimentID', 'position', 'trap', 'tp']
-        self.cindices =  self.indices + ['cellLabels']
+        self.indices = ["experimentID", "position", "trap", "tp"]
+        self.cindices = self.indices + ["cellLabels"]
         self.data = data
         self.traps = data.traps
         self.meta = data._metadata_tp
         self.process_metadata()
         if masks is None:
-            self.masks= [load_tiled_image(fname)[0] for
-                         fname  in self.meta['filename']]
+            self.masks = [load_tiled_image(fname)[0] for fname in self.meta["filename"]]
         self.process_traps()
 
     def verify_mask_df_integrity(masks, df):
-        nlayers=[mask.shape[2] for mask in masks]
-        ncells = [len(x) for x in df['cellLabels'].values]
+        nlayers = [mask.shape[2] for mask in masks]
+        ncells = [len(x) for x in df["cellLabels"].values]
 
-        for x,(i,j) in enumerate(zip(nlayers, ncells)):
-            if i!=j:
+        for x, (i, j) in enumerate(zip(nlayers, ncells)):
+            if i != j:
                 print(x)
 
     def process_metadata(self):
-        '''
+        """
         Process all traps (run on finished experiments), combine results with location df and drop
         unused columns.
-        '''
+        """
 
-        self.meta = self.meta[~self.meta.index.duplicated(keep='first')]
-        self.traps = self.traps.explode('cont')
-        self.traps['tp'] = self.traps['cont']
-        self.traps.set_index('tp', inplace=True, append=True)
+        self.meta = self.meta[~self.meta.index.duplicated(keep="first")]
+        self.traps = self.traps.explode("cont")
+        self.traps["tp"] = self.traps["cont"]
+        self.traps.set_index("tp", inplace=True, append=True)
         self.clean_indices = self.traps.index
 
         self.meta = self.meta.loc(axis=0)[self.clean_indices]
-        self.meta['ncells'] = [len(i) for i in self.meta['cellLabels'].values]
+        self.meta["ncells"] = [len(i) for i in self.meta["cellLabels"].values]
 
     def gen_train(self):
-        '''
+        """
         Generates the data for training using all the loaded images.
 
-        '''
+        """
 
-        traps = np.unique([ind[:self.indices.index('trap')+1] for ind in self.traps.index], axis=0)
-        traps = [(ind[0], *map(int, ind[1:])) for ind in traps] # str->int conversion
-        traps = *map(
-            tuple, traps),
+        traps = np.unique(
+            [ind[: self.indices.index("trap") + 1] for ind in self.traps.index], axis=0
+        )
+        traps = [(ind[0], *map(int, ind[1:])) for ind in traps]  # str->int conversion
+        traps = (*map(tuple, traps),)
 
         train = []
-        for trap in traps: # fill the training dataset with traps' tuples
+        for trap in traps:  # fill the training dataset with traps' tuples
             trapsets = self.gen_train_from_trap(trap)
             if trapsets:
                 train.append(trapsets)
         self.train = np.concatenate(train)
 
     def gen_train_from_pair(self, pair_loc):
-        '''
+        """
         Produces a list of training (truth, features) pairs from
         a pair of timepoints in a position
 
@@ -144,13 +167,15 @@ class CellTrainer(CellTracker):
         returns
 
         list of (bool, floats list) tuples
-        
-        '''
-            
-        tmp_subdf = self.meta[['list_index', 'cellLabels', 'pixel_size']].loc(axis=0)[pair_loc]
+
+        """
+
+        tmp_subdf = self.meta[["list_index", "cellLabels", "pixel_size"]].loc(axis=0)[
+            pair_loc
+        ]
 
         # Set px_size if available, if not use default value
-        px_size = np.unique(tmp_subdf['pixel_size'])
+        px_size = np.unique(tmp_subdf["pixel_size"])
         if len(px_size) > 1:
             if all(np.isnan(x) for x in px_size):
                 px_size = [0.263]
@@ -161,67 +186,66 @@ class CellTrainer(CellTracker):
         if np.isnan(px_size):
             px_size = 0.263
 
-        subdf = tmp_subdf[['list_index', 'cellLabels']]
+        subdf = tmp_subdf[["list_index", "cellLabels"]]
 
-        if not subdf['cellLabels'].all():
+        if not subdf["cellLabels"].all():
             return None
 
-        truemat = np.equal.outer(*subdf['cellLabels'].values).reshape(-1)
+        truemat = np.equal.outer(*subdf["cellLabels"].values).reshape(-1)
 
         propsmat = self.df_calc_feat_matrix(pair_loc, px_size=px_size)
 
-
-        propsmat = propsmat.reshape(
-            -1, self.noutfeats)
+        propsmat = propsmat.reshape(-1, self.noutfeats)
 
         return [x for x in zip(truemat, propsmat)]
 
     def process_traps(self):
-        '''
+        """
         Generates a region_proprieties DataFrame
-        '''
+        """
 
         nindex = []
         props_lst = []
         # Move cell_id index to use calc_feats_from mask fn
-        self.masks = [np.moveaxis(mask, 2, 0) for mask in self.masks] 
+        self.masks = [np.moveaxis(mask, 2, 0) for mask in self.masks]
 
         # TODO do this more elegantly
-        for ind, px_size, (index, 
-                  lbl) in zip(self.meta.index, self.meta['pixel_size'].values,
-                              enumerate(self.meta['cellLabels'].values)):
+        for ind, px_size, (index, lbl) in zip(
+            self.meta.index,
+            self.meta["pixel_size"].values,
+            enumerate(self.meta["cellLabels"].values),
+        ):
             try:
-                #check nlabels and ncells agree
-                assert (len(lbl)==self.masks[index].shape[0]) | (len(lbl)==0)
+                # check nlabels and ncells agree
+                assert (len(lbl) == self.masks[index].shape[0]) | (len(lbl) == 0)
             except AssertionError:
-                print('nlabels and img mismatch in row: ')
-              
-            if np.isnan(px_size): #Cover for cases where px_size is nan
+                print("nlabels and img mismatch in row: ")
+
+            if np.isnan(px_size):  # Cover for cases where px_size is nan
                 px_size = 0.263
 
             trapfeats = self.calc_feats_from_mask(self.masks[index], px_size=px_size)
 
             for cell, feats in zip(lbl, trapfeats):
-                nindex.append(ind + (cell, ))
+                nindex.append(ind + (cell,))
                 props_lst.append(feats)
 
         nindex = pd.MultiIndex.from_tuples(nindex, names=self.cindices)
 
-        self.rprops = pd.DataFrame(np.array(props_lst),
-                                   index=nindex, columns = self.tfeats)
+        self.rprops = pd.DataFrame(
+            np.array(props_lst), index=nindex, columns=self.tfeats
+        )
 
         self.rprop_keys = self.rprops.columns
 
     def gen_train_from_trap(self, trap_loc):
-        subdf = self.meta[['list_index', 'cellLabels'
-                             ]].loc(axis=0)[trap_loc]
+        subdf = self.meta[["list_index", "cellLabels"]].loc(axis=0)[trap_loc]
         pairs = [
-            trap_loc + tuple((pair, ))
-            for pair in zip(subdf.index[:-1], subdf.index[1:])
+            trap_loc + tuple((pair,)) for pair in zip(subdf.index[:-1], subdf.index[1:])
         ]
 
         res_tuples = []
-        for pair in pairs: # linearise the resulting tuples
+        for pair in pairs:  # linearise the resulting tuples
             pair_trainset = self.gen_train_from_pair(pair)
             if pair_trainset:
                 for tup in pair_trainset:
@@ -230,10 +254,10 @@ class CellTrainer(CellTracker):
         return res_tuples
 
     def df_calc_feat_matrix(self, pair_loc, norm=True, px_size=None, df=None):
-        '''
+        """
         Takes an indexer (list) with pos-trap and tuple of two tps to be
         compared and returns the feature comparison matrix of their cells
-        '''
+        """
 
         if df is None:
             df = self.rprops
@@ -243,65 +267,108 @@ class CellTrainer(CellTracker):
 
         subdf = df.loc(axis=0)[pair_loc]
 
-        prev_feats, new_feats = subdf.groupby('tp').apply(np.array)
+        prev_feats, new_feats = subdf.groupby("tp").apply(np.array)
 
         array_3d = self.calc_feat_ndarray(prev_feats, new_feats)
 
         return array_3d
 
-    def explore_hyperparams(self, model_type = 'rf'):
+    def explore_hyperparams(self, model_type="HGBC"):
         self.model_type = model_type
-        truth, data = *zip(*self.train),
-        if self.model_type is 'SVC':
-            model = SVC(probability = True, shrinking=False,
-                        verbose=True, random_state=1,)
+        truth, data = (*zip(*self.train),)
+        if self.model_type is "SVC":
+            model = SVC(
+                probability=True,
+                shrinking=False,
+                verbose=True,
+                random_state=1,
+            )
             param_grid = {
-              # 'method': ['sigmoid', 'isotonic']
-              # 'class_weight':['balanced', None],
-              # 'C': [0.1, 1, 10, 100, 1000],
-              'C': [0.1, 10, 100],
-              'gamma': [1, 0.01, 0.0001],
-              'kernel': ['rbf', 'sigmoid']
-            }
-        elif model_type is 'rf':
-            model = RandomForestClassifier(n_estimators=15,
-                                    criterion='gini',
-                                    max_depth=3,
-                                    class_weight='balanced')
-
-            param_grid = {
-                'n_estimators': [20, 25, 30],
-                'max_features': ['auto', 'sqrt', 'log2'],
-                'max_depth': [None, 3, 4, 5],
-                'class_weight': [None, 'balanced', 'balanced_subsample']
+                # 'method': ['sigmoid', 'isotonic']
+                # 'class_weight':['balanced', None],
+                # 'C': [0.1, 1, 10, 100, 1000],
+                "C": [0.1, 10, 100],
+                "gamma": [1, 0.01, 0.0001],
+                "kernel": ["rbf", "sigmoid"],
             }
         else:
-            raise("model_type not found")
+            if model_type is "rf":
+                model = RandomForestClassifier()
+                param_grid = {
+                    "n_estimators": [20, 30, 40],
+                    "max_features": ["auto", "sqrt", "log2"],
+                    "max_depth": [None, 3, 4, 5],
+                    "class_weight": [None, "balanced", "balanced_subsample"],
+                }
+            elif model_type is "GBC":
+                model = GradientBoostingClassifier()
+                param_grid = {
+                    "n_estimators": [20, 30, 40],
+                    "max_features": ["auto", "sqrt", "log2"],
+                    "max_depth": [None, 3, 4, 5],
+                }
+            elif model_type is "HGBC":
+                model = GradientBoostingClassifier()
+                param_grid = {
+                    "n_estimators": [20, 30, 40],
+                    "max_features": ["auto", "sqrt", "log2"],
+                    "max_depth": [None, 3, 4, 5],
+                }
+            elif model_type is "XGBC":
+                # A parameter grid for XGBoost
+                param_grid = {
+                    "min_child_weight": [1, 5, 10],
+                    "gamma": [0.5, 1, 1.5, 2, 5],
+                    "subsample": [0.6, 0.8, 1.0],
+                    "colsample_bytree": [0.6, 0.8, 1.0],
+                    "max_depth": [3, 4, 5],
+                }
 
-        self.model = GridSearchCV(estimator=model, param_grid=param_grid, cv=5,
-                                  n_jobs=-1)
+                model = XGBClassifier(
+                    learning_rate=0.02,
+                    n_estimators=50,
+                    objective="binary:logistic",
+                    nthread=4,
+                    # tree_method="gpu_hist"  # this enables GPU.
+                    # See https://github.com/dmlc/xgboost/issues/2819
+                )
+                data = np.array(data)
+            else:
+                raise ("model_type not found")
+
+        self.model = TuneSearchCV(
+            model,
+            param_distributions=param_grid,
+            n_trials=2,
+            max_iters=10,
+            search_optimization="bohb",
+        )
+
         self.model.fit(data, truth)
         # Add data on the features and their order
         self.model.best_estimator_.all_ofeats = self.all_ofeats
-        self.model.best_estimator_.all_ifeats = [self.feats2use, self.trapfeats, self.extrafeats]
+        self.model.best_estimator_.all_ifeats = [
+            self.feats2use,
+            self.trapfeats,
+            self.extrafeats,
+        ]
         print(self.model.best_score_, self.model.best_params_)
 
     def save_model(self, filename):
         date = datetime.date.today().strftime("%Y%m%d")
         nfeats = str(self.noutfeats)
-        model_type = 'svc' if isinstance(self.model.best_estimator_, SVC) else 'rf'
+        model_type = self.model_type
 
-        f = open(filename + '_'.join(('ct', model_type, date,
-                                      nfeats)) + '.pkl', 'wb')
+        f = open(filename + "_".join(("ct", model_type, date, nfeats)) + ".pkl", "wb")
         pickle.dump(self.model.best_estimator_, f)
 
     def save_self(self, filename):
-        f = open(filename, 'wb')
+        f = open(filename, "wb")
         pickle.dump(self, f)
 
     @property
     def benchmarker(self):
-        '''
+        """
         Create a benchmarker instance to test the new model
 
         requires
@@ -310,33 +377,38 @@ class CellTrainer(CellTracker):
 
         returns
         :self._benchmarker:
-        
-        '''
-        if not hasattr(self, '_benchmarker'):
-            val_meta = self.meta.loc[self.meta['train_val'] == 'validation']
-            self._benchmarker = CellBenchmarker(val_meta, self.model.best_estimator_,
-                                                self.model.best_estimator_)
+
+        """
+        if not hasattr(self, "_benchmarker"):
+            val_meta = self.meta.loc[self.meta["train_val"] == "validation"]
+            self._benchmarker = CellBenchmarker(
+                val_meta, self.model.best_estimator_, self.model.best_estimator_
+            )
         return self._benchmarker
 
 
-
 class BudTrainer(BudTracker):
-    '''
+    """
     :props_file: File where generated property table will be saved
     :kwargs: Additional arguments passed onto the parent Tracker; `px_size` is
         especially useful.
-    '''
+    """
 
     def __init__(self, props_file=None, **kwargs):
         super().__init__(**kwargs)
         # NB: we inherit self.feats2use from CellTracker class
         self.props_file = props_file
-        self.rf_feats = ["p_bud_mat", "size_ratio_mat", "p_budneck_mat",
-                "budneck_ratio_mat", "adjacency_mat"]
+        self.rf_feats = [
+            "p_bud_mat",
+            "size_ratio_mat",
+            "p_budneck_mat",
+            "budneck_ratio_mat",
+            "adjacency_mat",
+        ]
 
     @property
     def props_file(self):
-        return getattr(self, '_props_file')
+        return getattr(self, "_props_file")
 
     @props_file.setter
     def props_file(self, filename):
@@ -345,36 +417,37 @@ class BudTrainer(BudTracker):
 
     @property
     def props(self):
-        if getattr(self, '_props', None) is None:
+        if getattr(self, "_props", None) is None:
             if self.props_file and self.props_file.is_file():
                 self.props = pd.read_csv(self.props_file)
             else:
-                raise BadProcess(
-                        'The property table has not yet been generated')
+                raise BadProcess("The property table has not yet been generated")
         return self._props
 
     @props.setter
     def props(self, props):
         props = pd.DataFrame(props)
-        required_cols = self.rf_feats + ['is_mb_pair', 'validation']
+        required_cols = self.rf_feats + ["is_mb_pair", "validation"]
         if not all(c in props for c in required_cols):
             raise BadParam(
                 '"props" does not have all required columns: {}'.format(
-                    ', '.join(required_cols)))
+                    ", ".join(required_cols)
+                )
+            )
         self._props = props
         if self.props_file:
             props.to_csv(self.props_file)
 
     def generate_property_table(self, data, flattener, val_data=None):
-        '''Generates properties table that gets used for training
+        """Generates properties table that gets used for training
 
         :data: List or generator of `baby.training.SegExample` tuples
         :flattener: Instance of a `baby.preprocessing.SegmentationFlattening`
             object describing the targets of the CNN in data
-        '''
+        """
         tnames = flattener.names()
-        i_budneck = tnames.index('bud_neck')
-        bud_target = 'sml_fill' if 'sml_fill' in tnames else 'sml_inte'
+        i_budneck = tnames.index("bud_neck")
+        bud_target = "sml_fill" if "sml_fill" in tnames else "sml_inte"
         i_bud = tnames.index(bud_target)
 
         if val_data is not None:
@@ -390,17 +463,18 @@ class BudTrainer(BudTracker):
             if len(seg_example.target) < 2:
                 # Skip if no pairs are present
                 continue
-            mb_stats = self.calc_mother_bud_stats(seg_example.pred[i_budneck],
-                    seg_example.pred[i_bud], seg_example.target)
+            mb_stats = self.calc_mother_bud_stats(
+                seg_example.pred[i_budneck], seg_example.pred[i_bud], seg_example.target
+            )
             p = pd.DataFrame(mb_stats, columns=self.rf_feats)
-            p['validation'] = is_val
+            p["validation"] = is_val
 
             # "cellLabels" specifies the label for each mask
-            cell_labels = seg_example.info.get('cellLabels', []) or []
+            cell_labels = seg_example.info.get("cellLabels", []) or []
             if type(cell_labels) is int:
                 cell_labels = [cell_labels]
             # "buds" specifies the label of the bud for each mask
-            buds = seg_example.info.get('buds', []) or []
+            buds = seg_example.info.get("buds", []) or []
             if type(buds) is int:
                 buds = [buds]
 
@@ -415,16 +489,17 @@ class BudTrainer(BudTracker):
             if len(mb_inds) > 0:
                 mother_inds, bud_inds = zip(*mb_inds)
                 is_mb_pair[mother_inds, bud_inds] = True
-            p['is_mb_pair'] = is_mb_pair.flatten()
+            p["is_mb_pair"] = is_mb_pair.flatten()
 
             # Ignore any rows containing NaNs
             nanrows = np.isnan(mb_stats).any(axis=1)
-            if (p['is_mb_pair'] & nanrows).any():
-                id_keys = ('experimentID', 'position', 'trap', 'tp')
+            if (p["is_mb_pair"] & nanrows).any():
+                id_keys = ("experimentID", "position", "trap", "tp")
                 info = seg_example.info
-                img_id = ' / '.join(
-                        [k + ': ' + str(info[k]) for k in id_keys if k in info])
-                warn('Mother-bud pairs omitted due to feature NaNs')
+                img_id = " / ".join(
+                    [k + ": " + str(info[k]) for k in id_keys if k in info]
+                )
+                warn("Mother-bud pairs omitted due to feature NaNs")
                 print('Mother-bud pair omitted in "{}"'.format(img_id))
             p = p.loc[~nanrows, :]
             p_list.append(p)
@@ -433,77 +508,83 @@ class BudTrainer(BudTracker):
         # TODO: should search for any None values in validation column and
         # assign a train-validation split to those rows
 
-        self.props = props # also saves
+        self.props = props  # also saves
 
-    def explore_hyperparams(self, hyper_param_target='precision'):
+    def explore_hyperparams(self, hyper_param_target="precision"):
         # Train bud assignment model on validation data, since this more
         # closely represents real-world performance of the CNN:
-        data = self.props.loc[self.props['validation'], self.rf_feats]
-        truth = self.props.loc[self.props['validation'], 'is_mb_pair']
+        data = self.props.loc[self.props["validation"], self.rf_feats]
+        truth = self.props.loc[self.props["validation"], "is_mb_pair"]
 
-        rf = RandomForestClassifier(n_estimators=15,
-                                    criterion='gini',
-                                    max_depth=3,
-                                    class_weight='balanced')
+        rf = RandomForestClassifier(
+            n_estimators=15, criterion="gini", max_depth=3, class_weight="balanced"
+        )
 
         param_grid = {
-            'n_estimators': [6, 15, 50, 100],
-            'max_features': ['auto', 'sqrt', 'log2'],
-            'max_depth': [2, 3, 4],
-            'class_weight': [None, 'balanced', 'balanced_subsample']
+            "n_estimators": [6, 15, 50, 100],
+            "max_features": ["auto", "sqrt", "log2"],
+            "max_depth": [2, 3, 4],
+            "class_weight": [None, "balanced", "balanced_subsample"],
         }
 
         def get_balanced_best_index(cv_results_):
-            '''Find a model balancing F1 score and speed'''
+            """Find a model balancing F1 score and speed"""
             df = pd.DataFrame(cv_results_)
             best_score = df.iloc[df.mean_test_f1.idxmax(), :]
             thresh = best_score.mean_test_f1 - 0.1 * best_score.std_test_f1
-            return df.loc[df.mean_test_f1 > thresh, 'mean_score_time'].idxmin()
+            return df.loc[df.mean_test_f1 > thresh, "mean_score_time"].idxmin()
 
-        self._rf = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5,
-                scoring=SCORING_METRICS, refit=hyper_param_target)
+        self._rf = GridSearchCV(
+            estimator=rf,
+            param_grid=param_grid,
+            cv=5,
+            scoring=SCORING_METRICS,
+            refit=hyper_param_target,
+        )
         self._rf.fit(data, truth)
 
         df = pd.DataFrame(self._rf.cv_results_)
-        disp_cols = [c for c in df.columns if c.startswith('mean_')
-                     or c.startswith('param_')]
+        disp_cols = [
+            c for c in df.columns if c.startswith("mean_") or c.startswith("param_")
+        ]
         print(df.loc[self._rf.best_index_, disp_cols])
 
     def performance(self):
-        if not isinstance(getattr(self, '_rf', None), GridSearchCV):
+        if not isinstance(getattr(self, "_rf", None), GridSearchCV):
             raise BadProcess('"explore_hyperparams" has not been run')
 
         best_rf = self._rf.best_estimator_
-        isval = self.props['validation']
+        isval = self.props["validation"]
         data = self.props.loc[~isval, self.rf_feats]
-        truth = self.props.loc[~isval, 'is_mb_pair']
+        truth = self.props.loc[~isval, "is_mb_pair"]
         valdata = self.props.loc[isval, self.rf_feats]
-        valtruth = self.props.loc[isval, 'is_mb_pair']
+        valtruth = self.props.loc[isval, "is_mb_pair"]
         metrics = tuple(SCORING_METRICS.values())
         return TrainValProperty(
-                Score(*(m(best_rf, data, truth) for m in metrics)),
-                Score(*(m(best_rf, valdata, valtruth) for m in metrics)))
+            Score(*(m(best_rf, data, truth) for m in metrics)),
+            Score(*(m(best_rf, valdata, valtruth) for m in metrics)),
+        )
 
     def plot_PR(self):
         best_rf = self._rf.best_estimator_
-        isval = self.props['validation']
+        isval = self.props["validation"]
         valdata = self.props.loc[isval, self.rf_feats]
-        valtruth = self.props.loc[isval, 'is_mb_pair']
+        valtruth = self.props.loc[isval, "is_mb_pair"]
         plot_precision_recall_curve(best_rf, valdata, valtruth)
 
     def save_model(self, filename):
-        f = open(filename, 'wb')
+        f = open(filename, "wb")
         pickle.dump(self._rf.best_estimator_, f)
 
 
 SCORING_METRICS = {
-    'accuracy': make_scorer(accuracy_score),
-    'balanced_accuracy': make_scorer(balanced_accuracy_score),
-    'precision': make_scorer(precision_score),
-    'recall': make_scorer(recall_score),
-    'f1': make_scorer(f1_score),
-    'f0_5': make_scorer(fbeta_score, beta=0.5),
-    'f2': make_scorer(fbeta_score, beta=2)
+    "accuracy": make_scorer(accuracy_score),
+    "balanced_accuracy": make_scorer(balanced_accuracy_score),
+    "precision": make_scorer(precision_score),
+    "recall": make_scorer(recall_score),
+    "f1": make_scorer(f1_score),
+    "f0_5": make_scorer(fbeta_score, beta=0.5),
+    "f2": make_scorer(fbeta_score, beta=2),
 }
 
 
@@ -517,15 +598,14 @@ class Score(NamedTuple):
     F2: float
 
     def __str__(self):
-        return 'Score({})'.format(', '.join([
-            '{}={:.3f}'.format(k, v) for k, v in self._asdict().items()
-            ]))
-
+        return "Score({})".format(
+            ", ".join(["{}={:.3f}".format(k, v) for k, v in self._asdict().items()])
+        )
 
 
 def get_ground_truth(cell_labels, buds):
     ncells = len(cell_labels)
-    truth = np.zeros((ncells, ncells),dtype=bool)
+    truth = np.zeros((ncells, ncells), dtype=bool)
     for i, bud in enumerate(buds):
         if bud != 0:
             truth[cell_labels.index(bud), i] = True
