@@ -1,45 +1,67 @@
-# Baby
+# BABY
 
 ## Birth Annotation for Budding Yeast
 
-Neural network code for segmenting buds from brightfield stacks.
+An image processing pipeline for accurate single-cell growth estimation of
+budding cells from bright-field stacks. The Birth Annotator for Budding Yeast
+(BABY) features:
+
+- segmentation of overlapping cells, e.g., where small buds overlap with their mothers/sisters,
+- automated assignment of buds to mothers, and
+- estimation of the time of birth (cytokinesis) from growth rate.
 
 ## Installation
 
-BABY requires Python 3 and [TensorFlow](https://www.tensorflow.org). For some
-versions of TensorFlow, you specifically need Python 3.6.
-
-In any case, it is recommended that you install the package into a virtual
-environment (i.e., `conda create` if you are using Anaconda, or `python3 -m
-venv` otherwise).
-
-By default, BABY will trigger installation of the latest version of
-TensorFlow. Our experience, however, is that performance is best with
-TensorFlow version 1.14. If you want to use this version, first install that
-in your virtual environment by running:
-
-```bash
-> pip install tensorflow==1.14
-```
-
-**NB:** To make use of a GPU you should also follow the [set up
-instructions](https://www.tensorflow.org/install/gpu#windows_setup) for
-installing `tensorflow-gpu`.
-
-Install BABY by first obtaining this repository (e.g., `git clone
+BABY can be used with Python versions 3.6-3.8 (see below for details). If you
+wish to use the latest compatible versions of all packages, BABY can simply be
+installed by first obtaining this repository (e.g., `git clone
 https://git.ecdf.ed.ac.uk/jpietsch/baby.git`), and then using pip:
 
 ```bash
 > pip install baby/
 ```
 
-NB: If you are upgrading, then you may instead need to run: `pip install -U
-baby/`.
+NB: You can update by running: `pip install -U baby/`.
 
 *Developers:* You may prefer to install an editable version:
 
 ```bash
 > pip install -e baby/
+```
+
+**Requirements for Python and TensorFlow**
+
+BABY requires Python 3 and [TensorFlow](https://www.tensorflow.org). The
+models were trained in TensorFlow 1.14.0, but are compatible with versions of
+TensorFlow up to 2.3.4. The required version of Python depends on the version
+of TensorFlow you choose. We recommend either:
+
+- Python 3.6 and TensorFlow 1.14,
+- Python 3.7 and TensorFlow 1.15, or
+- Python 3.8 and TensorFlow 2.3.  
+
+In any case, it is recommended that you install TensorFlow and all other
+required packages into a virtual environment (i.e., `conda create` if you are
+using Anaconda, or `python3 -m venv` otherwise).
+
+By default, BABY will trigger installation of the highest compatible version of
+TensorFlow. If you want to use an earlier version as suggested above, then
+first install that version in your virtual environment by running:
+
+```bash
+> pip install tensorflow==1.14
+```
+
+and then follow the instructions for installing BABY as above.
+
+**NB:** To make use of a GPU you should also follow the other [set up
+instructions](https://www.tensorflow.org/install/gpu).
+
+**NB:** For `tensorflow==1.14`, you will also need to downgrade the default
+version of `h5py`: 
+
+```bash
+> pip install tensorflow==1.14
 ```
 
 ## Run using the Python API
@@ -114,7 +136,15 @@ The primary client implementation is in Matlab.
 
 ## Jupyter notebooks
 
-Training scripts are saved in Jupyter notebooks in the `notebooks` folder. To
-maintain the repository in a clean state, it's probably best to copy these to
-another directory for routine use. If you want to share a notebook, you can
-then specifically add it back to the repository at a useful checkpoint.
+More extensive examples for using BABY can be found in the `python/notebooks`
+folder. To maintain the repository in a clean state, it's probably best to
+copy these to another directory for routine use. If you want to share a
+notebook, you can then specifically add it back to the repository at a useful
+checkpoint.
+
+This notebooks include a complete example for reproducing Figure 1e in the
+associated paper:
+
+Julian M J Pietsch, Alán F Muñoz, Diane-Yayra A Adjavon, Ivan B N Clark, Peter
+S Swain, 2022, A label-free method to track individuals and lineages of
+budding cells (in submission).
