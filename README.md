@@ -10,6 +10,12 @@ budding cells from bright-field stacks. The Birth Annotator for Budding Yeast
 - automated assignment of buds to mothers, and
 - estimation of the time of birth (cytokinesis) from growth rate.
 
+The algorithm is described in:
+
+Julian M J Pietsch, Alán F Muñoz, Diane-Yayra A Adjavon, Ivan B N Clark, Peter
+S Swain, 2022, A label-free method to track individuals and lineages of
+budding cells (in submission).
+
 ## Installation
 
 BABY can be used with Python versions 3.6-3.8 (see below for details). If you
@@ -61,7 +67,8 @@ instructions](https://www.tensorflow.org/install/gpu).
 version of `h5py`: 
 
 ```bash
-> pip install tensorflow==1.14
+> pip uninstall h5py
+> pip install h5py==2.9.0
 ```
 
 ## Run using the Python API
@@ -115,6 +122,18 @@ as an annotated tiled png:
 ...     {k: s[0][k] for k in ('cell_label', 'mother_assign', 'volumes')})
 ```
 
+## Jupyter notebooks
+
+More extensive examples for using BABY can be found in the `python/notebooks`
+folder. To maintain the repository in a clean state, it's probably best to
+copy these to another directory for routine use. If you want to share a
+notebook, you can then specifically add it back to the repository at a useful
+checkpoint.
+
+The notebooks include a [complete
+example](python/notebooks/example-baby-analysis-fig1.ipynb) for reproducing
+Figure 1e in the associated paper.
+
 ## Run via a server
 
 Once installed, you should be able to start a server to accept segmentation
@@ -134,17 +153,3 @@ Server runs by default on [http://0.0.0.0:5101](). HTTP requests need to be
 sent to the correct URL endpoint, but the HTTP API is currently undocumented.
 The primary client implementation is in Matlab.
 
-## Jupyter notebooks
-
-More extensive examples for using BABY can be found in the `python/notebooks`
-folder. To maintain the repository in a clean state, it's probably best to
-copy these to another directory for routine use. If you want to share a
-notebook, you can then specifically add it back to the repository at a useful
-checkpoint.
-
-This notebooks include a complete example for reproducing Figure 1e in the
-associated paper:
-
-Julian M J Pietsch, Alán F Muñoz, Diane-Yayra A Adjavon, Ivan B N Clark, Peter
-S Swain, 2022, A label-free method to track individuals and lineages of
-budding cells (in submission).
