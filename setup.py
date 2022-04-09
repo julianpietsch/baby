@@ -9,7 +9,8 @@ setup(
     entry_points={
         'console_scripts': [
             'baby-phone = baby.server:main',
-            'baby-race = baby.speed_tests:main'
+            'baby-race = baby.speed_tests:main',
+            'baby-fit-grs = baby.postprocessing:main'
             ]
         },
     url='',
@@ -20,13 +21,14 @@ setup(
     long_description='''
 If you publish results that make use of this software or the Birth Annotator
 for Budding Yeast algorithm, please cite:
-Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S Swain,
-2021, Birth Annotator for Budding Yeast (in preparation).
+Julian M J Pietsch, Alán F Muñoz, Diane-Yayra A Adjavon, Ivan B N Clark, Peter
+S Swain, 2022, A label-free method to track individuals and lineages of
+budding cells (in submission).
 
 
 The MIT License (MIT)
 
-Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2022
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -46,14 +48,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
     ''',
-    install_requires=['scipy',
+    install_requires=['tensorflow>=1.14,<2.4',
+                      'scipy',
                       'numpy',
                       'pandas',
                       'scikit-image',
                       'scikit-learn==0.22.2',
                       'tqdm',
-                      'tensorflow>=1.14',
                       'imageio',
-                      'pillow',
-                      'matplotlib']
+                      'pillow<9',
+                      'matplotlib',
+                      'aiohttp',
+                      'gaussianprocessderivatives']
 )
