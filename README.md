@@ -21,19 +21,26 @@ budding cells (in submission).
 BABY can be used with Python versions 3.6-3.8 (see below for details). If you
 wish to use the latest compatible versions of all packages, BABY can simply be
 installed by first obtaining this repository (e.g., `git clone
-https://git.ecdf.ed.ac.uk/jpietsch/baby.git`), and then using pip:
+https://git.ecdf.ed.ac.uk/jpietsch/baby.git`), and then running pip on the 
+repository directory:
 
 ```bash
-> pip install baby/
+> cd baby
+> pip install .
 ```
 
-NB: You can update by running: `pip install -U baby/`.
+NB: The '.' is important!
+
+If you pull new changes, you need to update by running: `pip install -U .` from
+within the repository directory.
 
 *Developers:* You may prefer to install an editable version:
 
 ```bash
-> pip install -e baby/
+> pip install -e .
 ```
+
+This avoids the need to run the update command.
 
 **Requirements for Python and TensorFlow**
 
