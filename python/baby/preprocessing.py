@@ -1,12 +1,14 @@
 # If you publish results that make use of this software or the Birth Annotator
 # for Budding Yeast algorithm, please cite:
-# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
-# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# Pietsch, J.M.J., Muñoz, A.F., Adjavon, D.-Y.A., Farquhar, I., Clark, I.B.N.,
+# and Swain, P.S. (2023). Determining growth rates from bright-field images of
+# budding cells through identifying overlaps. eLife. 12:e79812.
+# https://doi.org/10.7554/eLife.79812
 # 
 # 
 # The MIT License (MIT)
 # 
-# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2023
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -25,25 +27,25 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
+import json
+from itertools import chain
+from typing import NamedTuple, Union
 import numpy as np
 from skimage import img_as_float
 from scipy.ndimage import (
-    generic_filter, minimum_filter, maximum_filter,
+    convolve, minimum_filter, maximum_filter,
     binary_fill_holes, binary_dilation, binary_erosion, binary_closing
 )
 from skimage.measure import regionprops
 from skimage.draw import polygon
 from skimage.morphology import diamond
-from itertools import chain
-from typing import NamedTuple, Union
-import json
 
 from .segmentation import binary_edge
 from .utils import EncodableNamedTuple, jsonify, as_python_object
 
 # Depth-wise structuring elements for square or full connectivity
 dwsquareconn = diamond(1)[..., None]
-dwfullconn = np.ones((3,3,1), dtype='uint8')
+dwfullconn = np.ones((3,3,1), dtype=np.uint8)
 
 def raw_norm(img, info):
     """Keep raw values but scale non-float images to [0, 1]"""
@@ -73,79 +75,38 @@ def robust_norm(img, info, q_outliers=0.04):
     return (img - mid) * (1 - q_outliers) / imrange
 
 
+def robust_norm_dw(img, info, q_outliers=0.04):
+    """Robust normalisation of intensity to [-1,1] applied depth-wise"""
+    img = img.copy().astype('float')
+    hq = q_outliers / 2
+    for i in range(img.shape[2]):
+        low, mid, high = np.quantile(img[:,:,i], (hq, 0.5, 1-hq))
+        imrange = high - low
+        imrange = 1 if imrange == 0 else imrange
+        img[:,:,i] = (img[:,:,i] - mid) * (1 - q_outliers) / imrange
+    return img
+
+
+def connect_pixel_gaps(img):
+    """Connects any 1-pixel gaps in an edge image"""
+    # Connect any 1-pixel gaps:
+    imconn = convolve(img.astype(np.uint8), dwfullconn, mode='constant')
+    imconn = binary_erosion(imconn > 1, dwsquareconn) | img
+    return imconn
+    
+
 def seg_norm(img, info):
     img = img > 0
-    # Connect any 1-pixel gaps:
-    imconn = generic_filter(img.astype('int'), np.sum, footprint=dwfullconn)
-    imconn = binary_erosion(imconn > 1, dwsquareconn) | img
-    return imconn, info
+    return connect_pixel_gaps(img), info
 
 
-def segoutline_flattening(fill_stack, info):
-    """Returns a stack of images in order:
-        edge: edges for all cells flattened into a single layer
-        filled: filled area for all cells flattened into a single layer
-        interiors: filled area excluding the edges
-        overlap: regions occupied by more than one cell
-        budring: edges located between mother and bud centres
-        bud: buds that are are smaller than a fractional threshold of the mother
-    """
-    imsize = fill_stack.shape[0:2]
-    ncells = fill_stack.shape[2]
-    imout = np.zeros(imsize+(6,), dtype='bool')
+def flattener_norm_func(flattener):
+    def norm_func(img, info):
+        img, info = seg_norm(img, info)
+        img = binary_fill_holes(img, dwsquareconn)
+        return flattener(img, info)
 
-    edge_stack = binary_edge(fill_stack, dwsquareconn)
-
-    edge_flat = np.any(edge_stack, axis=2)
-    fill_flat = np.any(fill_stack, axis=2)
-    overlap = np.sum(fill_stack, axis=2)>1
-
-    imout[:,:,0] = edge_flat  # edge
-    imout[:,:,1] = fill_flat  # filled
-    imout[:,:,2] = fill_flat & ~edge_flat & ~overlap  # interiors
-    imout[:,:,3] = overlap  # overlap
-
-    bud_pairs = [(m, np.nonzero(np.array(info.get('cellLabels', []))==b)[0][0])
-                 for m, b in enumerate(info.get('buds', []) or []) if b>0]
-
-    cell_info = [
-        regionprops(fill_stack[:,:,i].astype('int32'), coordinates='rc')
-        for i in range(fill_stack.shape[2])
-    ]
-    cell_info = [p[0] if len(p)>0 else None for p in cell_info]
-
-    for m, b in bud_pairs:
-        if cell_info[m] is None or cell_info[b] is None:
-            # Label possible transformed outside field of view by augmentation
-            continue
-        if m == b:
-            raise Exception('a mother cannot be its own bud')
-        m_centre = np.array(cell_info[m].centroid).T
-        b_centre = np.array(cell_info[b].centroid).T
-        r_width = cell_info[b].minor_axis_length*0.25
-        r_hvec = b_centre-m_centre
-        r_wvec = np.matmul(np.array([[0,-1],[1,0]]), r_hvec)
-        if np.linalg.norm(r_wvec) == 0:
-            raise Exception('mother and bud have coincident centres')
-        r_wvec = r_width*r_wvec/np.linalg.norm(r_wvec)
-        r_points = np.zeros((2,4))
-        r_points[:,0] = m_centre-0.5*r_wvec
-        r_points[:,1] = r_points[:,0] + r_hvec
-        r_points[:,2] = r_points[:,1] + r_wvec
-        r_points[:,3] = r_points[:,2] - r_hvec
-        r_inds, c_inds = polygon(r_points[0,:], r_points[1,:], imsize)
-        r_im = np.zeros(fill_stack.shape[0:2], dtype='bool')
-        r_im[r_inds, c_inds] = 1
-
-        # Bud junction
-        bj = (edge_stack[:,:,m] | edge_stack[:,:,b]) & r_im
-        imout[:,:,4] |= binary_dilation(binary_closing(bj))
-
-        # Smaller buds
-        if (cell_info[b].area / cell_info[m].area) < 0.7:
-            imout[:,:,5] |= fill_stack[:,:,b]
-
-    return imout
+    return norm_func
 
 
 @EncodableNamedTuple
@@ -264,6 +225,16 @@ class SegmentationFlattening(object):
 
     def names(self):
         return tuple(t.name for t in self.targets)
+
+    def group_names(self, exclude_budonly=False):
+        groups = self.groupdef.items()
+        if exclude_budonly:
+            groups = [(k, g) for k, g in groups if not g.budonly]
+        sort_lower = sorted(
+            groups, key=lambda i: i[1].lower, reverse=True)
+        sort_upper = sorted(
+            sort_lower, key=lambda i: i[1].upper, reverse=True)
+        return next(zip(*sort_upper))
 
     def getGroupTargets(self, group, propfilter=None):
         assert group in self.groupdef, \
@@ -438,10 +409,77 @@ class SegmentationFlattening(object):
         return np.dstack(targetims)
 
 
-def flattener_norm_func(flattener):
-    def norm_func(img, info):
-        img, info = seg_norm(img, info)
-        img = binary_fill_holes(img, dwsquareconn)
-        return flattener(img, info)
+##################
+### DEPRECATED ###
+##################
 
-    return norm_func
+
+def segoutline_flattening(fill_stack, info):
+    """Returns a stack of images in order.
+
+     DEPRECATED
+     
+    Args:
+        edge: edges for all cells flattened into a single layer
+        filled: filled area for all cells flattened into a single layer
+        interiors: filled area excluding the edges
+        overlap: regions occupied by more than one cell
+        budring: edges located between mother and bud centres
+        bud: buds that are are smaller than a fractional threshold of the mother
+    """
+    imsize = fill_stack.shape[0:2]
+    ncells = fill_stack.shape[2]
+    imout = np.zeros(imsize+(6,), dtype='bool')
+
+    edge_stack = binary_edge(fill_stack, dwsquareconn)
+
+    edge_flat = np.any(edge_stack, axis=2)
+    fill_flat = np.any(fill_stack, axis=2)
+    overlap = np.sum(fill_stack, axis=2)>1
+
+    imout[:,:,0] = edge_flat  # edge
+    imout[:,:,1] = fill_flat  # filled
+    imout[:,:,2] = fill_flat & ~edge_flat & ~overlap  # interiors
+    imout[:,:,3] = overlap  # overlap
+
+    bud_pairs = [(m, np.nonzero(np.array(info.get('cellLabels', []))==b)[0][0])
+                 for m, b in enumerate(info.get('buds', []) or []) if b>0]
+
+    cell_info = [
+        regionprops(fill_stack[:,:,i].astype('int32'), coordinates='rc')
+        for i in range(fill_stack.shape[2])
+    ]
+    cell_info = [p[0] if len(p)>0 else None for p in cell_info]
+
+    for m, b in bud_pairs:
+        if cell_info[m] is None or cell_info[b] is None:
+            # Label possible transformed outside field of view by augmentation
+            continue
+        if m == b:
+            raise Exception('a mother cannot be its own bud')
+        m_centre = np.array(cell_info[m].centroid).T
+        b_centre = np.array(cell_info[b].centroid).T
+        r_width = cell_info[b].minor_axis_length*0.25
+        r_hvec = b_centre-m_centre
+        r_wvec = np.matmul(np.array([[0,-1],[1,0]]), r_hvec)
+        if np.linalg.norm(r_wvec) == 0:
+            raise Exception('mother and bud have coincident centres')
+        r_wvec = r_width*r_wvec/np.linalg.norm(r_wvec)
+        r_points = np.zeros((2,4))
+        r_points[:,0] = m_centre-0.5*r_wvec
+        r_points[:,1] = r_points[:,0] + r_hvec
+        r_points[:,2] = r_points[:,1] + r_wvec
+        r_points[:,3] = r_points[:,2] - r_hvec
+        r_inds, c_inds = polygon(r_points[0,:], r_points[1,:], imsize)
+        r_im = np.zeros(fill_stack.shape[0:2], dtype='bool')
+        r_im[r_inds, c_inds] = 1
+
+        # Bud junction
+        bj = (edge_stack[:,:,m] | edge_stack[:,:,b]) & r_im
+        imout[:,:,4] |= binary_dilation(binary_closing(bj))
+
+        # Smaller buds
+        if (cell_info[b].area / cell_info[m].area) < 0.7:
+            imout[:,:,5] |= fill_stack[:,:,b]
+
+    return imout

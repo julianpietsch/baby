@@ -1,14 +1,14 @@
-#!/usr/bin/env python
-
 # If you publish results that make use of this software or the Birth Annotator
 # for Budding Yeast algorithm, please cite:
-# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
-# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# Pietsch, J.M.J., Muñoz, A.F., Adjavon, D.-Y.A., Farquhar, I., Clark, I.B.N.,
+# and Swain, P.S. (2023). Determining growth rates from bright-field images of
+# budding cells through identifying overlaps. eLife. 12:e79812.
+# https://doi.org/10.7554/eLife.79812
 # 
 # 
 # The MIT License (MIT)
 # 
-# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2023
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -27,6 +27,8 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+# IN THE SOFTWARE.
 
 '''
 TrackerCoordinator class to coordinate cell tracking and bud assignment.
@@ -43,8 +45,11 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from baby.errors import BadOutput
 from baby.tracker.utils import calc_barycentre, pick_baryfun
+from baby import modelsets
 
-models_path = join(dirname(__file__), '../models')
+
+DEFAULT_MODELSET = 'yeast-alcatras-brightfield-EMCCD-60x-5z'
+
 
 class FeatureCalculator:
     '''
@@ -94,12 +99,15 @@ class FeatureCalculator:
         if 'area' in self.outfeats:
             self.aind = self.outfeats.index('area')
 
-    def load_model(self, path, fname):
+    def load_model(self, fname, path=None):
+        if path is not None:
             model_file = join(path, fname)
-            with open(model_file, 'rb') as file_to_load:
-                model = pickle.load(file_to_load)
+        else:
+            model_file = fname
+        with open(model_file, 'rb') as file_to_load:
+            model = pickle.load(file_to_load)
 
-            return model
+        return model
 
     def calc_feats_from_mask(self, masks, feats2use=None, trapfeats=None,
                              norm=True, px_size=None):
@@ -216,6 +224,7 @@ class FeatureCalculator:
 
         return feats
 
+
 class CellTracker(FeatureCalculator):
     '''
     Class used to manage cell tracking. You can call it using an existing model or
@@ -264,24 +273,26 @@ class CellTracker(FeatureCalculator):
         if extra_feats is None:
             extra_feats = ()
 
-        if type(model) is str or type(model) is PosixPath: 
-            with open(Path(model), 'rb') as f:
-                model = pickle.load(f)
+        if isinstance(model, (Path, str)): 
+            model = self.load_model(model)
 
-        if type(bak_model) is str or type(bak_model) is PosixPath: 
-            with open(Path(bak_model), 'rb') as f:
-                bak_model = pickle.load(f)
+        if isinstance(bak_model, (Path, str)):
+            bak_model = self.load_model(bak_model)
 
         if aweights is None:
             self.aweights = None
 
         if feats2use is None: # Ignore this block when training
             if model is None:
-                model = self.load_model( models_path,
-                                         'ct_rf_20210201_12.pkl')
+                default_params = modelsets.get_params(DEFAULT_MODELSET)
+                model_file = default_params['celltrack_model_file']
+                model_file = modelsets.resolve(model_file, DEFAULT_MODELSET)
+                model = self.load_model(model_file)
             if bak_model is None:
-                bak_model = self.load_model( models_path,
-                                         'ct_rf_20210125_9.pkl')
+                default_params = modelsets.get_params(DEFAULT_MODELSET)
+                bak_file = default_params['celltrack_backup_model_file']
+                bak_file = modelsets.resolve(bak_file, DEFAULT_MODELSET)
+                bak_model = self.load_model(bak_file)
             self.model = model
             self.bak_model = bak_model
 
@@ -542,17 +553,20 @@ class CellTracker(FeatureCalculator):
             return ([], [], max_lbl)
         return (new_lbls, new_feats, new_max)
 
+
 class BudTracker(FeatureCalculator):
     def __init__(self,
                  model=None,
                  feats2use=None,
                  **kwargs):
 
-        if model is None:
-            model_file = join(models_path,
-                                      'mb_model_20201022.pkl')
-            with open(model_file, 'rb') as file_to_load:
-                model = pickle.load(file_to_load)
+        if isinstance(model, (Path, str)):
+            model = self.load_model(model)
+        elif model is None:
+            default_params = modelsets.get_params(DEFAULT_MODELSET)
+            model_file = default_params['budassign_model_file']
+            model_file = modelsets.resolve(model_file, DEFAULT_MODELSET)
+            model = self.load_model(model_file)
         self.model = model
 
         if feats2use is None:
@@ -718,6 +732,7 @@ class BudTracker(FeatureCalculator):
 
         return r_points
 
+
 class MasterTracker(FeatureCalculator):
     '''
     Coordinates the data transmission from CellTracker to BudTracker to
@@ -842,6 +857,8 @@ class MasterTracker(FeatureCalculator):
                 p_budneck, p_bud, masks, feats[:, self.bt_idx])
             lblinds = np.array(new_lbls) - 1  # new_lbls are indexed from 1
             lifetime[lblinds] += 1
+            # TODO: the following may lead to values of p_is_mother higher
+            # than one, and hence negative ba_probs below
             p_is_mother[lblinds] = np.maximum(p_is_mother[lblinds],
                                               ba_probs.sum(1))
             p_was_bud[lblinds] = np.maximum(p_was_bud[lblinds],
@@ -875,6 +892,9 @@ class MasterTracker(FeatureCalculator):
         if assign_mothers:
             if max_lbl > 0:
                 # Calculate mother assignments for this time point
+                # TODO: this should proceed more like the IoU assignment
+                # algorithm to guarantee that two buds will not be assigned to
+                # the same mother
                 ma = ba_cum[0:max_lbl, 0:max_lbl].argmax(0) + 1
                 # Cell must have been a bud and been present for at least
                 # min_bud_tps
@@ -890,6 +910,163 @@ class MasterTracker(FeatureCalculator):
             output['mother_assign'] = ma.tolist()
 
         if return_baprobs:
+            output['p_bud_assign'] = ba_probs.tolist()
+
+        return output
+
+
+class MMTracker(FeatureCalculator):
+    '''
+    Tracker specialised for mother machines. Does not use CellTracker or
+    BudTracker, but a custom algorithm adapted from Sean Murray's group (Robin
+    Koehler's code)
+
+    input
+    :ctrack_args: dict with arguments to pass on to CellTracker constructor
+        if None it passes all the features to use
+    :btrack_args: dict with arguments to pass on to BudTracker constructor
+        if None it passes all the features to use
+    :**kwargs: additional arguments passed to FeatureCalculator constructor
+    '''
+    def __init__(self, growthrate=0.1, tol_imbalance=20, nstepsback=1, **kwargs):
+        self.nstepsback = nstepsback
+        self.growthrate = growthrate
+        self.tol_imbalance = tol_imbalance
+        feats2use = ('centroid', 'major_axis_length', 'minor_axis_length')
+        super().__init__(feats2use, **kwargs)
+
+    def step_trackers(self,
+                      masks,
+                      p_budneck=None,
+                      p_bud=None,
+                      state=None,
+                      assign_mothers=False,
+                      return_baprobs=False,
+                      keep_full_state=False):
+        '''
+        Calculate features and track cells and budassignments
+
+        For compatibility with the existing MasterTracker, we retain some
+        unused input arguments.
+
+        :masks: 3d ndarray (ncells, size_x, size_y) containing cell masks
+        :p_budneck: NOT REQUIRED
+        :p_bud: NOT REQUIRED
+        :state: running state for the tracker, or None for initialisation
+        :assign_mothers: whether to include mother assignments in the returned
+            returns
+        :return_baprobs: whether to include bud assignment probability matrix
+            in the returned output
+
+        returns a dict consisting of
+
+        :cell_label: list of int, the tracked global ID for each cell mask
+        :state: the updated state to be used in a subsequent step
+        :mother_assign: (optional) list of int, specifying the assigned mother
+            for each cell
+        :p_bud_assign: (optional) matrix (list of lists of floats), bud assignment
+            probability matrix from `predict_mother_bud`
+        '''
+
+        gr = np.exp(self.growthrate)
+        tol = self.tol_imbalance
+
+        if state is None:
+            state = {}
+
+        new_lbl = state.get('new_lbl', 1)
+        cell_lbls = state.get('cell_lbls', [[]])
+        prev_feats = state.get('prev_feats', [np.zeros((0, self.ntfeats))])
+        mothers = state.get('mothers', [])
+
+        # Get features for cells at this time point
+        feats = self.calc_feats_from_mask(masks, norm=False)
+
+        N_prev = prev_feats[-1].shape[0]
+        N_this = feats.shape[0]
+
+        prev_lbls = np.array(cell_lbls[-1])
+        this_lbls = -np.ones(N_this, dtype='int64')
+        Ci = self.xind
+        cInd_prev = np.argsort(-prev_feats[-1][:,Ci])
+        cInd_this = np.argsort(-feats[:,Ci])
+        Wi = self.outfeats.index('major_axis_length')
+        Ws_prev = prev_feats[-1][:,Wi][cInd_prev]
+        Ws_this = feats[:,Wi][cInd_this]
+        c_prev, c_this = 0, 0
+        aggW_prev, aggW_this = 0, 0
+        aggC_prev, aggC_this = [], []
+
+        while True:
+            if aggW_prev < aggW_this:
+                if c_prev >= N_prev:
+                    break
+                aggW_prev += Ws_prev[c_prev]
+                aggC_prev.append(cInd_prev[c_prev])
+                c_prev += 1
+            else:
+                if c_this >= N_this:
+                    break
+                aggW_this += Ws_this[c_this]
+                aggC_this.append(cInd_this[c_this])
+                c_this += 1
+
+            balance = aggW_prev * gr - aggW_this
+
+            # if balance is found
+            if balance >= -tol and balance <= tol and aggW_prev != 0 and aggW_this != 0:
+                if len(aggC_prev) == 1 and len(aggC_this) == 1:
+                    this_lbls[aggC_this[0]] = prev_lbls[aggC_prev[0]]
+                elif len(aggC_prev) == 1 and len(aggC_this) == 2:
+                    this_lbls[aggC_this[0]] = prev_lbls[aggC_prev[0]]
+                    this_lbls[aggC_this[1]] = new_lbl
+                    mothers.append((new_lbl, prev_lbls[aggC_prev[0]]))
+                    new_lbl += 1
+                else:
+                    # In any other ambiguous cases, mark cells simply as new tracks
+                    for c in aggC_this:
+                        this_lbls[c] = new_lbl
+                        new_lbl += 1
+
+                aggW_prev, aggW_this = 0, 0
+                aggC_prev, aggC_this = [], []
+        
+        # Mark any remaining unbalanced/extra cells as new tracks
+        for c in aggC_this + cInd_this[list(range(c_this, N_this))].tolist():
+            this_lbls[c] = new_lbl
+            new_lbl += 1
+
+        this_lbls = this_lbls.tolist()
+
+        if not keep_full_state:
+            cell_lbls = cell_lbls[-self.nstepsback:]
+            prev_feats = prev_feats[-self.nstepsback:]
+
+        # Finally update the state
+        state = {
+            'new_lbl': new_lbl,
+            'cell_lbls': cell_lbls + [this_lbls],
+            'prev_feats': prev_feats + [feats],
+            'mothers': mothers
+        }
+
+        output = {
+            'cell_label': this_lbls,
+            'state': state
+        }
+
+        if assign_mothers:
+            ma = np.zeros(new_lbl - 1, dtype='int64')
+            for d, m in mothers:
+                ma[d - 1] = m
+
+            if np.any(ma == np.arange(1, len(ma) + 1)):
+                raise BadOutput('Daughter has been assigned as mother to itself')
+
+            output['mother_assign'] = ma.tolist()
+
+        if return_baprobs:
+            ba_probs = np.zeros((N_this, N_this))
             output['p_bud_assign'] = ba_probs.tolist()
 
         return output

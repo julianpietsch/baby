@@ -1,12 +1,14 @@
 # If you publish results that make use of this software or the Birth Annotator
 # for Budding Yeast algorithm, please cite:
-# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
-# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# Pietsch, J.M.J., Muñoz, A.F., Adjavon, D.-Y.A., Farquhar, I., Clark, I.B.N.,
+# and Swain, P.S. (2023). Determining growth rates from bright-field images of
+# budding cells through identifying overlaps. eLife. 12:e79812.
+# https://doi.org/10.7554/eLife.79812
 # 
 # 
 # The MIT License (MIT)
 # 
-# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2023
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -47,6 +49,7 @@ class BabyCrawler(object):
 
     def step(self,
              bf_img_batch,
+             pixel_size=None,
              with_edgemasks=False,
              assign_mothers=False,
              return_baprobs=False,
@@ -92,20 +95,24 @@ class BabyCrawler(object):
         output = []
 
         if parallel:
+            kwargs = {k: v for k, v in kwargs.items() if k in {'njobs'}}
             seg_trk_gen = self.baby_brain.segment_and_track_parallel(
                 bf_img_batch,
                 tracker_states=self.tracker_states,
                 yield_next=True,
+                pixel_size=pixel_size,
                 yield_edgemasks=with_edgemasks,
                 yield_volumes=with_volumes,
                 assign_mothers=assign_mothers,
                 return_baprobs=return_baprobs,
-                refine_outlines=refine_outlines)
+                refine_outlines=refine_outlines,
+                **kwargs)
         else:
             seg_trk_gen = self.baby_brain.segment_and_track(
                 bf_img_batch,
                 tracker_states=self.tracker_states,
                 yield_next=True,
+                pixel_size=pixel_size,
                 yield_edgemasks=with_edgemasks,
                 yield_volumes=with_volumes,
                 assign_mothers=assign_mothers,

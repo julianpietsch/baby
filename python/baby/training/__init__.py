@@ -1,12 +1,14 @@
 # If you publish results that make use of this software or the Birth Annotator
 # for Budding Yeast algorithm, please cite:
-# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
-# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# Pietsch, J.M.J., Muñoz, A.F., Adjavon, D.-Y.A., Farquhar, I., Clark, I.B.N.,
+# and Swain, P.S. (2023). Determining growth rates from bright-field images of
+# budding cells through identifying overlaps. eLife. 12:e79812.
+# https://doi.org/10.7554/eLife.79812
 # 
 # 
 # The MIT License (MIT)
 # 
-# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2023
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -35,7 +37,7 @@ It includes the following trainers
 * `HyperParameterTrainer`: CNN hyper-parameters
 * `CNNTrainer`: CNN using gradient descent to optimize for a given loss
 * `SegmentationTrainer`: hyper-parameters for post-processing of CNN Output
-into cell instances and attributes
+    into cell instances and attributes
 
 Given the appropriate inputs, each of these can be trained separately.
 This is useful for fine-tuning or re-training parts separately.
@@ -43,8 +45,10 @@ This is useful for fine-tuning or re-training parts separately.
 For training the entire framework at once, it is recommended to use the
 `BabyTrainer` class, which is also aliased as `Nursery`.
 """
+from .utils import fix_tf_rtx_gpu_bug
 from .smoothing_model_trainer import SmoothingModelTrainer
 from .flattener_trainer import FlattenerTrainer
+from .segmentation_trainer import SegmentationTrainer
 import tensorflow as tf
 if tf.__version__.startswith('1'):
     from .v1_hyper_parameter_trainer import HyperParamV1 \
@@ -52,7 +56,4 @@ if tf.__version__.startswith('1'):
 else:
     from .hyper_parameter_trainer import HyperParameterTrainer
 from .cnn_trainer import CNNTrainer
-
-from .training import *
-from .utils import fix_tf_rtx_gpu_bug
-
+from baby.training.training import BabyTrainer, Nursery

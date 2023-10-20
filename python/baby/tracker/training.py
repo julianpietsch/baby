@@ -2,13 +2,15 @@
 
 # If you publish results that make use of this software or the Birth Annotator
 # for Budding Yeast algorithm, please cite:
-# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
-# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# Pietsch, J.M.J., Muñoz, A.F., Adjavon, D.-Y.A., Farquhar, I., Clark, I.B.N.,
+# and Swain, P.S. (2023). Determining growth rates from bright-field images of
+# budding cells through identifying overlaps. eLife. 12:e79812.
+# https://doi.org/10.7554/eLife.79812
 # 
 # 
 # The MIT License (MIT)
 # 
-# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2023
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -42,7 +44,7 @@ from baby.io import load_tiled_image
 from baby.tracker.utils import pick_baryfun, calc_barycentre
 from baby.training.utils import TrainValProperty, TrainValTestProperty
 from baby.errors import BadProcess, BadParam
-from .core import CellTracker, BudTracker
+from .core import CellTracker
 
 from .benchmark import CellBenchmarker
 
@@ -55,8 +57,14 @@ from sklearn.svm import SVC#, LinearSVC
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import (
     make_scorer, fbeta_score, accuracy_score, balanced_accuracy_score,
-    precision_score, recall_score, f1_score, plot_precision_recall_curve
+    precision_score, recall_score, f1_score
 )
+import sklearn
+if int(sklearn.__version__[0]) > 0:
+    from sklearn.metrics import PrecisionRecallDisplay
+    plot_precision_recall_curve = PrecisionRecallDisplay.from_estimator
+else:
+    from sklearn.metrics import plot_precision_recall_curve
 
 class CellTrainer(CellTracker):
     '''
@@ -252,7 +260,7 @@ class CellTrainer(CellTracker):
     def explore_hyperparams(self, model_type = 'rf'):
         self.model_type = model_type
         truth, data = *zip(*self.train),
-        if self.model_type is 'SVC':
+        if self.model_type == 'SVC':
             model = SVC(probability = True, shrinking=False,
                         verbose=True, random_state=1)
             param_grid = {
@@ -263,7 +271,7 @@ class CellTrainer(CellTracker):
               'gamma': [1, 0.01, 0.0001],
               'kernel': ['rbf', 'sigmoid']
             }
-        elif model_type is 'rf':
+        elif model_type == 'rf':
             model = RandomForestClassifier(n_estimators=15,
                                     criterion='gini',
                                     max_depth=3,
@@ -317,208 +325,6 @@ class CellTrainer(CellTracker):
                                                 self.model.best_estimator_)
         return self._benchmarker
 
-
-
-class BudTrainer(BudTracker):
-    '''
-    :props_file: File where generated property table will be saved
-    :kwargs: Additional arguments passed onto the parent Tracker; `px_size` is
-        especially useful.
-    '''
-
-    def __init__(self, props_file=None, **kwargs):
-        super().__init__(**kwargs)
-        # NB: we inherit self.feats2use from CellTracker class
-        self.props_file = props_file
-        self.rf_feats = ["p_bud_mat", "size_ratio_mat", "p_budneck_mat",
-                "budneck_ratio_mat", "adjacency_mat"]
-
-    @property
-    def props_file(self):
-        return getattr(self, '_props_file')
-
-    @props_file.setter
-    def props_file(self, filename):
-        if filename is not None:
-            self._props_file = Path(filename)
-
-    @property
-    def props(self):
-        if getattr(self, '_props', None) is None:
-            if self.props_file and self.props_file.is_file():
-                self.props = pd.read_csv(self.props_file)
-            else:
-                raise BadProcess(
-                        'The property table has not yet been generated')
-        return self._props
-
-    @props.setter
-    def props(self, props):
-        props = pd.DataFrame(props)
-        required_cols = self.rf_feats + ['is_mb_pair', 'validation']
-        if not all(c in props for c in required_cols):
-            raise BadParam(
-                '"props" does not have all required columns: {}'.format(
-                    ', '.join(required_cols)))
-        self._props = props
-        if self.props_file:
-            props.to_csv(self.props_file)
-
-    def generate_property_table(self, data, flattener, val_data=None):
-        '''Generates properties table that gets used for training
-
-        :data: List or generator of `baby.training.SegExample` tuples
-        :flattener: Instance of a `baby.preprocessing.SegmentationFlattening`
-            object describing the targets of the CNN in data
-        '''
-        tnames = flattener.names()
-        i_budneck = tnames.index('bud_neck')
-        bud_target = 'sml_fill' if 'sml_fill' in tnames else 'sml_inte'
-        i_bud = tnames.index(bud_target)
-
-        if val_data is not None:
-            data = TrainValProperty(data, val_data)
-        if isinstance(data, (TrainValProperty, TrainValTestProperty)):
-            data = chain(zip(repeat(False), data.train),
-                         zip(repeat(True), data.val))
-        else:
-            data = zip(repeat(None), data)
-
-        p_list = []
-        for is_val, seg_example in data:
-            if len(seg_example.target) < 2:
-                # Skip if no pairs are present
-                continue
-            mb_stats = self.calc_mother_bud_stats(seg_example.pred[i_budneck],
-                    seg_example.pred[i_bud], seg_example.target)
-            p = pd.DataFrame(mb_stats, columns=self.rf_feats)
-            p['validation'] = is_val
-
-            # "cellLabels" specifies the label for each mask
-            cell_labels = seg_example.info.get('cellLabels', []) or []
-            if type(cell_labels) is int:
-                cell_labels = [cell_labels]
-            # "buds" specifies the label of the bud for each mask
-            buds = seg_example.info.get('buds', []) or []
-            if type(buds) is int:
-                buds = [buds]
-
-            # Build a ground truth matrix identifying mother-bud pairs
-            ncells = len(seg_example.target)
-            is_mb_pair = np.zeros((ncells, ncells), dtype=bool)
-            mb_inds = [
-                (i, cell_labels.index(b))
-                for i, b in enumerate(buds)
-                if b > 0 and b in cell_labels
-            ]
-            if len(mb_inds) > 0:
-                mother_inds, bud_inds = zip(*mb_inds)
-                is_mb_pair[mother_inds, bud_inds] = True
-            p['is_mb_pair'] = is_mb_pair.flatten()
-
-            # Ignore any rows containing NaNs
-            nanrows = np.isnan(mb_stats).any(axis=1)
-            if (p['is_mb_pair'] & nanrows).any():
-                id_keys = ('experimentID', 'position', 'trap', 'tp')
-                info = seg_example.info
-                img_id = ' / '.join(
-                        [k + ': ' + str(info[k]) for k in id_keys if k in info])
-                warn('Mother-bud pairs omitted due to feature NaNs')
-                print('Mother-bud pair omitted in "{}"'.format(img_id))
-            p = p.loc[~nanrows, :]
-            p_list.append(p)
-
-        props = pd.concat(p_list, ignore_index=True)
-        # TODO: should search for any None values in validation column and
-        # assign a train-validation split to those rows
-
-        self.props = props # also saves
-
-    def explore_hyperparams(self, hyper_param_target='precision'):
-        # Train bud assignment model on validation data, since this more
-        # closely represents real-world performance of the CNN:
-        data = self.props.loc[self.props['validation'], self.rf_feats]
-        truth = self.props.loc[self.props['validation'], 'is_mb_pair']
-
-        rf = RandomForestClassifier(n_estimators=15,
-                                    criterion='gini',
-                                    max_depth=3,
-                                    class_weight='balanced')
-
-        param_grid = {
-            'n_estimators': [6, 15, 50, 100],
-            'max_features': ['auto', 'sqrt', 'log2'],
-            'max_depth': [2, 3, 4],
-            'class_weight': [None, 'balanced', 'balanced_subsample']
-        }
-
-        def get_balanced_best_index(cv_results_):
-            '''Find a model balancing F1 score and speed'''
-            df = pd.DataFrame(cv_results_)
-            best_score = df.iloc[df.mean_test_f1.idxmax(), :]
-            thresh = best_score.mean_test_f1 - 0.1 * best_score.std_test_f1
-            return df.loc[df.mean_test_f1 > thresh, 'mean_score_time'].idxmin()
-
-        self._rf = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5,
-                scoring=SCORING_METRICS, refit=hyper_param_target)
-        self._rf.fit(data, truth)
-
-        df = pd.DataFrame(self._rf.cv_results_)
-        disp_cols = [c for c in df.columns if c.startswith('mean_')
-                     or c.startswith('param_')]
-        print(df.loc[self._rf.best_index_, disp_cols])
-
-    def performance(self):
-        if not isinstance(getattr(self, '_rf', None), GridSearchCV):
-            raise BadProcess('"explore_hyperparams" has not been run')
-
-        best_rf = self._rf.best_estimator_
-        isval = self.props['validation']
-        data = self.props.loc[~isval, self.rf_feats]
-        truth = self.props.loc[~isval, 'is_mb_pair']
-        valdata = self.props.loc[isval, self.rf_feats]
-        valtruth = self.props.loc[isval, 'is_mb_pair']
-        metrics = tuple(SCORING_METRICS.values())
-        return TrainValProperty(
-                Score(*(m(best_rf, data, truth) for m in metrics)),
-                Score(*(m(best_rf, valdata, valtruth) for m in metrics)))
-
-    def plot_PR(self):
-        best_rf = self._rf.best_estimator_
-        isval = self.props['validation']
-        valdata = self.props.loc[isval, self.rf_feats]
-        valtruth = self.props.loc[isval, 'is_mb_pair']
-        plot_precision_recall_curve(best_rf, valdata, valtruth)
-
-    def save_model(self, filename):
-        f = open(filename, 'wb')
-        pickle.dump(self._rf.best_estimator_, f)
-
-
-SCORING_METRICS = {
-    'accuracy': make_scorer(accuracy_score),
-    'balanced_accuracy': make_scorer(balanced_accuracy_score),
-    'precision': make_scorer(precision_score),
-    'recall': make_scorer(recall_score),
-    'f1': make_scorer(f1_score),
-    'f0_5': make_scorer(fbeta_score, beta=0.5),
-    'f2': make_scorer(fbeta_score, beta=2)
-}
-
-
-class Score(NamedTuple):
-    accuracy: float
-    balanced_accuracy: float
-    precision: float
-    recall: float
-    F1: float
-    F0_5: float
-    F2: float
-
-    def __str__(self):
-        return 'Score({})'.format(', '.join([
-            '{}={:.3f}'.format(k, v) for k, v in self._asdict().items()
-            ]))
 
 
 

@@ -1,12 +1,14 @@
 # If you publish results that make use of this software or the Birth Annotator
 # for Budding Yeast algorithm, please cite:
-# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
-# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# Pietsch, J.M.J., Muñoz, A.F., Adjavon, D.-Y.A., Farquhar, I., Clark, I.B.N.,
+# and Swain, P.S. (2023). Determining growth rates from bright-field images of
+# budding cells through identifying overlaps. eLife. 12:e79812.
+# https://doi.org/10.7554/eLife.79812
 # 
 # 
 # The MIT License (MIT)
 # 
-# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2023
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -28,34 +30,29 @@
 import pickle
 from collections import namedtuple, Counter
 from os.path import isfile
+import json
+from pathlib import Path
 
 import baby
 import numpy as np
 import pytest
-from baby.brain import default_params
 from baby.io import load_paired_images
-from baby.morph_thresh_seg import MorphSegGrouped
+from baby.morph_thresh_seg import MorphSegGrouped, SegmentationParameters
 from baby.preprocessing import raw_norm, SegmentationFlattening
 from baby.tracker.core import MasterTracker
+from baby.utils import as_python_object
 
-MODEL_DIR = baby.model_path()
 
 TrackerEnv = namedtuple('TrackerEnv', ['masks', 'p_budneck', 'p_bud'])
-
-
-def resolve_file(filename):
-    if not isfile(filename):
-        filename = MODEL_DIR / filename
-    assert isfile(filename)
-    return filename
+DEFAULT_MODELSET = 'yeast-alcatras-brightfield-EMCCD-60x-5z'
 
 
 @pytest.fixture(scope='module')
 def evolve60env(modelsets, image_dir):
-    mset = modelsets['evolve_brightfield_60x_5z']
+    mset = modelsets.get_params(DEFAULT_MODELSET)
 
     # Load flattener
-    ff = resolve_file(mset['flattener_file'])
+    ff = modelsets.resolve(mset['flattener_file'], DEFAULT_MODELSET)
     flattener = SegmentationFlattening(ff)
 
     tnames = flattener.names()
@@ -64,10 +61,16 @@ def evolve60env(modelsets, image_dir):
     i_bud = tnames.index(bud_target)
 
     # Load BabyBrain param defaults
-    params = default_params.copy()
-    params.update(mset.get('params', {}))
+    params = mset['params']
+    if type(params) == dict:
+        params = SegmentationParameters(**params)
+    if type(params) != SegmentationParameters:
+        param_file = modelsets.resolve(mset['params'], DEFAULT_MODELSET)
+        with open(param_file, 'rt') as f:
+            params = json.load(f, object_hook=as_python_object)
+    assert type(params) == SegmentationParameters
 
-    segmenter = MorphSegGrouped(flattener, return_masks=True, **params)
+    segmenter = MorphSegGrouped(flattener, params=params, return_masks=True)
 
     # Load CNN outputs
     impairs = load_paired_images(image_dir.glob('evolve_test[FG]_tp*.png'),
@@ -94,10 +97,10 @@ def evolve60env(modelsets, image_dir):
     trkF, trkG = trks
 
     # Load the celltrack and budassign models
-    ctm_file = resolve_file(mset['celltrack_model_file'])
+    ctm_file = modelsets.resolve(mset['celltrack_model_file'], DEFAULT_MODELSET)
     with open(ctm_file, 'rb') as f:
         ctm = pickle.load(f)
-    bam_file = resolve_file(mset['budassign_model_file'])
+    bam_file = modelsets.resolve(mset['budassign_model_file'], DEFAULT_MODELSET)
     with open(bam_file, 'rb') as f:
         bam = pickle.load(f)
 

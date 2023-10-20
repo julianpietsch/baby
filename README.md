@@ -12,92 +12,97 @@ budding cells from bright-field stacks. The Birth Annotator for Budding Yeast
 
 The algorithm is described in:
 
-Julian M J Pietsch, Alán F Muñoz, Diane-Yayra A Adjavon, Ivan B N Clark, Peter
-S Swain, 2022, A label-free method to track individuals and lineages of
-budding cells (in submission).
+[Julian MJ Pietsch, Alán F Muñoz, Diane-Yayra A Adjavon, Iseabail Farquhar,
+Ivan BN Clark, Peter S Swain. (2023). Determining growth rates from
+bright-field images of budding cells through identifying overlaps. eLife.
+12:e79812.](https://doi.org/10.7554/eLife.79812)
+
 
 ## Installation
 
-BABY can be used with Python versions 3.6-3.8 (see below for details). If you
-wish to use the latest compatible versions of all packages, BABY can simply be
-installed by first obtaining this repository (e.g., `git clone
-https://git.ecdf.ed.ac.uk/jpietsch/baby.git`), and then running pip on the 
-repository directory:
+We recommend installing BABY and all its requirements in a virtual environment
+(e.g., `conda create` if you are using Anaconda, or `python3 -m venv` otherwise).
+
+If you do not have a GPU and simply wish to use the latest compatible versions
+of all packages, BABY can be installed by first obtaining this repository
+(e.g., `git clone https://git.ecdf.ed.ac.uk/jpietsch/baby.git`), and then
+using pip:
 
 ```bash
-> cd baby
-> pip install .
+> pip install baby/
 ```
 
-NB: The '.' is important!
-
-If you pull new changes, you need to update by running: `pip install -U .` from
-within the repository directory.
+NB: You can update by running: `pip install -U baby/`.
 
 *Developers:* You may prefer to install an editable version:
 
 ```bash
-> pip install -e .
+> pip install -e baby/
 ```
 
-This avoids the need to run the update command.
+### Python and TensorFlow version
 
-**Requirements for Python and TensorFlow**
+BABY requires Python 3 and [TensorFlow](https://www.tensorflow.org).
+Different versions of TensorFlow have different Python version requirements.
+You can find a table of matching versions
+[here](https://www.tensorflow.org/install/source#tested_build_configurations).
 
-BABY requires Python 3 and [TensorFlow](https://www.tensorflow.org). The
-models were trained in TensorFlow 1.14.0, but are compatible with versions of
-TensorFlow up to 2.3.4. The required version of Python depends on the version
-of TensorFlow you choose. We recommend either:
+Our models were trained with TensorFlow version 2.8, but have been tested up
+to version 2.14.
 
-- Python 3.6 and TensorFlow 1.14,
-- Python 3.7 and TensorFlow 1.15, or
-- Python 3.8 and TensorFlow 2.3.  
-
-In any case, it is recommended that you install TensorFlow and all other
-required packages into a virtual environment (i.e., `conda create` if you are
-using Anaconda, or `python3 -m venv` otherwise).
-
-By default, BABY will trigger installation of the highest compatible version of
-TensorFlow. If you want to use an earlier version as suggested above, then
-first install that version in your virtual environment by running:
+By default, BABY will trigger installation of the highest compatible version
+of TensorFlow. If you want to use an earlier version, then first install that
+version in your virtual environment by running:
 
 ```bash
-> pip install tensorflow==1.14
+> pip install tensorflow==2.8
 ```
 
 and then follow the instructions for installing BABY as above.
 
-**NB:** To make use of a GPU you should also follow the other [set up
-instructions](https://www.tensorflow.org/install/gpu).
+### Running with GPU
 
-**NB:** For `tensorflow==1.14`, you will also need to downgrade the default
-version of `h5py`: 
+To make use of a GPU you should follow the [TensorFlow set up
+instructions](https://www.tensorflow.org/install/gpu) before installing BABY.
 
-```bash
-> pip uninstall h5py
-> pip install h5py==2.9.0
-```
+BABY can make use of Metal on M1/M2 Macs by following the instructions
+[here](https://developer.apple.com/metal/tensorflow-plugin/).
 
-## Run using the Python API
 
-Create a new `BabyBrain` with one of the model sets. The `brain` contains
-all the models and parameters for segmenting and tracking cells.
+## Quickstart using the Python API
+
+The BABY algorithm makes use of several machine learning models that are
+defined as a model set. Various model sets are available, and each has been
+optimised for a particular species, microfluidics device, pixel size, channel
+and number of input Z sections.
+
+You can get a list of available model sets and the types of input they were
+trained for using the `meta` function in the `modelsets` module:
 
 ```python
->>> from baby import BabyBrain, BabyCrawler, modelsets
->>> modelset = modelsets()['evolve_brightfield_60x_5z']
->>> brain = BabyBrain(**modelset)
+>>> from baby import modelsets
+>>> modelsets.meta()
+```
+
+You then load your favourite model set as a `BabyBrain` object, which
+coordinates all the models and parameters in the set to produce tracked and
+segmented outlines from input images. You can get a `BabyBrain` for a given
+model set using the `get` function in the `modelsets` module:
+
+```python
+>>> brain = modelsets.get('yeast-alcatras-brightfield-EMCCD-60x-5z')
 ```
 
 For each time course you want to process, instantiate a new `BabyCrawler`. The
 crawler keeps track of cells between time steps.
 
 ```python
+>>> from baby import BabyCrawler
 >>> crawler = BabyCrawler(brain)
 ```
 
-Load an image time series (from the `tests` subdirectory in this example). The
-image should have shape (x, y, z).
+Load an image time series (from the `tests` subdirectory in this repository).
+The image should have shape (x, y, z).
 
 ```python
 >>> from baby.io import load_tiled_image
@@ -148,12 +153,6 @@ requests using:
 
 ```bash
 > baby-phone
-```
-
-or on windows:
-
-```
-> baby-phone.exe
 ```
 
 Server runs by default on [http://0.0.0.0:5101](). HTTP requests need to be

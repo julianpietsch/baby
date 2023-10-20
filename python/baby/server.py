@@ -2,13 +2,15 @@
 
 # If you publish results that make use of this software or the Birth Annotator
 # for Budding Yeast algorithm, please cite:
-# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
-# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# Pietsch, J.M.J., Muñoz, A.F., Adjavon, D.-Y.A., Farquhar, I., Clark, I.B.N.,
+# and Swain, P.S. (2023). Determining growth rates from bright-field images of
+# budding cells through identifying overlaps. eLife. 12:e79812.
+# https://doi.org/10.7554/eLife.79812
 # 
 # 
 # The MIT License (MIT)
 # 
-# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2023
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -45,6 +47,8 @@ from functools import reduce
 from operator import mul
 import numpy as np
 
+from baby import modelsets
+from baby import __version__
 from baby.brain import BabyBrain
 from baby.crawler import BabyCrawler
 from baby.utils import jsonify
@@ -61,7 +65,7 @@ SERVER_DIR = dirname(__file__)
 MAX_RUNNERS = 3
 MAX_SESSIONS = 20
 SLEEP_TIME = 0.2  # time between threaded checks for data availability
-MAX_ATTEMPTS = 300  # allows for 60s delay before timing out
+MAX_ATTEMPTS = 3000  # allows for 10m delay before timing out
 MAX_IMG_SIZE = 100 * 1024 * 1024  # allows for raw image sizes up to 100 MB
 
 DIMS_ERROR_MSG = '"dims" must be a length 4 integer array: [ntraps, width, height, depth]'
@@ -90,7 +94,7 @@ class PredMissingError(Exception):
 
 
 class TaskMaster(object):
-    def __init__(self):
+    def __init__(self, njobs=-2):
         self._lock = threading.Lock()
 
         self._runner_pool = []
@@ -100,12 +104,21 @@ class TaskMaster(object):
         self.tf_session = None
         self.tf_graph = None
         self.tf_version = (0, 0, 0)
+        self.njobs = njobs
+        self._modelsets_ids = None
+        self._modelsets_meta = None
 
     @property
-    def modelsets(self):
-        with open(join(SERVER_DIR, 'modelsets.json'), 'rt') as f:
-            modelsets = json.load(f)
-        return modelsets
+    def modelset_ids(self):
+        if self._modelsets_ids is None:
+            self._modelsets_ids = modelsets.ids()
+        return self._modelsets_ids
+
+    @property
+    def modelsets_meta(self):
+        if self._modelsets_meta is None:
+            self._modelsets_meta = modelsets.meta()
+        return self._modelsets_meta
 
     def new_session(self, model_name):
         # Clean up old sessions that exceed the maximum allowed number
@@ -125,15 +138,10 @@ class TaskMaster(object):
 
         return sessionid
 
-    def ensure_runner(self, model_name, modelsets=None):
+    def ensure_runner(self, model_name):
         if model_name in self.runners:
             print('Model "{}" already loaded. Skipping...'.format(model_name))
             return
-
-        if modelsets is None:
-            modelsets = self.modelsets
-
-        assert model_name in modelsets
 
         # Clean up old runners that exceed the maximum allowed number
         nrunners = len(self._runner_pool)
@@ -166,9 +174,9 @@ class TaskMaster(object):
         # Load BabyRunner
         print('Starting new runner for model "{}"...'.format(model_name))
 
-        baby = BabyBrain(**modelsets[model_name],
-                         session=self.tf_session, graph=self.tf_graph,
-                         suppress_errors=True, error_dump_dir=ERR_DUMP_DIR)
+        baby = modelsets.get(model_name, session=self.tf_session,
+                             graph=self.tf_graph, suppress_errors=True,
+                             error_dump_dir=ERR_DUMP_DIR)
 
         if self.runners.get(model_name) == 'pending':
             with self._lock:
@@ -214,7 +222,7 @@ class TaskMaster(object):
         #     tf.keras.backend.set_session(self.tf_session)
 
         t_start = time.perf_counter()
-        pred = crawler.step(img, parallel=True, **kwargs)
+        pred = crawler.step(img, parallel=True, njobs=self.njobs, **kwargs)
         t_elapsed = time.perf_counter() - t_start
 
         print('...images segmented in {:.3f} seconds.'.format(t_elapsed))
@@ -243,28 +251,33 @@ class TaskMaster(object):
 
 @routes.get('/')
 async def version(request):
-    return web.json_response({'baby': 'v1.0'})
+    return web.json_response({'baby': __version__})
 
 
 @routes.get('/models')
 async def get_modelsets(request):
     taskmstr = request.app['TaskMaster']
-    return web.json_response(list(taskmstr.modelsets.keys()))
+    with_meta = False
+    if 'meta' in request.query:
+        with_meta = request.query['meta'] == 'true'
+    if with_meta:
+        return web.json_response(taskmstr.modelsets_meta)
+    else:
+        return web.json_response(taskmstr.modelset_ids)
 
 
 @routes.get('/session/{model}')
 async def get_session(request):
     model_name = request.match_info['model']
     taskmstr = request.app['TaskMaster']
-    modelsets = taskmstr.modelsets
 
-    if model_name not in modelsets:
+    if model_name not in taskmstr.modelset_ids:
         raise web.HTTPNotFound(text='"{}" model is unknown'.format(model_name))
 
     # Ensure model is loaded in another thread
     loop = asyncio.get_event_loop()
     loop.run_in_executor(request.app['Executor'],
-                         taskmstr.ensure_runner, model_name, modelsets)
+                         taskmstr.ensure_runner, model_name)
     sessionid = taskmstr.new_session(model_name)
 
     print('Creating new session "{}" with model "{}"...'.format(
@@ -383,13 +396,6 @@ async def segment(request):
             val = await field.read(decode=True)
             kwargs[field.name] = json.loads(val)
 
-    if request.query.get('test', False):
-        print('Data received. Writing test image to "baby-server-test.png"...')
-        from imageio import imwrite
-        imwrite(join(SERVER_DIR, 'baby-server-test.png'),
-                np.squeeze(img[0, :, :, 0]))
-        return web.json_response({'status': 'test image written'})
-
     print('Data received. Segmenting {} images...'.format(len(img)))
 
     loop.run_in_executor(executor, taskmstr.segment, sessionid, img, kwargs)
@@ -441,11 +447,20 @@ async def get_segmentation(request):
 
 app = web.Application()
 app.add_routes(routes)
-app['TaskMaster'] = TaskMaster()
-app['Executor'] = ThreadPoolExecutor(2)
 
 def main():
+    from argparse import ArgumentParser
+    parser = ArgumentParser('Start BABY server for receiving segmentation requests')
+    parser.add_argument('-p', '--port', type=int, default=5101,
+                        help='port to bind the server to')
+    parser.add_argument('-n', '--njobs', type=int, default=-2,
+                        help='number of parallel jobs to run when processing')
+    args = parser.parse_args()
+ 
     import tensorflow as tf
+
+    app['TaskMaster'] = TaskMaster(njobs=args.njobs)
+    app['Executor'] = ThreadPoolExecutor(2)
 
     tf_version = tuple(int(v) for v in tf.version.VERSION.split('.'))
     app['TaskMaster'].tf_version = tf_version
@@ -486,4 +501,4 @@ def main():
         lfh.setFormatter(lff)
         logging.getLogger().addHandler(lfh)
 
-    web.run_app(app, port=5101)
+    web.run_app(app, port=args.port)
