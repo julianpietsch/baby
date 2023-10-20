@@ -1,12 +1,14 @@
 # If you publish results that make use of this software or the Birth Annotator
 # for Budding Yeast algorithm, please cite:
-# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
-# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# Pietsch, J.M.J., Muñoz, A.F., Adjavon, D.-Y.A., Farquhar, I., Clark, I.B.N.,
+# and Swain, P.S. (2023). Determining growth rates from bright-field images of
+# budding cells through identifying overlaps. eLife. 12:e79812.
+# https://doi.org/10.7554/eLife.79812
 # 
 # 
 # The MIT License (MIT)
 # 
-# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2023
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -29,7 +31,7 @@ import json
 import re
 
 from pathlib import Path
-from typing import Union
+from typing import Union, Tuple
 from fnmatch import translate as glob_to_re
 from os import walk
 from itertools import groupby, chain, repeat
@@ -37,17 +39,38 @@ from collections import namedtuple, Counter
 import numpy as np
 import random
 import pandas as pd
-from PIL.PngImagePlugin import PngInfo
-from imageio import imread, imwrite
 from sklearn.model_selection import train_test_split
+
+from PIL.PngImagePlugin import PngInfo
+LEGACY_IIO = False
+try:
+    from imageio import v3 as iio
+except ImportError:
+    from imageio import imread, imwrite
+    LEGACY_IIO = True
 
 from .errors import LayoutError, UnpairedImagesError
 from .utils import PathEncoder
 
 
 def load_tiled_image(filename):
-    tImg = imread(filename)
-    info = json.loads(tImg.meta.get('Description', '{}'))
+    if LEGACY_IIO:
+        tImg = imread(filename)
+        info = tImg.meta
+    else:
+        tImg = iio.imread(filename)
+        info = iio.immeta(filename)
+        # Due to a limitation in Pillow, 16-bit (uint16) PNG images are
+        # currently loaded as int32. This will apparently change in a future
+        # version of Pillow, but for the moment, manually force conversion to
+        # uint16. It is still possible to write 16-bit PNG images, and in my
+        # tests, images of dtype int32 are saved as uint16 (as are images of
+        # dtype uint32). Other dtypes (e.g., bool and uint8) load and write as
+        # expected.
+        if str(filename).lower().endswith('.png') and tImg.dtype == 'int32':
+            tImg = tImg.astype('uint16')
+
+    info = json.loads(info.get('Description', '{}'))
     tw, th = info.get('tilesize', tImg.shape[0:2])
     nt = info.get('ntiles', 1)
     nr, nc = info.get('layout', (1, 1))
@@ -61,7 +84,7 @@ def load_tiled_image(filename):
     return img, info
 
 
-def save_tiled_image(img, filename, info={}, layout=None):
+def save_tiled_image(img, filename, info={}, layout=None, fill=0):
     if layout is not None and len(layout) != 2:
         raise LayoutError('"layout" must a 2-tuple')
 
@@ -82,7 +105,7 @@ def save_tiled_image(img, filename, info={}, layout=None):
     info['layout'] = (nr, nc)
 
     nc_final_row = np.mod(nt, nc)
-    tImg = np.zeros((tw * nr, th * nc), dtype=img.dtype)
+    tImg = np.full((tw * nr, th * nc), fill, dtype=img.dtype)
     for i in range(nr):
         i_nc = nc_final_row if i + 1 == nr and nc_final_row > 0 else nc
         for j in range(i_nc):
@@ -91,8 +114,11 @@ def save_tiled_image(img, filename, info={}, layout=None):
 
     meta = PngInfo()
     meta.add_text('Description', json.dumps(info))
-    imwrite(filename, tImg, format='png', pnginfo=meta,
-            prefer_uint8=tImg.dtype != 'uint16')
+    if LEGACY_IIO:
+        imwrite(filename, tImg, format='png', pnginfo=meta,
+                prefer_uint8=False)
+    else:
+        iio.imwrite(filename, tImg, extension='.png', pnginfo=meta)
 
 
 def load_paired_images(filenames, typeA='Brightfield', typeB='segoutlines'):
@@ -274,7 +300,7 @@ class TrainValPairs(object):
         # case insensitive manner
         re_img = re.compile(r'^(.*)' + img_suffix + r'$', re.IGNORECASE)
         re_lbl = re.compile(r'^(.*)' + lbl_suffix + r'$', re.IGNORECASE)
-        png_files = sorted(Path(base_dir).rglob('*.png'))
+        png_files = sorted(Path(base_dir).resolve().rglob('*.png'))
         matches = [(re_img.search(f.stem), re_lbl.search(f.stem), f)
                    for f in png_files]
         matches = [('img', im, f) if im else ('lbl', lm, f)
@@ -327,6 +353,14 @@ class TrainValPairs(object):
     def __repr__(self):
         return 'TrainValPairs: {:d} training and {:d} validation pairs'.format(
             len(self.training), len(self.validation))
+
+
+IMAGE_INFO_GROUP_BY_MAP = {
+    'experimentID': str,
+    'position': int,
+    'trap': int,
+    'tp': int
+}
 
 
 class TrainValTestPairs(object):
@@ -502,6 +536,42 @@ class TrainValTestPairs(object):
                  val_size=0.2,
                  test_size=0.2,
                  group_by=('experimentID', 'position', 'trap')):
+        """Search a directory for image/label pairs to add
+
+        Images are assumed to be in PNG format (i.e., they must have extension
+        .png). The images can be annotated in the 'Description' meta data slot
+        using a JSON-encoded dictionary (see :py:function:`save_tiled_image`
+        and :py:function:`load_tiled_image`).
+
+        To ensure that highly similar image/label pairs (e.g., from
+        consecutive time points) are not unfairly separated into training and
+        either the validation or test sets, pairs are allocated according to
+        their 'group', which is defined by the ``group_by`` parameter. This
+        requires the images to include meta data annotations as described
+        above (valid keys are currently limited to 'experimentID', 'position',
+        'trap' and 'tp').
+
+        Args:
+            base_dir: base directory in which to search for images. All
+                subfolders are recursively searched.
+            img_suffix (str): the suffix (before .png extension) of all image
+                files.
+            lbl_suffix (str): the suffix (before .png extension) of all label
+                files.
+            val_size (float): fraction of files to split into validation set.
+            test_size (float): fraction of files to split into test set.
+            group_by (Union[str, Tuple[str]]): perform the split according to
+                groups defined by these tokens as found in the meta data of
+                each image.
+        """
+
+        # Check that all group_by values are valid
+        if type(group_by) == str:
+            group_by = (group_by,)
+        if not all((t in IMAGE_INFO_GROUP_BY_MAP for t in group_by)):
+            raise BadParam('group_by must be one of {}'.format(
+                ', '.join(f'"{k}"' for k in IMAGE_INFO_GROUP_BY_MAP.keys())))
+
         only_outlines = False
         if img_suffix is None:
             img_suffix='segoutlines'
@@ -513,7 +583,7 @@ class TrainValTestPairs(object):
         # case insensitive manner
         re_img = re.compile(r'^(.*)' + img_suffix + r'$', re.IGNORECASE)
         re_lbl = re.compile(r'^(.*)' + lbl_suffix + r'$', re.IGNORECASE)
-        png_files = sorted(Path(base_dir).rglob('*.png'))
+        png_files = sorted(Path(base_dir).resolve().rglob('*.png'))
         matches = [(re_img.search(f.stem), re_lbl.search(f.stem), f)
                    for f in png_files]
         matches = [('img', im, f) if im else ('lbl', lm, f)
@@ -541,14 +611,18 @@ class TrainValTestPairs(object):
         if len(pairs) == 0:
             return
 
-        # Choose a split that ensures separation by group keys and avoids,
-        # e.g., splitting same cell but different time points
+        # Choose a split that ensures separation by group keys and can avoid,
+        # e.g., splitting same cell but different time points.
         info = [
             json.loads(imread(l).meta.get('Description', '{}'))
             for _, l in pairs
         ]
+        # Collect grouping variables to split pairs up according to their
+        # group. NB: we force everything to be a string in case variables are
+        # loaded inconsistently from the JSON meta data. Any missing or False
+        # values are annotated with a unique label taken from enumeration:
         pair_groups = [
-            tuple(i.get(f, 'missing_' + str(e))
+            tuple(str(i.get(f) or 'missing_' + str(e))
                   for f in group_by)
             for e, i in enumerate(info)
         ]
@@ -563,11 +637,16 @@ class TrainValTestPairs(object):
             unique_groups,
             [int(npairs*train_size), int(npairs * (1-test_size))])
 
-        reformat = lambda exp, pos, trap : (exp, int(pos), int(trap))
+        # BELOW CODE REMOVED SINCE I IT DOES NOT ACHIEVE WHAT I THINK IS THE
+        # INTENDED PURPOSE OF ORDERING THE OUTPUT
+        # reformat = lambda exp, pos, trap : (exp, int(pos), int(trap))
+        # train_groups = set([reformat(*t) for t in train_groups])
+        # val_groups = set([reformat(*t) for t in val_groups])
+        # test_groups = set([reformat(*t) for t in test_groups])
 
-        train_groups = set([reformat(*t) for t in train_groups])
-        val_groups = set([reformat(*t) for t in val_groups])
-        test_groups = set([reformat(*t) for t in test_groups])
+        train_groups = {tuple(x) for x in train_groups}
+        val_groups = {tuple(x) for x in val_groups}
+        test_groups = {tuple(x) for x in test_groups}
 
         # Add new pairs to the existing train-val split
         self.training += [p for p, g in zip(pairs, pair_groups) if

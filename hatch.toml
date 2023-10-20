@@ -1,0 +1,12 @@
+[envs.test]
+python = "3.10"
+dependencies = [
+  "pytest",
+]
+[envs.test.env-vars]
+BABY_MODELSETS_PATH = "tests/test-modelset-cache"
+
+[envs.test_cache]
+template = "test"
+[envs.test_cache.env-vars]
+BABY_MODELSETS_PATH = ""

@@ -1,12 +1,14 @@
 # If you publish results that make use of this software or the Birth Annotator
 # for Budding Yeast algorithm, please cite:
-# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
-# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# Pietsch, J.M.J., Muñoz, A.F., Adjavon, D.-Y.A., Farquhar, I., Clark, I.B.N.,
+# and Swain, P.S. (2023). Determining growth rates from bright-field images of
+# budding cells through identifying overlaps. eLife. 12:e79812.
+# https://doi.org/10.7554/eLife.79812
 # 
 # 
 # The MIT License (MIT)
 # 
-# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2023
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -34,13 +36,15 @@ import json
 
 import baby
 from baby.brain import BabyBrain
-from baby.morph_thresh_seg import MorphSegGrouped
+from baby.morph_thresh_seg import MorphSegGrouped, SegmentationParameters
 
 #from .conftest import BASE_DIR
 
-#MODEL_PATH = BASE_DIR / 'models'
-MODEL_PATH = baby.model_path()
-DEFAULT_MODELSET = 'evolve_brightfield_60x_5z'
+DEFAULT_MODELSET = 'yeast-alcatras-brightfield-EMCCD-60x-5z'
+TEST_MODELSETS = ['yeast-alcatras-brightfield-EMCCD-60x-5z',
+                  'yeast-alcatras-brightfield-sCMOS-60x-5z']
+                  #'ecoli-mm-phase-sCMOS-100x-1z']
+
 
 eqlen_outkeys = {
     'angles', 'radii', 'cell_label', 'edgemasks', 'ellipse_dims', 'volumes',
@@ -52,9 +56,7 @@ eqlen_outkeys = {
 def bb(modelsets, tf_session_graph):
     # Attempt to load default evolve model
     tf_session, tf_graph = tf_session_graph
-    return BabyBrain(session=tf_session,
-                     graph=tf_graph,
-                     **modelsets[DEFAULT_MODELSET])
+    return modelsets.get(DEFAULT_MODELSET, session=tf_session, graph=tf_graph)
 
 
 @pytest.fixture(scope='module')
@@ -62,24 +64,44 @@ def imgstack(imgs_evolve60):
     return np.stack([v['Brightfield'][0] for v in imgs_evolve60.values()])
 
 
-def test_modelsets(modelsets):
-    bb_args = inspect.getfullargspec(BabyBrain.__init__).args
-    msg_args = inspect.getfullargspec(MorphSegGrouped.__init__).args
+def test_modelsets(modelsets, verify_all_modelsets):
+    # Ensure that at least the test model sets are present
+    all_mset_ids = modelsets.ids()
+    assert all([mset_id in all_mset_ids for mset_id in TEST_MODELSETS])
 
-    for mset in modelsets.values():
+    bb_args = inspect.getfullargspec(BabyBrain.__init__).args
+    msg_args = set(SegmentationParameters()._fields)
+
+    if verify_all_modelsets:
+        modelsets.update('all', force=False)
+    else:
+        modelsets.update(TEST_MODELSETS, force=False)
+
+    for mset_info in modelsets.specifications().values():
         # Make sure all parameters match the BabyBrain and MorphSegGrouped
         # signatures
+        mset = mset_info['brain_params']
         assert set(mset.keys()).issubset(bb_args)
         params = mset.get('params', {})
-        assert set(params.keys()).issubset(msg_args)
+        if type(params) == dict:
+            assert set(params.keys()).issubset(msg_args)
+
+    share_path = modelsets.LOCAL_MODELSETS_PATH / modelsets.SHARE_PATH
+    for mset_id, mset_info in modelsets.specifications(local=True).items():
+        mset_path = modelsets.LOCAL_MODELSETS_PATH / mset_id
+        mset = mset_info['brain_params']
+
+        assert mset_path.is_dir()
+        params = mset.get('params', {})
+        if type(params) != dict and type(params) != SegmentationParameters:
+            assert ((mset_path / params).is_file() or
+                    (share_path / params).is_file())
 
         # Make sure all model files exist
         for k, v in mset.items():
             if k.endswith('_file'):
-                assert (MODEL_PATH / v).is_file()
-
-    # Ensure that the default test model is present
-    assert DEFAULT_MODELSET in modelsets
+                assert ((mset_path / v).is_file() or
+                        (share_path / v).is_file())
 
 
 def test_init(bb, imgstack):
@@ -92,7 +114,7 @@ def test_init(bb, imgstack):
             [len(o['centres']) == len(o[k]) for k in o if k in eqlen_outkeys])
 
 
-def test_segment(bb, imgstack):
+def test_evolve_segment(bb, imgstack):
     # Test segment with all options enabled
     output = bb.segment(imgstack,
                         yield_edgemasks=True,
@@ -101,6 +123,39 @@ def test_segment(bb, imgstack):
                         yield_volumes=True,
                         refine_outlines=True)
     for o in output:
+        assert all(
+            [len(o['centres']) == len(o[k]) for k in o if k in eqlen_outkeys])
+
+
+def test_prime_segment(bb_prime60, imgs_prime60):
+    imgstack = np.stack([v['Brightfield'][0] for v in imgs_prime60.values()])
+    # Test segment with all options enabled
+    output = bb_prime60.segment(imgstack,
+                                yield_edgemasks=True,
+                                yield_masks=True,
+                                yield_preds=True,
+                                yield_volumes=True,
+                                refine_outlines=True)
+    for o in output:
+        assert all(
+            [len(o['centres']) == len(o[k]) for k in o if k in eqlen_outkeys])
+
+
+def test_mm_segment(bb_mmscmos, imgs_mmscmos):
+    # The sample mother machine sCMOS images have different shapes so cannot
+    # be stacked, so segment each image separately
+    for imgpair in imgs_mmscmos.values():
+        img = imgpair['Brightfield'][0]
+        # Test segment with all options enabled except refine_outlines, which is
+        # not yet available for the cartesian splines used for E. coli
+        o = bb_mmscmos.segment(img[None, ...],
+                               yield_edgemasks=True,
+                               yield_masks=True,
+                               yield_preds=True,
+                               yield_volumes=True,
+                               refine_outlines=False)
+        # Expand generator and select first image
+        o = list(o)[0]
         assert all(
             [len(o['centres']) == len(o[k]) for k in o if k in eqlen_outkeys])
 

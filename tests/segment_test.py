@@ -1,12 +1,14 @@
 # If you publish results that make use of this software or the Birth Annotator
 # for Budding Yeast algorithm, please cite:
-# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
-# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# Pietsch, J.M.J., Muñoz, A.F., Adjavon, D.-Y.A., Farquhar, I., Clark, I.B.N.,
+# and Swain, P.S. (2023). Determining growth rates from bright-field images of
+# budding cells through identifying overlaps. eLife. 12:e79812.
+# https://doi.org/10.7554/eLife.79812
 # 
 # 
 # The MIT License (MIT)
 # 
-# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2023
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -28,6 +30,9 @@
 import pytest
 
 from os.path import isfile
+from pathlib import Path
+import json
+import inspect
 import numpy as np
 from scipy.ndimage import binary_fill_holes
 from itertools import chain
@@ -37,18 +42,35 @@ from baby.io import load_paired_images, save_tiled_image
 from baby.errors import BadParam
 from baby.preprocessing import (raw_norm, seg_norm, dwsquareconn,
                                 SegmentationFlattening)
-from baby.brain import default_params
-from baby.morph_thresh_seg import MorphSegGrouped, SegmentationOutput
+from baby.morph_thresh_seg import (MorphSegGrouped, SegmentationOutput,
+                                   SegmentationParameters)
+from baby.utils import as_python_object
+from baby import segmentation
 from baby.segmentation import morph_seg_grouped
 from baby.performance import (calc_IoUs, best_IoU, calc_AP,
                               flattener_seg_probs)
 
-#from .conftest import MODEL_DIR, IMAGE_DIR
+
+DEFAULT_MODELSET = 'yeast-alcatras-brightfield-EMCCD-60x-5z'
+
 
 # Tuple for variables needed to test segmentation
 SegmentationEnv = namedtuple(
     'SegmentationEnv',
     ['flattener', 'cparams', 'fparams', 'cnn_out', 'truth', 'imnames'])
+
+
+# Old default parameters
+DEFAULT_PARAMETERS = SegmentationParameters(
+    interior_threshold=(0.7, 0.5, 0.5),
+    nclosing=(1, 0, 0),
+    nopening=(1, 0, 0),
+    connectivity=(2, 2, 1),
+    pedge_thresh=0.001,
+    fit_radial=True,
+    edge_sub_dilations=1,
+    use_group_thresh=True,
+    group_thresh_expansion=0.1)
 
 
 def compare_edges_and_masks(edges, masks):
@@ -95,24 +117,33 @@ def run_performance_checks(seg_outputs, cnn_outputs, flattener, truth):
 
 
 @pytest.fixture(scope='module')
-def evolve60env(modelsets, model_dir, image_dir):
-    mset = modelsets['evolve_brightfield_60x_5z']
+def evolve60env(modelsets, image_dir):
+    mset = modelsets.get_params(DEFAULT_MODELSET)
 
     # Load flattener
-    ff = mset['flattener_file']
-    if not isfile(ff):
-        ff = model_dir / ff
-    assert isfile(ff)
+    ff = modelsets.resolve(mset['flattener_file'], DEFAULT_MODELSET)
     flattener = SegmentationFlattening(ff)
 
     # Load BabyBrain param defaults
-    cparams = default_params.copy()
-    cparams.update(mset.get('params', {}))
+    params = mset['params']
+    if type(params) == dict:
+        params = SegmentationParameters(**params)
+    if type(params) != SegmentationParameters:
+        param_file = modelsets.resolve(mset['params'], DEFAULT_MODELSET)
+        with open(param_file, 'rt') as f:
+            params = json.load(f, object_hook=as_python_object)
+    assert type(params) == SegmentationParameters
+    cparams = params
 
     # Convert to params compatible with morph_seg_grouped
-    fparams = cparams.copy()
-    del fparams['edge_sub_dilations']
+    msg_args = inspect.signature(morph_seg_grouped).parameters.keys()
+    fparams = cparams._asdict()
+    fparams = {k: v for k, v in fparams.items() if k in msg_args}
     fparams['ingroup_edge_segment'] = True
+    fparams['containment_func'] = getattr(segmentation,
+                                          fparams['containment_func'])
+    if fparams['cellgroups'] is None:
+        fparams['cellgroups'] = ['large', 'medium', 'small']
 
     # Load CNN outputs
     impairs = load_paired_images(image_dir.glob('evolve_*.png'),
@@ -197,9 +228,9 @@ def test_segmenter_bbparams_empty(evolve60env):
     params = evolve60env.cparams
     ntargets = len(flattener.names())
     segmenter = MorphSegGrouped(flattener,
+                                params=params,
                                 return_masks=True,
-                                return_coords=True,
-                                **params)
+                                return_coords=True)
     out = segmenter.segment(np.zeros((ntargets, 81, 81)))
     assert tuple(len(o) for o in out) == (0, 0, 0, 0)
 
@@ -254,9 +285,9 @@ def test_segfunc_bbparams_preds(evolve60env, save_segoutlines):
 def test_segmenter_bbparams_preds(evolve60env, save_segoutlines):
     flattener, params, _, cnn_out, truth, imnames = evolve60env
     segmenter = MorphSegGrouped(flattener,
+                                params=params,
                                 return_masks=True,
-                                return_coords=True,
-                                **params)
+                                return_coords=True)
     seg_outputs = [segmenter.segment(pred) for pred in cnn_out]
     save_segoutlines(seg_outputs, imnames)
 
@@ -290,9 +321,9 @@ def test_segfunc_refined_preds(evolve60env, save_segoutlines):
 def test_segmenter_refined_preds(evolve60env, save_segoutlines):
     flattener, params, _, cnn_out, truth, imnames = evolve60env
     segmenter = MorphSegGrouped(flattener,
+                                params=params,
                                 return_masks=True,
-                                return_coords=True,
-                                **params)
+                                return_coords=True)
     seg_outputs = [
         segmenter.segment(pred, refine_outlines=True) for pred in cnn_out
     ]

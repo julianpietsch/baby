@@ -1,12 +1,14 @@
 # If you publish results that make use of this software or the Birth Annotator
 # for Budding Yeast algorithm, please cite:
-# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
-# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# Pietsch, J.M.J., Muñoz, A.F., Adjavon, D.-Y.A., Farquhar, I., Clark, I.B.N.,
+# and Swain, P.S. (2023). Determining growth rates from bright-field images of
+# budding cells through identifying overlaps. eLife. 12:e79812.
+# https://doi.org/10.7554/eLife.79812
 # 
 # 
 # The MIT License (MIT)
 # 
-# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2023
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -67,26 +69,13 @@ def get_name(obj):
     return getattr(obj, '_baby_name', obj.__name__)
 
 
-def NamedTupleToJSON(self):
-    return {
-        '_python_NamedTuple': self._asdict(),
-        '__module__': self.__class__.__module__,
-        '__class__': self.__class__.__name__
-    }
-
-
-def EncodableNamedTuple(obj):
-    obj.toJSON = NamedTupleToJSON
-    return obj
-
-
 def jsonify(obj):
     if hasattr(obj, 'toJSON'):
         return obj.toJSON()
     elif hasattr(obj, 'dtype') and hasattr(obj, 'tolist'):
         return obj.tolist()
     elif isinstance(obj, tuple):
-        return {'_python_tuple': list(obj)}
+        return {'_python_tuple': [jsonify(v) for v in obj]}
     if isinstance(obj, set):
         return {'_python_set': list(obj)}
     elif isinstance(obj, dict):
@@ -95,6 +84,19 @@ def jsonify(obj):
         return [jsonify(v) for v in obj]
     else:
         return obj
+
+
+def NamedTupleToJSON(self):
+    return {
+        '_python_NamedTuple': jsonify(self._asdict()),
+        '__module__': self.__class__.__module__,
+        '__class__': self.__class__.__name__
+    }
+
+
+def EncodableNamedTuple(obj):
+    obj.toJSON = NamedTupleToJSON
+    return obj
 
 
 def as_python_object(obj):

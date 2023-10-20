@@ -1,12 +1,14 @@
 # If you publish results that make use of this software or the Birth Annotator
 # for Budding Yeast algorithm, please cite:
-# Julian M J Pietsch, Alán Muñoz, Diane Adjavon, Ivan B N Clark, Peter S
-# Swain, 2021, Birth Annotator for Budding Yeast (in preparation).
+# Pietsch, J.M.J., Muñoz, A.F., Adjavon, D.-Y.A., Farquhar, I., Clark, I.B.N.,
+# and Swain, P.S. (2023). Determining growth rates from bright-field images of
+# budding cells through identifying overlaps. eLife. 12:e79812.
+# https://doi.org/10.7554/eLife.79812
 # 
 # 
 # The MIT License (MIT)
 # 
-# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2021
+# Copyright (c) Julian Pietsch, Alán Muñoz and Diane Adjavon 2023
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to
@@ -25,26 +27,28 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
+from typing import List, Tuple, Union
+from types import MappingProxyType
 import json
 import pathlib
-from typing import List, Tuple
-
-import matplotlib.pyplot as plt
 import pickle
+import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
+from scipy.signal import savgol_filter
 import tensorflow as tf
+from tensorflow.keras.callbacks import (ModelCheckpoint, TensorBoard,
+                                        LearningRateScheduler, CSVLogger)
+from tensorflow.keras.models import load_model
+
 from baby.augmentation import Augmenter
 from baby.generator import ImageLabel
 from baby.preprocessing import SegmentationFlattening
-from matplotlib.colors import to_rgba
-from scipy.signal import savgol_filter
-from tensorflow.python.keras.callbacks import ModelCheckpoint, TensorBoard, \
-    LearningRateScheduler
-from tensorflow.python.keras.models import load_model
-
 from baby import models
 from baby.errors import BadType, BadProcess
 from baby.losses import bce_dice_loss, dice_coeff
 from baby.utils import get_name, schedule_steps
+from .utils import SharedParameterContainer
+from .flattener_trainer import FlattenerTrainer
 
 custom_objects = {'bce_dice_loss': bce_dice_loss, 'dice_coeff': dice_coeff}
 
@@ -52,45 +56,73 @@ OPT_WEIGHTS_FILE = 'weights.h5'
 INIT_WEIGHTS_FILE = 'init_weights.h5'
 FINAL_WEIGHTS_FILE = 'final_weights.h5'
 HISTORY_FILE = 'history.pkl'
+CSV_HISTORY_FILE = 'history.csv'
 LOG_DIR = 'logs'
+HYPER_PARAMS_FILE = 'hyperparameters.json'
 
 
 class CNNTrainer:
+    """Methods for optimising CNN weights using gradient descent.
+
+    After training, the optimised weights are be stored in a file named
+    :py:data:`OPT_WEIGHTS_FILE` within the :py:attr:`cnn_dir` directory. The
+    directory is specific to each of the architectures listed in ``cnn_set``.
+
+    Args:
+        shared_params: Training and segmentation parameters as provided by
+            :py:class:`utils.SharedParameterContainer`.
+        flattener_trainer: Trainer that defines optimised targets for the CNN.
+        max_cnns: The maximum number of CNNs to keep in memory, default is 3.
+        cnn_fn: The CNN architecture to start with. Defaults to the
+            :py:attr:`utils.BabyTrainingParameters.cnn_fn` architecture
+            as found in ``shared_params.parameters``.
     """
-    Methods for optimising the weights of the CNNs using gradient descent.
-    """
-    def __init__(self, save_dir: pathlib.Path,
-                 cnn_set: tuple, gen: ImageLabel, aug: Augmenter,
-                 flattener: SegmentationFlattening,
+    def __init__(self,
+                 shared_params: SharedParameterContainer,
+                 flattener_trainer: FlattenerTrainer,
                  max_cnns: int = 3,
                  cnn_fn: str = None):
-        """
-        Methods for optimising the weights of the CNNs using gradient descent.
+        self._shared_params = shared_params
+        self._flattener_trainer = flattener_trainer
 
-        :param save_dir: base directory in which to save weights and outputs
-        :param cnn_set: the names of CNN architectures to be trained
-        :param gen: the data generator
-        :param aug: the data augmentor
-        :param flattener: the data flattener
-        :param max_cnns: the maximum number of CNNs to train/keep, default is 3
-        :param cnn_fn: the CNN architecture to start with, defaults to None
-        """
-        self.flattener = flattener
-        self.aug = aug
-        self.gen = gen
         # TODO no longer needed with hyperparmeter optim
         self._max_cnns = max_cnns
-        self.save_dir = save_dir
-        self.cnn_set = cnn_set
         self._cnn_fn = cnn_fn
         self._cnns = dict()
         self._opt_cnn = None
 
     @property
+    def save_dir(self):
+        """Base directory in which to save trained models"""
+        return self._shared_params.save_dir
+
+    @property
+    def cnn_set(self):
+        return self._shared_params.parameters.cnn_set
+
+    @property
+    def gen(self):
+        """Data generators used for training models.
+
+        A :py:class:`utils.TrainValTestProperty` of training, validation and
+        test data generators with augmentations obtained from
+        :py:attr:`FlattenerTrainer.default_gen`.
+        """
+        return self._flattener_trainer.default_gen
+
+    @property
+    def flattener(self):
+        """Target definitions for models trained by this class."""
+        return self._flattener_trainer.flattener
+
+    @property
     def cnn_fn(self):
         """The current CNN architecture function."""
         if self._cnn_fn is None:
-            self.cnn_fn = self.cnn_set[0]
+            if self._shared_params.parameters.cnn_fn is None:
+                self.cnn_fn = self.cnn_set[0]
+            else:
+                self.cnn_fn = self._shared_params.parameters.cnn_fn
         return getattr(models, self._cnn_fn)
 
     @cnn_fn.setter
@@ -100,6 +132,7 @@ class CNNTrainer:
         if not hasattr(models, fn):
             raise BadType('That is not a recognised model')
         self._cnn_fn = fn
+        self._hyperparameters = None
 
     @property
     def cnn_dir(self):
@@ -115,38 +148,69 @@ class CNNTrainer:
         return get_name(self.cnn_fn)
 
     @property
+    def hyperparameters(self):
+        """Custom hyperparameters defined for the active CNN architecture.
+
+        A ``dict`` specifying keyword arguments to be passed when building the
+        active CNN architecture. If left unset, any defaults as given in
+        :py:mod:`baby.models` will be used.
+
+        NB: The property is returned as a :py:class:`types.MappingProxyType`,
+        so ``dict`` items cannot be modified. To change hyperparameters, the
+        whole ``dict`` needs to be replaced.
+        """
+        if not getattr(self, '_hyperparameters', None):
+            # Load hyperparameters
+            hyper_param_file = self.cnn_dir / "hyperparameters.json"
+            if hyper_param_file.exists():
+                with open(hyper_param_file, 'r') as fd:
+                    self._hyperparameters = json.load(fd)
+            else:
+                # Use defaults specified in `models`
+                self._hyperparameters = {}
+        return MappingProxyType(self._hyperparameters)
+
+    @hyperparameters.setter
+    def hyperparameters(self, params):
+        if not type(params) == dict or type(params) == MappingProxyType:
+            raise BadType('Hyperparameters must be specified as a `dict`')
+        hyper_param_file = self.cnn_dir / "hyperparameters.json"
+        with open(hyper_param_file, 'w') as f:
+            json.dump(dict(params), f)
+        self._hyperparameters = dict(params)
+        # If the hyperparameters have changed, we need to regenerate the model
+        # and initial weights
+        if self.cnn_name in self._cnns:
+            del self._cnns[self.cnn_name]
+        # Delete initial weights if they have already been saved
+        init_weights_file = self.cnn_dir / INIT_WEIGHTS_FILE
+        init_weights_file.unlink(missing_ok=True)
+
+    @property
     def cnn(self):
         """The keras Model for the active CNN."""
         if self.cnn_name not in self._cnns:
-            if len(self._cnns) > self._max_cnns:
+            n_loaded = getattr(self, '_n_cnns_loaded', 0)
+            if n_loaded > self._max_cnns:
                 # To avoid over-consuming memory reset graph
                 # TODO: ensure TF1/TF2 compat and check RTX bug
                 tf.keras.backend.clear_session()
                 # Reset any potentially loaded models
                 self._cnns = dict()
                 self._opt_cnn = None
-            # Todo: separate generator from trainer
-            #   Make model accept an input shape and a set of outputs
-            self.gen.train.aug = self.aug.train
+                n_loaded = 0
+
             print('Loading "{}" CNN...'.format(self.cnn_name))
-            # Load hyperparameters
-            hyper_param_file = self.cnn_dir / "hyperparameters.json"
-            if not hyper_param_file.exists():
-                # Todo: just use defaults
-                raise FileNotFoundError("Hyperparameter file {} for {} not "
-                                        "found.".format(hyper_param_file,
-                                                        self.cnn_name))
-            with open(hyper_param_file, 'r') as fd:
-                hyperparameters = json.load(fd)
             model = self.cnn_fn(self.gen.train, self.flattener,
-                                **hyperparameters)
+                                **self.hyperparameters)
             self._cnns[self.cnn_name] = model
+            self._n_cnns_loaded = n_loaded + 1
 
             # Save initial weights if they haven't already been saved
-            filename = self.cnn_dir / INIT_WEIGHTS_FILE
-            if not filename.exists():
+            init_weights_file = self.cnn_dir / INIT_WEIGHTS_FILE
+            if not init_weights_file.exists():
                 print('Saving initial weights...')
-                model.save_weights(str(filename))
+                model.save_weights(str(init_weights_file))
         return self._cnns[self.cnn_name]
 
     @property
@@ -195,7 +259,7 @@ class CNNTrainer:
         return self._opt_cnn
 
     def fit(self, epochs: int = 400,
-            schedule: List[Tuple[int, float]] = None,
+            schedule: Union[str, List[Tuple[int, float]]] = None,
             replace: bool = False,
             extend: bool = False):
         """Fit the active CNN to minimise loss on the (augmented) generator.
@@ -214,6 +278,11 @@ class CNNTrainer:
         if schedule is None:
             schedule = [(1e-3, epochs)]
 
+        if callable(schedule):
+            schedulefn = schedule
+        else:
+            schedulefn = lambda epoch: schedule_steps(epoch, schedule)
+
         finalfile = self.cnn_dir / FINAL_WEIGHTS_FILE
         if extend:
             self.cnn.load_weights(str(finalfile))
@@ -225,22 +294,28 @@ class CNNTrainer:
         if not replace and optfile.is_file():
             raise BadProcess('Optimised weights already exist')
 
+        csv_history_file = self.cnn_dir / CSV_HISTORY_FILE
         logdir = self.cnn_dir / LOG_DIR
         callbacks = [
             ModelCheckpoint(filepath=str(optfile),
                             monitor='val_loss',
                             save_best_only=True,
                             verbose=1),
+            CSVLogger(filename=str(csv_history_file), append=extend),
             TensorBoard(log_dir=str(logdir)),
-            LearningRateScheduler(
-                lambda epoch: schedule_steps(epoch, schedule))
+            LearningRateScheduler(schedulefn)
         ]
-        self.gen.train.aug = self.aug.train
-        self.gen.val.aug = self.aug.val
-        history = self.cnn.fit_generator(generator=self.gen.train,
-                                         validation_data=self.gen.val,
-                                         epochs=epochs,
-                                         callbacks=callbacks)
+
+        if tf.version.VERSION.startswith('1'):
+            history = self.cnn.fit_generator(generator=self.gen.train,
+                                             validation_data=self.gen.val,
+                                             epochs=epochs,
+                                             callbacks=callbacks)
+        else:
+            history = self.cnn.fit(self.gen.train,
+                                   validation_data=self.gen.val,
+                                   epochs=epochs,
+                                   callbacks=callbacks)
 
         # Save history
         with open(self.cnn_dir / HISTORY_FILE, 'wb') as f:

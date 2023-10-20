@@ -1,4 +1,5 @@
 *.pyc
+*.asv
 .*.sw?
 *~
 .DS_Store
@@ -13,3 +14,5 @@ baby-server-test.png
 *.egg-info/
 **/venv/
 /tf1_venv/
+/dist
+/tests/test-modelset-cache/
