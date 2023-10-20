@@ -23,22 +23,16 @@ bright-field images of budding cells through identifying overlaps. eLife.
 We recommend installing BABY and all its requirements in a virtual environment
 (e.g., `conda create` if you are using Anaconda, or `python3 -m venv` otherwise).
 
-If you do not have a GPU and simply wish to use the latest compatible versions
-of all packages, BABY can be installed by first obtaining this repository
-(e.g., `git clone https://git.ecdf.ed.ac.uk/jpietsch/baby.git`), and then
-using pip:
+NB: If you want to install with GPU support see below. 
+
+Otherwise, if you simply wish to use install with the latest compatible versions
+of all packages, then simply run the following in your virtual environment:
 
 ```bash
-> pip install baby/
+> pip install baby-seg
 ```
 
-NB: You can update by running: `pip install -U baby/`.
-
-*Developers:* You may prefer to install an editable version:
-
-```bash
-> pip install -e baby/
-```
+NB: You can update by running: `pip install -U baby-seg`.
 
 ### Python and TensorFlow version
 
@@ -68,6 +62,17 @@ instructions](https://www.tensorflow.org/install/gpu) before installing BABY.
 BABY can make use of Metal on M1/M2 Macs by following the instructions
 [here](https://developer.apple.com/metal/tensorflow-plugin/).
 
+
+### For developers
+
+You may prefer to install an editable version by first obtaining this repo and
+then pip installing the cloned directory:
+
+```bash
+> git clone https://git.ecdf.ed.ac.uk/swain-lab/baby.git
+> cd baby
+> pip install -e .
+```
 
 ## Quickstart using the Python API
 
