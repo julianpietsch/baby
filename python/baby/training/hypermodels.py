@@ -33,7 +33,17 @@ from keras_tuner import HyperModel
 from tensorflow.keras import Input, Model
 from tensorflow.keras.initializers import VarianceScaling
 from tensorflow.keras.optimizers import Adam
-from tensorflow_addons.optimizers import AdamW
+
+try:
+    from tensorflow.keras.optimizers import AdamW
+except ImportError:
+    try:
+        from tensorflow.keras.optimizers.experimental import AdamW
+    except ImportError:
+        try:
+            from tensorflow_addons.optimizers import AdamW
+        except ImportError:
+            raise ImportError('You need to pip install tensorflow-addons with this version of tensorflow')
 
 
 

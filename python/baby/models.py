@@ -32,6 +32,17 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import Input
 from tensorflow.keras.initializers import VarianceScaling
 
+try:
+    from tensorflow.keras.optimizers import AdamW
+except ImportError:
+    try:
+        from tensorflow.keras.optimizers.experimental import AdamW
+    except ImportError:
+        try:
+            from tensorflow_addons.optimizers import AdamW
+        except ImportError:
+            raise ImportError('You need to pip install tensorflow-addons with this version of tensorflow')
+
 from .utils import named_obj
 from .layers import msd_block, unet_block, conv_block, res_block, make_outputs
 from .losses import bce_dice_loss, dice_coeff
@@ -49,7 +60,6 @@ def named_model_fn(name):
                           outputs=make_outputs(f(inputs, **kwargs),
                                                flattener.names()))
             if use_adamw:
-                from tensorflow_addons.optimizers import AdamW
                 optimizer = AdamW(weight_decay=0.00025)
             else:
                 optimizer = Adam(amsgrad=False)
