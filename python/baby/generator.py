@@ -234,7 +234,7 @@ class ImageLabel(Sequence):
         else:
             return img_batch, lbl_batch
 
-    def plot_sample(self, i=0, figsize=3):
+    def plot_sample(self, i=0, imgsize=3, show=False):
         """Plot a sample batch from the generator
 
         This function assumes that the assigned Augmenter produces label
@@ -258,31 +258,40 @@ class ImageLabel(Sequence):
         ncol = len(img_batch)
         nrow =  n_sections + n_targets
         fig, axs = plt.subplots(nrow, ncol,
-                                figsize=(figsize * ncol, figsize * nrow))
+                                figsize=(imgsize * ncol, imgsize * nrow))
+        fig.subplots_adjust(hspace=0.03, wspace=0.03)
 
         # Plot img sections first...
-        for axrow, section in zip(axs[:n_sections],
-                                  np.split(img_batch, n_sections, axis=3)):
-            for ax, img, lbl in zip(axrow, section, lbl_batch):
+        sections = np.split(img_batch, n_sections, axis=3)
+        for s, (axrow, section) in enumerate(zip(axs[:n_sections], sections)):
+            for c, (ax, img, lbl) in enumerate(zip(axrow, section, lbl_batch)):
                 ax.imshow(img, cmap='gray')
                 if edge_inds is not None:
                     ax.imshow(colour_segstack(lbl[..., edge_inds], dw=True))
                 ax.grid(False)
                 ax.set(xticks=[], yticks=[])
+                if c == 0:
+                    ax.set_ylabel(f'Input {s + 1}')
 
         # ...then plot targets
-        for axrow, target, name in zip(axs[n_sections:],
-                                       np.split(lbl_batch, n_targets, axis=3),
-                                       target_names):
-            for ax, lbl in zip(axrow, target):
+        targets = np.split(lbl_batch, n_targets, axis=3)
+        for t, (axrow, target, name) in enumerate(zip(axs[n_sections:],
+                                                      targets,
+                                                      target_names)):
+            for c, (ax, lbl) in enumerate(zip(axrow, target)):
                 ax.imshow(lbl, cmap='gray')
                 ax.grid(False)
                 ax.set(xticks=[], yticks=[])
-                if name is not None:
-                    ax.set_title(name)
+                if c == 0:
+                    if name is not None:
+                        ax.set_ylabel(f'{name} target')
+                    else:
+                        ax.set_ylabel(f'Target {t}')
 
-        return fig, axs
-
+        if show:
+            plt.show()
+        else:
+            return fig, axs
 
 
 @contextmanager

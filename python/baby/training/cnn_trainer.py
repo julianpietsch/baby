@@ -32,6 +32,7 @@ from types import MappingProxyType
 import json
 import pathlib
 import pickle
+import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_rgba
 from scipy.signal import savgol_filter
@@ -223,10 +224,24 @@ class CNNTrainer:
             for cnn_id in self.cnn_set:
                 self.cnn_fn = cnn_id
                 history_file = self.cnn_dir / HISTORY_FILE
-                if not history_file.exists():
+                csv_history_file = self.cnn_dir / CSV_HISTORY_FILE
+                if history_file.exists():
+                    with open(history_file, 'rb') as f:
+                        history = pickle.load(f)
+                elif csv_history_file.exists():
+                    # Try loading from csv file instead
+                    csv_history = np.genfromtxt(csv_history_file,
+                                                delimiter=',', names=True)
+                    history = {
+                        'epoch': csv_history['epoch'],
+                        'history': {
+                            k: csv_history[k] for k in csv_history.dtype.names
+                            if k != 'epoch'
+                        }
+                    }
+                else:
+                    # this model may not have been trained yet- skip
                     continue
-                with open(history_file, 'rb') as f:
-                    history = pickle.load(f)
                 history['name'] = self.cnn_name
                 history['file'] = history_file
                 hdict[cnn_id] = history

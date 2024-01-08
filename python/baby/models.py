@@ -53,7 +53,8 @@ def named_model_fn(name):
     def wrap(f):
 
         @named_obj(name)
-        def model_fn(generator, flattener, weights={}, use_adamw=False, **kwargs):
+        def model_fn(generator, flattener, weights={}, use_adamw=False,
+                     use_legacy_adam=False, **kwargs):
             weights = {n: weights.get(n, 1) for n in flattener.names()}
             inputs = Input(shape=generator.shapes.input[1:])
             model = Model(inputs=[inputs],
@@ -61,6 +62,9 @@ def named_model_fn(name):
                                                flattener.names()))
             if use_adamw:
                 optimizer = AdamW(weight_decay=0.00025)
+            elif use_legacy_adam:
+                from tensorflow.keras.optimizers.legacy import Adam as AdamLegacy
+                optimizer = AdamLegacy(amsgrad=False)
             else:
                 optimizer = Adam(amsgrad=False)
             model.compile(optimizer=optimizer,
