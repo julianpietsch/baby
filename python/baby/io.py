@@ -53,6 +53,16 @@ from .errors import LayoutError, UnpairedImagesError
 from .utils import PathEncoder
 
 
+def load_tiled_image_meta(filename):
+    if LEGACY_IIO:
+        tImg = imread(filename)
+        info = tImg.meta
+    else:
+        info = iio.immeta(filename)
+
+    return json.loads(info.get('Description', '{}'))
+
+
 def load_tiled_image(filename):
     if LEGACY_IIO:
         tImg = imread(filename)
@@ -197,8 +207,7 @@ class TrainValPairs(object):
             for k, pairs in trainvalpairs.items():
                 pair_meta = []
                 for _, l in pairs:
-                    info = json.loads(imread(l).meta.get(
-                        'Description', '{}'))
+                    info = load_tiled_image_meta(l)
                     pair_meta.append(
                         {field: value for field, value in info.items()})
                     pair_meta[-1]['cellLabels'] = aslist(
@@ -330,10 +339,7 @@ class TrainValPairs(object):
 
         # Choose a split that ensures separation by group keys and avoids,
         # e.g., splitting same cell but different time points
-        info = [
-            json.loads(imread(l).meta.get('Description', '{}'))
-            for _, l in pairs
-        ]
+        info = [load_tiled_image_meta(l) for _, l in pairs]
         pair_groups = [
             tuple(i.get(f, 'missing_' + str(e))
                   for f in group_by)
@@ -434,8 +440,7 @@ class TrainValTestPairs(object):
             for k, pairs in trainvalpairs.items():
                 pair_meta = []
                 for _, l in pairs:
-                    info = json.loads(imread(l).meta.get(
-                        'Description', '{}'))
+                    info = load_tiled_image_meta(l)
                     pair_meta.append(
                         {field: value for field, value in info.items()})
                     pair_meta[-1]['cellLabels'] = aslist(
@@ -613,10 +618,7 @@ class TrainValTestPairs(object):
 
         # Choose a split that ensures separation by group keys and can avoid,
         # e.g., splitting same cell but different time points.
-        info = [
-            json.loads(imread(l).meta.get('Description', '{}'))
-            for _, l in pairs
-        ]
+        info = [load_tiled_image_meta(l) for _, l in pairs]
         # Collect grouping variables to split pairs up according to their
         # group. NB: we force everything to be a string in case variables are
         # loaded inconsistently from the JSON meta data. Any missing or False
