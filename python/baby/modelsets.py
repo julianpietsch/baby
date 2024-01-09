@@ -126,7 +126,9 @@ def specifications(update=False, local=False):
         return local_modelsets()['models']
     with open(LOCAL_MODELSETS_CACHE, 'rt') as f:
         modelsets_info = json.load(f, object_hook=as_python_object)
-    return modelsets_info['models']
+    specs = modelsets_info['models']
+    specs.update(local_modelsets()['models'])
+    return specs
 
 
 def ids(update=False, local=False):
