@@ -225,11 +225,8 @@ class CNNTrainer:
                 self.cnn_fn = cnn_id
                 history_file = self.cnn_dir / HISTORY_FILE
                 csv_history_file = self.cnn_dir / CSV_HISTORY_FILE
-                if history_file.exists():
-                    with open(history_file, 'rb') as f:
-                        history = pickle.load(f)
-                elif csv_history_file.exists():
-                    # Try loading from csv file instead
+                if csv_history_file.exists():
+                    # Try loading from csv file first
                     csv_history = np.genfromtxt(csv_history_file,
                                                 delimiter=',', names=True)
                     history = {
@@ -237,13 +234,18 @@ class CNNTrainer:
                         'history': {
                             k: csv_history[k] for k in csv_history.dtype.names
                             if k != 'epoch'
-                        }
+                        },
+                        'file': csv_history_file
                     }
+                elif history_file.exists():
+                    # Otherwise from the returned history saved using pickle
+                    with open(history_file, 'rb') as f:
+                        history = pickle.load(f)
+                    history['file'] = history_file
                 else:
                     # this model may not have been trained yet- skip
                     continue
                 history['name'] = self.cnn_name
-                history['file'] = history_file
                 hdict[cnn_id] = history
         finally:
             self.cnn_fn = active_cnn_fn
@@ -260,15 +262,18 @@ class CNNTrainer:
         return history['file'].parent
 
     @property
+    def opt_cnn_file(self):
+        return self.opt_dir / OPT_WEIGHTS_FILE
+
+    @property
     def opt_cnn(self):
         """The keras model for the CNN with the lowest loss."""
         if self._opt_cnn is None:
-            opt_dir = self.opt_dir
-            opt_file = opt_dir / OPT_WEIGHTS_FILE
+            opt_file = self.opt_cnn_file
             if not opt_file.exists():
                 raise BadProcess(
                     'Optimised model for {} model is missing'.format(
-                        opt_dir.name))
+                        opt_file.parent.name))
             self._opt_cnn = load_model(str(opt_file),
                                        custom_objects=custom_objects)
         return self._opt_cnn

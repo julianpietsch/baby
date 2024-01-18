@@ -723,6 +723,11 @@ class SegmentationTrainer(object):
         self._shared_params.segmentation_parameters = val
 
     @property
+    def segment_parameters_file(self):
+        return (self.save_dir /
+                self.training_parameters.segmentation_param_file)
+
+    @property
     def segment_parameter_coords(self):
         param_coords = DEFAULT_SEG_PARAM_COORDS.copy()
         param_coords.update(self.training_parameters.seg_param_coords)

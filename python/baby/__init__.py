@@ -31,4 +31,4 @@
 from .brain import BabyBrain
 from .crawler import BabyCrawler
 
-__version__ = 'v0.30.1'
+__version__ = 'v0.30.2'

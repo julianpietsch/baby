@@ -86,6 +86,7 @@ def plot_ims(ims, size=4, cmap=plt.cm.gray, show=True, dw=False, **kwargs):
     ncols = len(ims)
     fig, axs = plt.subplots(1, ncols, figsize=(aspect * ncols * size, size),
                             squeeze=False)
+    fig.subplots_adjust(wspace=0.02)
     axs = axs[0]
     for ax, im in zip(axs, ims):
         ax.imshow(np.squeeze(im), cmap=cmap, **kwargs)

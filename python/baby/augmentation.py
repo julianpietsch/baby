@@ -138,6 +138,11 @@ class Augmenter(object):
                 raise BadParam('"substacks" must be a positive integer')
         self.nsubstacks = substacks
 
+    def __repr__(self):
+        return (repr(type(self)) +
+                ' with augmentation probabilities:\n' +
+                repr(dict(zip(self.aug_order, self.probs))))
+
     def __call__(self, img, lbl_info):
         """
         Random data augmentation of img and lbl.

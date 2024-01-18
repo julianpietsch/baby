@@ -162,7 +162,7 @@ class SegmentationParameters(NamedTuple):
     curvy_knots: bool = False
     n_knots_fraction: float = 0.5
     pedge_thresh: Union[None, float, List[Optional[float]]] = None
-    use_group_thresh: bool = False
+    use_group_thresh: bool = True
     group_thresh_expansion: Union[float, List[float]] = 0.
     containment_func: Literal['mask_containment', 'mask_iou'] = 'mask_containment'
     containment_thresh: int = 0.8

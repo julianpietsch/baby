@@ -264,7 +264,12 @@ class BabyTrainer(object):
                 max_erode=max_erode)
         self.flattener_trainer.fit(**kwargs)
 
-    def plot_flattener_stats(self, **kwargs):
+    def plot_flattener_stats(self, max_erode=5, **kwargs):
+        try:
+            self.flattener_trainer.stats
+        except BadProcess:
+            self.flattener_trainer.generate_flattener_stats(
+                max_erode=max_erode)
         self.flattener_trainer.plot_stats(**kwargs)
 
     @property

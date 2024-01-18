@@ -323,6 +323,10 @@ class AugmentedGenerator(Sequence):
             return len(g)
 
     @property
+    def augmenter(self):
+        return self._aug
+
+    @property
     def batch_size(self):
         return self._gen.batch_size
 
