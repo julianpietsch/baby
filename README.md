@@ -147,9 +147,14 @@ copy these to another directory for routine use. If you want to share a
 notebook, you can then specifically add it back to the repository at a useful
 checkpoint.
 
-The notebooks include a [complete
-example](python/notebooks/example-baby-analysis-fig1.ipynb) for reproducing
-Figure 1e in the associated paper.
+The notebooks include: 
+
+1. a [complete example](python/notebooks/example-baby-analysis-fig1.ipynb) for
+   reproducing Figure 1e in the associated paper.
+2. the [basic training
+   workflow](python/notebooks/basic-training-workflow.ipynb) demonstrating how
+   to train the BABY algorithm from scratch. This notebook can be adapted to
+   train BABY for new cell types or imaging modes.
 
 ## Run via a server
 
@@ -162,5 +167,6 @@ requests using:
 
 Server runs by default on [http://0.0.0.0:5101](). HTTP requests need to be
 sent to the correct URL endpoint, but the HTTP API is currently undocumented.
-The primary client implementation is in Matlab.
+The primary client implementation is the [BABY
+GUI](https://github.com/julianpietsch/baby-gui) available for Matlab.
 
