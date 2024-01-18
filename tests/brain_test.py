@@ -42,8 +42,8 @@ from baby.morph_thresh_seg import MorphSegGrouped, SegmentationParameters
 
 DEFAULT_MODELSET = 'yeast-alcatras-brightfield-EMCCD-60x-5z'
 TEST_MODELSETS = ['yeast-alcatras-brightfield-EMCCD-60x-5z',
-                  'yeast-alcatras-brightfield-sCMOS-60x-5z']
-                  #'ecoli-mm-phase-sCMOS-100x-1z']
+                  'yeast-alcatras-brightfield-sCMOS-60x-5z',
+                  'ecoli-mothermachine-phase-sCMOS-100x-1z']
 
 
 eqlen_outkeys = {

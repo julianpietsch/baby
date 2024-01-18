@@ -159,5 +159,5 @@ def bb_prime60(modelsets, tf_session_graph):
 @pytest.fixture(scope='module')
 def bb_mmscmos(modelsets, tf_session_graph):
     tf_session, tf_graph = tf_session_graph
-    return modelsets.get('ecoli-mm-phase-sCMOS-100x-1z',
+    return modelsets.get('ecoli-mothermachine-phase-sCMOS-100x-1z',
                          session=tf_session, graph=tf_graph)
