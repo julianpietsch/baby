@@ -34,7 +34,7 @@ import baby
 import pytest
 from baby import modelsets as modelsets_module
 from baby.brain import BabyBrain
-from baby.io import load_paired_images
+from baby.io import load_tiled_image, load_paired_images
 
 IMAGE_DIR = Path(__file__).parent / 'images'
 
@@ -91,6 +91,12 @@ def imgs_evolve60():
 @pytest.fixture(scope='session')
 def imgs_prime60():
     return load_paired_images(IMAGE_DIR.glob('prime95b_*.png'))
+
+
+@pytest.fixture(scope='session')
+def bfimgs_prime60():
+    return {f.stem[:-12]: load_tiled_image(f) for f in 
+            sorted(IMAGE_DIR.glob('prime95b_*_Brightfield.png'))}
 
 
 @pytest.fixture(scope='session')

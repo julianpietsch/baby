@@ -59,3 +59,25 @@ def test_evolve_predict(bb_evolve60, imgs_evolve60, save_cnn_predictions,
                 ((2**16 - 1) * pred.transpose([1, 2, 0])).astype('uint16'),
                 image_dir / (k + '_preds.png'), info, layout=(1, None)
             )
+
+def test_prime95b_predict(bb_prime60, bfimgs_prime60, save_cnn_predictions,
+                          image_dir):
+    # Make a stack of prime95b brightfield images
+    imgstack = np.stack([robust_norm(*v) for v in bfimgs_prime60.values()])
+
+    preds = list(bb_prime60.morph_predict(imgstack))
+    assert len(preds) == len(imgstack)
+    npredchan = len(bb_prime60.flattener.names())
+    assert all([len(pred) == npredchan for pred in preds]) 
+    assert all([pred.shape[1:] == imgstack.shape[1:3] for pred in preds])
+
+    assert all([pred.max() <= 1 and pred.min() >= 0 for pred in preds])
+
+    if save_cnn_predictions:
+        # Save prediction output as 16 bit tiled png
+        for pred, (k, (_, info)) in zip(preds, bfimgs_prime60.items()):
+            info['channel'] = 'cnnpred'
+            save_tiled_image(
+                ((2**16 - 1) * pred.transpose([1, 2, 0])).astype('uint16'),
+                image_dir / (k + '_preds.png'), info, layout=(1, None)
+            )

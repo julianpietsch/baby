@@ -36,23 +36,39 @@ from pathlib import Path
 import baby
 import numpy as np
 import pytest
-from baby.io import load_paired_images
+from baby import modelsets
+from baby.io import load_paired_images, load_tiled_image
 from baby.morph_thresh_seg import MorphSegGrouped, SegmentationParameters
 from baby.preprocessing import raw_norm, SegmentationFlattening
 from baby.tracker.core import MasterTracker
 from baby.utils import as_python_object
+from baby.performance import calc_IoUs, best_IoU
 
 
-TrackerEnv = namedtuple('TrackerEnv', ['masks', 'p_budneck', 'p_bud'])
+TrackerEnv = namedtuple('TrackerEnv', ['masks', 'p_budneck', 'p_bud', 'target'])
 DEFAULT_MODELSET = 'yeast-alcatras-brightfield-EMCCD-60x-5z'
 
 
-@pytest.fixture(scope='module')
-def evolve60env(modelsets, image_dir):
-    mset = modelsets.get_params(DEFAULT_MODELSET)
+def get_tracker_model(mset, mset_name):
+    # Load the celltrack and budassign models
+    ctm_file = modelsets.resolve(mset['celltrack_model_file'], mset_name)
+    with open(ctm_file, 'rb') as f:
+        ctm = pickle.load(f)
+    bam_file = modelsets.resolve(mset['budassign_model_file'], mset_name)
+    with open(bam_file, 'rb') as f:
+        bam = pickle.load(f)
 
+    # Set up a tracker for this model set
+    return MasterTracker(ctrack_args={'model': ctm},
+                         btrack_args={'model': bam},
+                         min_bud_tps=mset.get('min_bud_tps', 3),
+                         isbud_thresh=mset.get('isbud_thresh', 0.5),
+                         px_size=mset.get('pixel_size', 0.263))
+
+
+def segment_from_preds(mset, mset_name, impair_groups):
     # Load flattener
-    ff = modelsets.resolve(mset['flattener_file'], DEFAULT_MODELSET)
+    ff = modelsets.resolve(mset['flattener_file'], mset_name)
     flattener = SegmentationFlattening(ff)
 
     tnames = flattener.names()
@@ -65,26 +81,18 @@ def evolve60env(modelsets, image_dir):
     if type(params) == dict:
         params = SegmentationParameters(**params)
     if type(params) != SegmentationParameters:
-        param_file = modelsets.resolve(mset['params'], DEFAULT_MODELSET)
+        param_file = modelsets.resolve(mset['params'], mset_name)
         with open(param_file, 'rt') as f:
             params = json.load(f, object_hook=as_python_object)
     assert type(params) == SegmentationParameters
 
     segmenter = MorphSegGrouped(flattener, params=params, return_masks=True)
 
-    # Load CNN outputs
-    impairs = load_paired_images(image_dir.glob('evolve_test[FG]_tp*.png'),
-                                 typeA='preds')
-    assert len(impairs) > 0
-    tpkeys = (sorted([
-        k for k in impairs.keys() if k.startswith('evolve_testF')
-    ]), sorted([k for k in impairs.keys() if k.startswith('evolve_testG')]))
-
     # Segment and add to list of input data
-    trks = ([], [])
-    for i in range(len(tpkeys)):
-        for k in tpkeys[i]:
-            impair = impairs[k]
+    trks = {}
+    for k, impairs in impair_groups.items():
+        trks[k] = []
+        for impair in impairs.values():
             cnn_out = raw_norm(*impair['preds']).transpose((2, 0, 1))
             seg_output = segmenter.segment(cnn_out, refine_outlines=True)
             _0xy = (0,) + cnn_out.shape[1:3]
@@ -92,33 +100,48 @@ def evolve60env(modelsets, image_dir):
                 masks = np.stack(seg_output.masks)
             else:
                 masks = np.zeros(_0xy, dtype='bool')
-            trks[i].append(
-                TrackerEnv(masks, cnn_out[i_budneck], cnn_out[i_bud]))
-    trkF, trkG = trks
+            trks[k].append(
+                TrackerEnv(masks, cnn_out[i_budneck], cnn_out[i_bud],
+                           impair.get('segoutlines')))
+    return trks
 
-    # Load the celltrack and budassign models
-    ctm_file = modelsets.resolve(mset['celltrack_model_file'], DEFAULT_MODELSET)
-    with open(ctm_file, 'rb') as f:
-        ctm = pickle.load(f)
-    bam_file = modelsets.resolve(mset['budassign_model_file'], DEFAULT_MODELSET)
-    with open(bam_file, 'rb') as f:
-        bam = pickle.load(f)
 
-    # Set up a tracker for this model set
-    tracker = MasterTracker(ctrack_args={'model': ctm},
-                            btrack_args={'model': bam},
-                            min_bud_tps=mset.get('min_bud_tps',3),
-                            isbud_thresh=mset.get('isbud_thresh',0.5),
-                            px_size=0.263)
+@pytest.fixture(scope='module')
+def evolve60env(modelsets, image_dir):
+    mset_name = DEFAULT_MODELSET
+    mset = modelsets.get_params(mset_name)
+    tracker = get_tracker_model(mset, mset_name)
+    impair_groups = {
+        'trkF': load_paired_images(image_dir.glob('evolve_testF_tp*.png'),
+                                   typeA='preds'),
+        'trkG': load_paired_images(image_dir.glob('evolve_testG_tp*.png'),
+                                   typeA='preds')
+    }
+    assert all([len(impairs) > 0 for impairs in impair_groups.values()])
+    trks = segment_from_preds(mset, mset_name, impair_groups)
+    return tracker, trks
 
-    return tracker, trkF, trkG
+
+@pytest.fixture(scope='module')
+def prime60env(modelsets, image_dir):
+    mset_name = 'yeast-alcatras-brightfield-sCMOS-60x-5z'
+    mset = modelsets.get_params(mset_name)
+    tracker = get_tracker_model(mset, mset_name)
+    impair_groups = {
+        'trkC': load_paired_images(image_dir.glob('prime95b_testC_tp*.png'),
+                                   typeA='preds')
+    }
+    assert all([len(impairs) > 0 for impairs in impair_groups.values()])
+    trks = segment_from_preds(mset, mset_name, impair_groups)
+    return tracker, trks
 
 
 def test_bad_track(evolve60env):
-    tracker, input_args, _ = evolve60env
+    tracker, tracker_inputs = evolve60env
+    tracker_inputs = tracker_inputs['trkF']
     nstepsback = 2
     state = {}
-    for masks, p_budneck, p_bud in input_args:
+    for masks, p_budneck, p_bud, _ in tracker_inputs:
         ncells = len(masks)
 
         # Check feature calculation
@@ -159,11 +182,12 @@ def test_bad_track(evolve60env):
 
 
 def test_bud_assignment(evolve60env):
-    tracker, _, trkG = evolve60env
+    tracker, tracker_inputs = evolve60env
+    trkG = tracker_inputs['trkG']
     mother_lbl = None
     bud_lbl = None
     state = {}
-    for tp, (masks, p_budneck, p_bud) in enumerate(trkG):
+    for tp, (masks, p_budneck, p_bud, _) in enumerate(trkG):
         assert len(masks) == 2
 
         tracking = tracker.step_trackers(masks,
@@ -190,3 +214,71 @@ def test_bud_assignment(evolve60env):
         else:
             assert mother_lbl in tracking['mother_assign']
             assert tracking['mother_assign'][bud_lbl - 1]
+
+
+def test_prime60_bud_assignment(prime60env):
+    tracker, tracker_inputs = prime60env
+    trkC = tracker_inputs['trkC']
+    state = {}
+    MAX_LABEL = 10
+    assigned_targets = np.full(MAX_LABEL, -MAX_LABEL-2, dtype='int')
+    mother_targets = np.full(MAX_LABEL, -MAX_LABEL-2, dtype='int')
+    for tp, (masks, p_budneck, p_bud, target) in enumerate(trkC):
+        target_masks, target_info = target
+        target_masks = target_masks.transpose((2, 0, 1))
+        target_labels = np.array(target_info['cellLabels'])
+        assert len(masks) == len(target_masks)
+        _, assignments = best_IoU(calc_IoUs(masks, target_masks))
+
+        tracking = tracker.step_trackers(masks,
+                                         p_budneck,
+                                         p_bud,
+                                         state=state,
+                                         assign_mothers=True,
+                                         return_baprobs=True)
+        state = tracking['state']
+        labels = np.array(tracking['cell_label'])
+        assert len(labels) == len(target_labels)
+
+        # print(tp, target_labels, labels, assigned_targets)
+        isnew = assigned_targets[labels] < 0
+        new_labels = labels[isnew]
+        assigned_targets[new_labels] = target_labels[assignments][isnew]
+        assert np.all(target_labels[assignments] == assigned_targets[labels])
+        
+        print(assigned_targets)
+
+        if 'buds' in target_info:
+            tgt_lbl_max = target_labels.max() + 1
+            tgt_lbl_map = np.full(tgt_lbl_max, -tgt_lbl_max-1, dtype='int')
+            tgt_lbl_map[target_labels] = np.arange(target_labels.size)
+            tgt_buds = np.array(target_info['buds'])
+            tgt_mthrs = np.zeros_like(target_labels)
+            tgt_mthrs[tgt_lbl_map[tgt_buds[tgt_buds > 0]]] = target_labels[tgt_buds > 0]
+            isnew = tgt_mthrs[assignments] > 0
+            # print(isnew, tgt_mthrs, tgt_lbl_map)
+            mother_targets[labels[isnew]] = tgt_mthrs[assignments][isnew]
+
+        print(mother_targets)
+
+        if tp > 2:
+            mothers = np.array(tracking['mother_assign'])
+            bud_inds = np.flatnonzero(mothers > 0)
+            print(mothers)
+            assert np.all(mother_targets[bud_inds] ==
+                          assigned_targets[mothers[bud_inds - 1]])
+
+
+def test_cyclic_bud_assignment(bb_prime60, image_dir):
+    input_img_files = image_dir.glob('prime95b_testB_tp?_Brightfield.png')
+    input_img_files = sorted(input_img_files)
+
+    tracker_states = [None]
+
+    for img_file in input_img_files:
+        img, _ = load_tiled_image(img_file)
+        seg_trk_gen = bb_prime60.segment_and_track(
+            [img], tracker_states=tracker_states, yield_next=True,
+            assign_mothers=True, refine_outlines=True)
+        for i, (seg, state) in enumerate(seg_trk_gen):
+            tracker_states[i] = state

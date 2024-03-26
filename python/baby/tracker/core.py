@@ -892,10 +892,21 @@ class MasterTracker(FeatureCalculator):
         if assign_mothers:
             if max_lbl > 0:
                 # Calculate mother assignments for this time point
-                # TODO: this should proceed more like the IoU assignment
-                # algorithm to guarantee that two buds will not be assigned to
-                # the same mother
-                ma = ba_cum[0:max_lbl, 0:max_lbl].argmax(0) + 1
+                # A mother may be assigned multiple times, but buds may not
+                ba_mat = ba_cum[0:max_lbl, 0:max_lbl].copy()
+                # Prohibit self-assignment
+                np.fill_diagonal(ba_mat, -np.inf)
+                ma = -np.ones(max_lbl, dtype='int')
+                for _ in range(max_lbl):
+                    m, b = np.unravel_index(np.argmax(ba_mat), ba_mat.shape)
+                    if ba_mat[m, b] <= 0:
+                        break
+                    ma[b] = m
+                    # Prevent buds being assigned multiple times
+                    ba_mat[:, b] = -np.inf
+
+                ma += 1 # convert to Matlab indexing
+
                 # Cell must have been a bud and been present for at least
                 # min_bud_tps
                 isbud = (p_was_bud[0:max_lbl] > self.isbud_thresh) & (

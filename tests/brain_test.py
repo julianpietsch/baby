@@ -127,8 +127,8 @@ def test_evolve_segment(bb, imgstack):
             [len(o['centres']) == len(o[k]) for k in o if k in eqlen_outkeys])
 
 
-def test_prime_segment(bb_prime60, imgs_prime60):
-    imgstack = np.stack([v['Brightfield'][0] for v in imgs_prime60.values()])
+def test_prime_segment(bb_prime60, bfimgs_prime60):
+    imgstack = np.stack([v[0] for v in bfimgs_prime60.values()])
     # Test segment with all options enabled
     output = bb_prime60.segment(imgstack,
                                 yield_edgemasks=True,
