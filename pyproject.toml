@@ -7,8 +7,8 @@ name = "baby-seg"
 dynamic = ["version"]
 description = "Birth Annotator for Budding Yeast"
 readme = "README.md"
-license = "MIT"
-license-files = { paths = ["LICENSE.txt"] }
+license-expression = "MIT"
+license-file = "LICENSE.txt"
 authors = [
     {name = "Julian Pietsch", email = "julian.pietsch@synmikro.mpi-marburg.mpg.de"}
 ]
