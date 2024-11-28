@@ -33,6 +33,7 @@
 '''
 TrackerCoordinator class to coordinate cell tracking and bud assignment.
 '''
+import warnings
 from os.path import join, dirname
 from collections import Counter
 import pickle
@@ -104,8 +105,14 @@ class FeatureCalculator:
             model_file = join(path, fname)
         else:
             model_file = fname
-        with open(model_file, 'rb') as file_to_load:
-            model = pickle.load(file_to_load)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Trying to unpickle estimator",
+                category=UserWarning
+            )
+            with open(model_file, 'rb') as file_to_load:
+                model = pickle.load(file_to_load)
 
         return model
 

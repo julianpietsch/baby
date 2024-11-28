@@ -55,6 +55,11 @@ from scipy import ndimage
 from skimage.morphology import erosion, ball
 from skimage import measure, draw
 
+try:
+    from scipy.ndimage import distance_transform_edt
+except ImportError:
+    from scipy.ndimage.morphology import distance_transform_edt
+
 
 def my_ball(radius):
     """Generates a ball-shaped structuring element.
@@ -145,7 +150,7 @@ def plot_voxels(voxels):
 # Volume estimation
 def union_of_spheres(outline, shape='my_ball', debug=False):
     filled = ndimage.binary_fill_holes(outline)
-    nearest_neighbor = ndimage.morphology.distance_transform_edt(
+    nearest_neighbor = distance_transform_edt(
         outline == 0) * filled
     voxels = np.zeros((filled.shape[0], filled.shape[1], max(filled.shape)))
     c_z = voxels.shape[2] // 2
@@ -171,7 +176,7 @@ def union_of_spheres(outline, shape='my_ball', debug=False):
 
 def improved_uos(outline, shape='my_ball', debug=False):
     filled = ndimage.binary_fill_holes(outline)
-    nearest_neighbor = ndimage.morphology.distance_transform_edt(
+    nearest_neighbor = distance_transform_edt(
         outline == 0) * filled
     voxels = np.zeros((filled.shape[0], filled.shape[1], max(filled.shape)))
     c_z = voxels.shape[2] // 2
@@ -202,7 +207,7 @@ def improved_uos(outline, shape='my_ball', debug=False):
 
 def conical(outline, debug=False):
     filled = ndimage.binary_fill_holes(outline)
-    nearest_neighbor = ndimage.morphology.distance_transform_edt(
+    nearest_neighbor = distance_transform_edt(
         outline == 0) * filled
     if debug:
         hf = plt.figure()
