@@ -200,6 +200,7 @@ def _rescale_output(output, rescaling, outshape, cartesian_spline):
         output['radii'] = [[r * rescaling for r in cell]
                            for cell in output['radii']]
     has_coords = {'centres', 'angles', 'radii'}.issubset(output.keys())
+    has_coords = has_coords and len(output['radii']) > 0
     if has_coords and ('edgemasks' in output or 'masks' in output):
         edgemasks = np.stack([
             draw_radial(np.array(r), np.array(a), c, outshape,
