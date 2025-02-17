@@ -331,6 +331,7 @@ def _track(tracker,
            assign_mothers,
            return_baprobs,
            yield_edgemasks,
+           yield_masks,
            yield_next,
            error_dump_dir,
            suppress_errors,
@@ -391,7 +392,8 @@ def _track(tracker,
             raise
 
     del seg['preds']
-    del seg['masks']
+    if not yield_masks and 'masks' in seg:
+        del seg['masks']
     if not yield_edgemasks and 'edgemasks' in seg:
         del seg['edgemasks']
 
@@ -435,6 +437,7 @@ def _segment_and_track(segmenter,
                        refine_outlines,
                        yield_volumes,
                        yield_edgemasks,
+                       yield_masks,
                        clogging_thresh,
                        assign_mothers,
                        return_baprobs,
@@ -464,6 +467,7 @@ def _segment_and_track(segmenter,
                       assign_mothers,
                       return_baprobs,
                       yield_edgemasks,
+                      yield_masks,
                       yield_next,
                       error_dump_dir,
                       suppress_errors,
@@ -483,7 +487,8 @@ def _segment_and_track(segmenter,
 def _segment_and_track_parallel(segmenter, tracker, flattener, morph_preds,
                                 tracker_states, rescaling, outshape,
                                 refine_outlines, yield_volumes,
-                                yield_edgemasks, clogging_thresh,
+                                yield_edgemasks, yield_masks,
+                                clogging_thresh,
                                 assign_mothers, return_baprobs, yield_next,
                                 njobs, error_dump_dir, suppress_errors):
 
@@ -502,7 +507,8 @@ def _segment_and_track_parallel(segmenter, tracker, flattener, morph_preds,
     return Parallel(n_jobs=njobs, mmap_mode='c')(
         delayed(_segment_and_track)
         (segmenter, tracker, cnn_output, state, i_budneck, i_bud,
-         rescaling, outshape, refine_outlines, yield_volumes, yield_edgemasks,
+         rescaling, outshape, refine_outlines, yield_volumes,
+         yield_edgemasks, yield_masks,
          clogging_thresh, assign_mothers, return_baprobs, yield_next,
          error_dump_dir, suppress_errors)
         for cnn_output, state in zip(morph_preds, tracker_states))

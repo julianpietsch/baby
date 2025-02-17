@@ -424,6 +424,7 @@ class BabyBrain(object):
                           pixel_size=None,
                           yield_next=False,
                           yield_edgemasks=False,
+                          yield_masks=False,
                           assign_mothers=False,
                           return_baprobs=False,
                           refine_outlines=False,
@@ -438,6 +439,7 @@ class BabyBrain(object):
         :param yield_next: whether to yield updated tracking states for
             subsequent calls to this function
         :param yield_edgemasks: whether to include edge masks in the output
+        :param yield_masks: whether to include masks in the output
         :param assign_mothers: whether to include mother assignments in the
             output
         :param return_baprobs: whether to include the bud assignment
@@ -496,9 +498,10 @@ class BabyBrain(object):
 
         for seg, state in zip(segment_gen, tracker_states):
             trackout = _track(self.tracker, seg, state, i_budneck, i_bud,
-                         assign_mothers, return_baprobs, yield_edgemasks,
-                         yield_next, self.error_dump_dir,
-                         self.suppress_errors)
+                              assign_mothers, return_baprobs,
+                              yield_edgemasks, yield_masks,
+                              yield_next, self.error_dump_dir,
+                              self.suppress_errors)
             if yield_next:
                 segout, state = trackout
                 _rescale_output(segout, rescaling, inshape,
@@ -515,6 +518,7 @@ class BabyBrain(object):
                                    pixel_size=None,
                                    yield_next=False,
                                    yield_edgemasks=False,
+                                   yield_masks=False,
                                    assign_mothers=False,
                                    return_baprobs=False,
                                    refine_outlines=False,
@@ -529,6 +533,7 @@ class BabyBrain(object):
         :param yield_next: whether to yield updated tracking states for
             subsequent calls to this function
         :param yield_edgemasks: whether to include edge masks in the output
+        :param yield_masks: whether to include masks in the output
         :param assign_mothers: whether to include mother assignments in the
             output
         :param return_baprobs: whether to include the bud assignment
@@ -574,7 +579,8 @@ class BabyBrain(object):
         trackout = _segment_and_track_parallel(
             self.morph_segmenter, self.tracker, self.flattener, preds,
             tracker_states, rescaling, inshape, refine_outlines,
-            yield_volumes, yield_edgemasks, self.clogging_thresh,
+            yield_volumes, yield_edgemasks, yield_masks,
+            self.clogging_thresh,
             assign_mothers, return_baprobs, yield_next, njobs,
             self.error_dump_dir, self.suppress_errors)
         return trackout

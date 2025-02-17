@@ -17,7 +17,7 @@ dependencies = [
     "aiohttp",
     "gaussianprocessderivatives",
     "matplotlib",
-    "numpy",
+    "numpy<2",
     "pandas",
     "imageio",
     "pillow",

@@ -196,6 +196,15 @@ def test_evolve_segment_and_track(bb, imgstack, imgs_evolve60):
                                                yield_volumes=True,
                                                refine_outlines=True))
     list(output4)  # NB: required since output is from a generator
+    assert 'masks' not in output4[0]
+    output4, state = zip(*bb.segment_and_track(tp4,
+                                               tracker_states=state,
+                                               yield_masks=True,
+                                               yield_next=True,
+                                               yield_volumes=True,
+                                               refine_outlines=True))
+    assert 'masks' in list(output4)[0]
+
 
 
 def test_evolve_segment_and_track_parallel(bb, imgstack, imgs_evolve60):
@@ -245,3 +254,11 @@ def test_evolve_segment_and_track_parallel(bb, imgstack, imgs_evolve60):
                                                         yield_volumes=True,
                                                         refine_outlines=True))
     list(output4)  # NB: required since output is from a generator
+    assert 'masks' not in output4[0]
+    output4, state = zip(*bb.segment_and_track_parallel(tp4,
+                                                        tracker_states=state,
+                                                        yield_masks=True,
+                                                        yield_next=True,
+                                                        yield_volumes=True,
+                                                        refine_outlines=True))
+    assert 'masks' in list(output4)[0]
