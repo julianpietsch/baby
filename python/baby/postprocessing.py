@@ -29,11 +29,14 @@
 # IN THE SOFTWARE.
 from warnings import warn
 import numpy as np
-# import gaussianprocessderivatives as gp
-import gaussianprocessderivatives as gp
+try:
+    import gaussianprocessderivatives as gp
+except ImportError:
+    gp = None
 import h5py
 from tqdm import trange, tqdm
 from collections import namedtuple
+from .errors import MissingDependency
 
 def by_thresh(diff, gr, start, thresh, max_thresh, d_idx=None, debug=False):
     """Recursively define a crossing point based on a threshold range. 
@@ -99,6 +102,9 @@ def cytokinesis_from_growth_rate(d_gr, d_std, m_gr, m_std,
 
 
 def growth_rates_from_volumes(times, volumes):
+    if gp is None:
+        raise MissingDependency('"gaussianprocessderivatives" package is '
+                                'required for this function.')
     fvals = ['f', 'df']
     fits = {}
     for f in fvals:
@@ -129,6 +135,9 @@ def growth_rates_from_volumes(times, volumes):
 
 def fit_gr_data(filename, run_moth=True, run_dght=True, split_at_birth=False,
         log_volume=False):
+    if gp is None:
+        raise MissingDependency('"gaussianprocessderivatives" package is '
+                                'required for this function.')
     data = h5py.File(filename, 'a')
     if log_volume:
         hyperpar_bounds = {0: (-2, 1), 1: (-2, 2), 2: (-4, -2)}

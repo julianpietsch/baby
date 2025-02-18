@@ -61,3 +61,7 @@ class Clogging(Exception):
 
 class BadModel(Exception):
     pass
+
+
+class MissingDependency(Exception):
+    pass

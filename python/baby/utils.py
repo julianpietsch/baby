@@ -29,11 +29,17 @@
 # IN THE SOFTWARE.
 import time
 import json
+from functools import partial
+import warnings
 from pathlib import Path
 from typing import NamedTuple, Any
 from importlib import import_module
+from packaging.version import Version
 import numpy as np
-from baby.errors import BadParam
+import sklearn
+from sklearn.base import BaseEstimator
+from sklearn.tree._tree import Tree
+from baby.errors import BadParam, BadFile, BadModel
 
 
 class Timer(object):
@@ -109,6 +115,125 @@ def as_python_object(obj):
         return set(obj['_python_set'])
     else:
         return obj
+
+
+ACCEPTED_MODELS = (
+    'RandomForestClassifier', 
+    'DecisionTreeClassifier',
+    'Tree'
+)
+
+
+def jsonify_sklearn_model(obj, arrays=None):
+    if arrays is None:
+        arrays = {}
+        return jsonify_sklearn_model(obj, arrays), arrays
+    recurse = partial(jsonify_sklearn_model, arrays=arrays)
+    
+    if isinstance(obj, np.ndarray):
+        name = f'array{len(arrays)}'
+        arrays[name] = obj
+        return {'_numpy_ndarray': name}
+    if isinstance(obj, np.int64):
+        return int(obj)
+    elif isinstance(obj, (BaseEstimator, Tree)):
+        T = type(obj)
+        return {
+            f'_sklearn_object': recurse(obj.__getstate__()),
+            '__module__': T.__module__,
+            '__name__': T.__name__
+        }
+    elif isinstance(obj, tuple):
+        return {'_python_tuple': [recurse(v) for v in obj]}
+    elif isinstance(obj, dict):
+        return {k: recurse(v) for k, v in obj.items() if not k.startswith('base_estimator')}
+    elif isinstance(obj, list):
+        return [recurse(v) for v in obj]
+    else:
+        return obj
+
+
+def as_sklearn_model(obj, arrays={}):
+    if '_numpy_ndarray' in obj:
+        return arrays[obj['_numpy_ndarray']]
+    if '_sklearn_object' in obj:
+        mod = obj['__module__']
+        if not mod.startswith('sklearn.'):
+            raise BadFile('Invalid model file, or file is corrupt')
+        cls = obj['__name__']
+        if cls not in ACCEPTED_MODELS:
+            raise BadFile('Invalid model file, or file is corrupt')
+        skl_obj = getattr(import_module(mod), cls)
+        obj = obj['_sklearn_object']
+        if cls == 'Tree':
+            n_features = obj['nodes']['feature'].max() + 1
+            _, n_outputs, n_classes = obj['values'].shape
+            skl_obj = skl_obj(n_features, np.array([n_classes]), n_outputs)
+
+            # Adapt nodes dtype to the current version of sklearn
+            skl_nodes = skl_obj.__getstate__()['nodes']
+            obj_nodes = obj['nodes']
+            if not set(obj_nodes.dtype.names).issubset(skl_nodes.dtype.names):
+                raise BadModel('tree dtypes are not a subset of those for '
+                               'current version of scikit-learn')
+            obj_dtfields = {k: v for k, v in obj_nodes.dtype.fields.items()}
+            skl_dtfields = {k: v for k, v in skl_nodes.dtype.fields.items()
+                            if k in obj_dtfields}
+            if obj_dtfields != skl_dtfields:
+                raise BadModel('tree dtypes are not a subset of those for '
+                               'current version of scikit-learn')
+            
+            new_nodes = np.zeros_like(skl_nodes, shape=obj_nodes.shape)
+            for fname in obj_nodes.dtype.names:
+                new_nodes[fname] = obj_nodes[fname]
+            obj['nodes'] = new_nodes
+
+            if Version(sklearn.__version__) >= Version("1.4.1"):
+                # Need to renormalise the ._value attribute from weighted
+                # absolute count of number of samples to weighted fraction of
+                # total number of samples.
+                # See https://scikit-learn.org/stable/whats_new/v1.4.html
+                norm = obj['values'].sum(axis=2, keepdims=True)
+                obj['values'] = obj['values'] / norm
+        else:
+            skl_obj = skl_obj()
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Trying to unpickle estimator",
+                category=UserWarning
+            )
+            skl_obj.__setstate__(obj)
+        return skl_obj
+    elif '_python_tuple' in obj:
+        return tuple(obj['_python_tuple'])
+    else:
+        return obj
+
+
+def save_sklearn_model(model, filename):
+    """Save a Scikit-learn model in NumPy .npz format
+
+    Avoids pickling the model, but potentially requires additional maintenance
+    to ensure compatibilty with future Scikit-learn updates.
+    """
+    if not Path(filename).suffix == '.npz':
+        raise BadParam('model file name must end in ".npz"')
+    npz_dict, npz_arrays = jsonify_sklearn_model(model)
+    np.savez_compressed(filename,
+                        model_json=json.dumps(npz_dict),
+                        **npz_arrays)
+
+
+def load_sklearn_model(filename):
+    """Load a Scikit-learn saved in NumPy .npz format
+
+    Loads models as saved by :py:func:`save_sklearn_model`.
+    """
+    loader = np.load(filename)
+    object_hook = partial(as_sklearn_model, arrays=loader)
+    return json.loads(str(loader['model_json']),
+                      object_hook=object_hook)
 
 
 def find_file(filename, default_dir, argname=None):

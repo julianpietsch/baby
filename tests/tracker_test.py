@@ -41,7 +41,7 @@ from baby.io import load_paired_images, load_tiled_image
 from baby.morph_thresh_seg import MorphSegGrouped, SegmentationParameters
 from baby.preprocessing import raw_norm, SegmentationFlattening
 from baby.tracker.core import MasterTracker
-from baby.utils import as_python_object
+from baby.utils import as_python_object, load_sklearn_model
 from baby.performance import calc_IoUs, best_IoU
 
 
@@ -52,11 +52,17 @@ DEFAULT_MODELSET = 'yeast-alcatras-brightfield-EMCCD-60x-5z'
 def get_tracker_model(mset, mset_name):
     # Load the celltrack and budassign models
     ctm_file = modelsets.resolve(mset['celltrack_model_file'], mset_name)
-    with open(ctm_file, 'rb') as f:
-        ctm = pickle.load(f)
+    if ctm_file.suffix == 'pkl':
+        with open(ctm_file, 'rb') as f:
+            ctm = pickle.load(f)
+    else:
+        ctm = load_sklearn_model(ctm_file)
     bam_file = modelsets.resolve(mset['budassign_model_file'], mset_name)
-    with open(bam_file, 'rb') as f:
-        bam = pickle.load(f)
+    if bam_file.suffix == 'pkl':
+        with open(bam_file, 'rb') as f:
+            bam = pickle.load(f)
+    else:
+        bam = load_sklearn_model(bam_file)
 
     # Set up a tracker for this model set
     return MasterTracker(ctrack_args={'model': ctm},

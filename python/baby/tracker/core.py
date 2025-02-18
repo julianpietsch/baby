@@ -47,6 +47,7 @@ from sklearn.svm import SVC
 from baby.errors import BadOutput
 from baby.tracker.utils import calc_barycentre, pick_baryfun
 from baby import modelsets
+from ..utils import load_sklearn_model
 
 
 DEFAULT_MODELSET = 'yeast-alcatras-brightfield-EMCCD-60x-5z'
@@ -105,14 +106,23 @@ class FeatureCalculator:
             model_file = join(path, fname)
         else:
             model_file = fname
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message="Trying to unpickle estimator",
-                category=UserWarning
-            )
-            with open(model_file, 'rb') as file_to_load:
-                model = pickle.load(file_to_load)
+        model_file = Path(model_file)
+        if not model_file.exists():
+            model_file = model_file.with_suffix('.pkl')
+            if not model_file.exists():
+                raise FileNotFoundError(f'File "{fname}" could not be found')
+
+        if model_file.suffix == '.pkl':
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="Trying to unpickle estimator",
+                    category=UserWarning
+                )
+                with open(model_file, 'rb') as file_to_load:
+                    model = pickle.load(file_to_load)
+        else:
+            model = load_sklearn_model(model_file)
 
         return model
 

@@ -269,7 +269,7 @@ def update(modelset_ids=None, force=True, cleanup=False, verbose=True):
 
         mset_missing = mset_id not in local_msets
         mset_changed = mset_missing or local_msets[mset_id] != mset_meta
-        if mset_missing or (mset_changed and not force):
+        if force or mset_changed:
             new_mset_meta = mset_meta.copy()
             del new_mset_meta['files']
             with open(local_mset_dir / MODELSET_FILENAME, 'wt') as f:

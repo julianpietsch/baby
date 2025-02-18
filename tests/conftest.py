@@ -56,6 +56,10 @@ def pytest_addoption(parser):
         "--verify-all-modelsets", action="store_true", default=False,
         help="Download all models to confirm model set files exist"
     )
+    parser.addoption(
+        "--save-sklearn-pkls-as-npz", action="store_true", default=False,
+        help="save pickled sklearn models in npz format in test dir"
+    )
 
 
 @pytest.fixture(scope='session')
@@ -81,6 +85,11 @@ def save_segment_outlines(request):
 @pytest.fixture(scope='session')
 def verify_all_modelsets(request):
     return request.config.getoption("--verify-all-modelsets")
+
+
+@pytest.fixture(scope='session')
+def save_sklearn_pkls_as_npz(request):
+    return request.config.getoption("--save-sklearn-pkls-as-npz")
 
 
 @pytest.fixture(scope='session')
