@@ -163,7 +163,7 @@ class ImageLabel(Sequence):
 
     @property
     def nsamples(self):
-        if ~self.balanced_sampling:
+        if not self.balanced_sampling:
             return np.ones(len(self.rawshapes), dtype='int').tolist()
 
         aug_shape = self.shapes.input[1:]
