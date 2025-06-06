@@ -131,9 +131,12 @@ def jsonify_sklearn_model(obj, arrays=None):
     recurse = partial(jsonify_sklearn_model, arrays=arrays)
     
     if isinstance(obj, np.ndarray):
-        name = f'array{len(arrays)}'
-        arrays[name] = obj
-        return {'_numpy_ndarray': name}
+        if obj.dtype == 'O' and all([type(o) == str for o in obj]):
+            return {'_numpy_ndarray': obj.tolist()}
+        else:
+            name = f'array{len(arrays)}'
+            arrays[name] = obj
+            return {'_numpy_ndarray': name}
     if isinstance(obj, np.int64):
         return int(obj)
     elif isinstance(obj, (BaseEstimator, Tree)):
@@ -155,7 +158,13 @@ def jsonify_sklearn_model(obj, arrays=None):
 
 def as_sklearn_model(obj, arrays={}):
     if '_numpy_ndarray' in obj:
-        return arrays[obj['_numpy_ndarray']]
+        array = obj['_numpy_ndarray']
+        if type(array) == str:
+            return arrays[obj['_numpy_ndarray']]
+        elif type(array) == list:
+            return np.array(array, dtype='O')
+        else:
+            raise BadFile('Invalid model file, or file is corrupt')
     if '_sklearn_object' in obj:
         mod = obj['__module__']
         if not mod.startswith('sklearn.'):

@@ -44,17 +44,20 @@ MODELS_DIR = Path(__file__).parent / 'sklearn-test-data'
 PKL_MODEL_FILES = {
     'main_tracker': 'ct_rf_20210201_12.pkl',
     'bak_tracker': 'ct_rf_20210125_9.pkl',
-    'mb_assign': 'prime_ovlp_bf_60x_5z_20221219_mb_model.pkl'
+    'mb_assign': 'prime_ovlp_bf_60x_5z_20221219_mb_model.pkl',
+    'mb_assign_skl_1.2.2': '20250602_budassign.pkl',
 }
 NPZ_MODEL_FILES = {
     'main_tracker': 'ct_rf_20210201_12.npz',
     'bak_tracker': 'ct_rf_20210125_9.npz',
-    'mb_assign': 'prime_ovlp_bf_60x_5z_20221219_mb_model.npz'
+    'mb_assign': 'prime_ovlp_bf_60x_5z_20221219_mb_model.npz',
+    'mb_assign_skl_1.2.2': '20250602_budassign.npz',
 }
 TEST_DATA_FILES = {
     'main_tracker': 'test-data-ct_rf_20210201_12.npz',
     'bak_tracker': 'test-data-ct_rf_20210125_9.npz',
-    'mb_assign': 'test-data-prime_ovlp_bf_60x_5z_20221219_mb_model.npz'
+    'mb_assign': 'test-data-prime_ovlp_bf_60x_5z_20221219_mb_model.npz',
+    'mb_assign_skl_1.2.2': 'test-data-20250602_budassign.npz',
 }
 
 

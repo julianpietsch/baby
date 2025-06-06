@@ -169,8 +169,8 @@ class BudTrainer(BudTracker):
         if self._model is None:
             if isinstance(getattr(self, '_rf', None), GridSearchCV):
                 self._model = self._rf.best_estimator_
-            elif self.model_save_file.isfile():
-                with open(filename, 'rb') as f:
+            elif self.model_save_file.is_file():
+                with open(self.model_save_file, 'rb') as f:
                     self._model = pickle.load(f)
             else:
                 raise BadProcess('"explore_hyperparams" has not been run')
