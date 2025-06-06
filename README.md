@@ -165,8 +165,11 @@ requests using:
 > baby-phone
 ```
 
-Server runs by default on [http://0.0.0.0:5101](). HTTP requests need to be
-sent to the correct URL endpoint, but the HTTP API is currently undocumented.
-The primary client implementation is the [BABY
-GUI](https://github.com/julianpietsch/baby-gui) available for Matlab.
+The server runs by default on [http://0.0.0.0:5101](). The recommended way to
+send requests to the server is by using the [BABY
+GUI](https://github.com/julianpietsch/baby-gui), which requires Matlab.
+
+The HTTP API is currently undocumented, but examples showing how to correctly
+send requests using Python are given in the [client-api
+notebook](python/notebooks/client-api.ipynb).
 

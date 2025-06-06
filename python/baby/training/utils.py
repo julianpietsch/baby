@@ -103,6 +103,7 @@ class BabyTrainerParameters(NamedTuple):
     xy_out: int = 80
     target_pixel_size: float = 0.263
     substacks: Union[None, int] = None
+    include_substack_mean: bool = False
     aug_probs: dict = {}
     aug_p_noop: float = 0.05
     base_seg_params: dict = {}
@@ -459,6 +460,7 @@ def standard_augmenter(ssm, flattener, params, isval=False):
             xy_out=params.xy_out,
             target_pixel_size=params.target_pixel_size,
             substacks=params.substacks,
+            include_substack_mean=params.include_substack_mean,
             probs=probs,
             only_basic_augs=params.only_basic_augs,
             **extra_args)

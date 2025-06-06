@@ -39,6 +39,7 @@ import json
 import numpy as np
 from itertools import permutations, repeat
 from scipy.ndimage import map_coordinates, gaussian_filter, shift
+from scipy.ndimage import find_objects
 from scipy.ndimage.morphology import binary_fill_holes
 from scipy import interpolate
 from skimage import transform
@@ -51,17 +52,18 @@ import elasticdeform
 from .preprocessing import segoutline_flattening, connect_pixel_gaps
 from .errors import BadParam, BadFile
 
-AUGMENTATION_ORDER = ('substacks', 'vshift', 'hshift', 'rough_crop',
-                      'downscale', 'shadows', 'blur', 'elastic_deform',
-                      'rotate', 'crop', 'vflip', 'hflip',
-                      'movestacks', 'noise', 'pad', 'gamma',
+AUGMENTATION_ORDER = ('substacks', 'vshift', 'hshift', 'cellshift',
+                      'rough_crop', 'downscale', 'shadows', 'blur',
+                      'elastic_deform', 'rotate', 'crop',
+                      'vflip', 'hflip', 'movestacks',
+                      'noise', 'pad', 'gamma',
                       'hist_deform', 'hist_scale')
 
 
 class Augmenter(object):
 
     def __init__(self, xy_out=80, probs={}, p_noop=0.05, substacks=None,
-            only_basic_augs=True):
+            only_basic_augs=True, include_substack_mean=False):
         """
         Random data augmentation of img and lbl.
 
@@ -113,7 +115,7 @@ class Augmenter(object):
         if only_basic_augs:
             custom_probs = probs
             probs = dict(shadows=0, elastic_deform=0, gamma=0, hist_deform=0,
-                    hist_scale=0, blur=0)
+                    hist_scale=0, blur=0, cellshift=0)
             probs.update(**custom_probs)
 
         # Treat 'crop', 'pad' and 'substacks' specially to have p = 1
@@ -136,7 +138,16 @@ class Augmenter(object):
                 raise BadParam('"substacks" must be None or an int')
             if substacks < 1:
                 raise BadParam('"substacks" must be a positive integer')
+
+        if include_substack_mean:
+            if substacks is None:
+                substacks = 1
+            elif substacks != 1:
+                raise BadParam('"substacks" must be 1 if including substack '
+                               'mean')
+
         self.nsubstacks = substacks
+        self.include_substack_mean = include_substack_mean
 
     def __repr__(self):
         return (repr(type(self)) +
@@ -213,11 +224,16 @@ class Augmenter(object):
         """
 
         self.refslice = 0
-        nsub = self.nsubstacks
+
+        # nz = number of z-sections in input image
+        nz = 1 if len(img.shape) < 3 else img.shape[2]
+
+        if self.include_substack_mean:
+            nsub = 1 + np.random.randint(nz)
+        else:
+            nsub = self.nsubstacks
 
         if nsub:
-            # nz = number of z-sections in input image
-            nz = 1 if len(img.shape) < 3 else img.shape[2]
             if nz < self.nsubstacks:
                 raise BadParam(
                     '"img" has fewer Z-sections than the specified "substacks"')
@@ -245,6 +261,8 @@ class Augmenter(object):
             ss = ss_filters[np.random.randint(len(ss_filters))]
             img = img[:, :, ss]
             self.refslice = int(np.median(np.where(ss))) + 1
+            if self.include_substack_mean and nsub > 1:
+                img = img.mean(2, keepdims=True)
 
         self.pad_value = np.median(img)
         return img, lbl
@@ -337,6 +355,27 @@ class Augmenter(object):
             maxpix = np.max([0, (inshape - self.xy_out[1]) // 2])
 
         self._hshift = np.random.choice(np.arange(-maxpix, maxpix + 1, dtype='int'))
+        return img, lbl
+
+    def cellshift(self, img, lbl):
+        """Override standard shift with a shift to a cell"""
+        if not lbl.any():
+            return img, lbl
+
+        c = np.random.choice(lbl.shape[2])
+        objs = find_objects(lbl[:, :, c])
+        if len(objs) != 1:
+            return img, lbl
+
+        vslice, hslice = objs[0]
+
+        if self.xy_in is None:
+            H, W = img.shape[:2]
+        else:
+            H, W = self.xy_in[:2]
+
+        self._vshift = H // 2 - (vslice.start + vslice.stop) // 2
+        self._hshift = W // 2 - (hslice.start + hslice.stop) // 2
         return img, lbl
 
     def rough_crop(self, img, lbl, xysize=None, nonempty_slices=None):

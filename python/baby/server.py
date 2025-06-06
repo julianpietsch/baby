@@ -52,6 +52,7 @@ from baby import __version__
 from baby.brain import BabyBrain
 from baby.crawler import BabyCrawler
 from baby.utils import jsonify
+from baby.io import save_tiled_image
 
 routes = web.RouteTableDef()
 
@@ -396,6 +397,13 @@ async def segment(request):
             val = await field.read(decode=True)
             kwargs[field.name] = json.loads(val)
 
+    if request.app['DEBUG_MODE']:
+        filename = "baby_phone_debugging_image_received_{:03}.png"
+        logging.info(f"saving images received for debugging as {filename}")
+        for i, img_i in enumerate(img):
+            save_tiled_image(img_i, filename.format(i + 1),
+                             info=dict(sessionid=sessionid) | kwargs)
+
     print('Data received. Segmenting {} images...'.format(len(img)))
 
     loop.run_in_executor(executor, taskmstr.segment, sessionid, img, kwargs)
@@ -455,6 +463,7 @@ def main():
                         help='port to bind the server to')
     parser.add_argument('-n', '--njobs', type=int, default=-2,
                         help='number of parallel jobs to run when processing')
+    parser.add_argument('-D', '--debug-mode', action='store_true')
     args = parser.parse_args()
  
     import tensorflow as tf
@@ -500,5 +509,14 @@ def main():
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         lfh.setFormatter(lff)
         logging.getLogger().addHandler(lfh)
+
+    app['DEBUG_MODE'] = args.debug_mode
+    if args.debug_mode:
+        if not isfile(LOG_FILE):
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+        logging.info("Running in debug mode")
 
     web.run_app(app, port=args.port)
